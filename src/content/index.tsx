@@ -26,7 +26,8 @@ const parseDrupalMenuTable = (table: HTMLTableElement): MenuItem[] => {
   const rows = table.querySelectorAll('tr.draggable');
   
   rows.forEach(row => {
-    const depth = row.querySelectorAll('.indentation').length;
+    // Drupal renders top-level items with 1 .indentation div; subtract 1 so root = 0.
+    const depth = Math.max(0, row.querySelectorAll('.indentation').length - 1);
     const linkEl = row.querySelector('td:nth-child(1) a') as HTMLAnchorElement;
     const title = linkEl?.innerText || 'Untitled';
     const path = linkEl?.getAttribute('href') || '#';
@@ -51,8 +52,8 @@ const syncTreeToDrupal = (table: HTMLTableElement, items: MenuItem[]) => {
   items.forEach((item, index) => {
     // 1. Find the corresponding Drupal row
     const row = drupalRows.find(r => {
-      const input = r.querySelector(`input[value="${item.id}"]`);
-      return input !== null;
+      const input = r.querySelector('input[name*="[mlid]"]') as HTMLInputElement;
+      return input?.value === item.id;
     }) as HTMLTableRowElement;
 
     if (!row) {

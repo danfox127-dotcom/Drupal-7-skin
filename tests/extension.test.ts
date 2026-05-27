@@ -40,16 +40,16 @@ test.describe('D7 Admin Proxy UI', () => {
     await expect(nativeSelect).toBeHidden();
 
     // Check if Proxy UI is injected (inside Shadow DOM)
-    const proxyContainer = page.locator('#d7-proxy-ui-container');
+    const proxyContainer = page.locator('.d7-proxy-ui-container');
     await expect(proxyContainer).toBeVisible();
 
     // Access the Shadow DOM to verify components
-    const modernSearchLabel = page.locator('#d7-proxy-ui-container >> text=Menu Parent Selector');
+    const modernSearchLabel = page.locator('.d7-proxy-ui-container >> text=Menu Parent Selector');
     await expect(modernSearchLabel).toBeVisible();
 
     // Select an item in the modern UI
-    await page.click('#d7-proxy-ui-container >> text=Search for a parent...');
-    await page.click('#d7-proxy-ui-container >> text=Our Doctors');
+    await page.click('.d7-proxy-ui-container >> text=Search for a parent...');
+    await page.click('.d7-proxy-ui-container >> text=Our Doctors');
 
     // Verify native select was updated
     const selectedValue = await nativeSelect.inputValue();
@@ -59,10 +59,10 @@ test.describe('D7 Admin Proxy UI', () => {
   test('Feature 2: HTML Export button is injected', async ({ page }) => {
     await page.goto(`file://${path.join(__dirname, 'fixtures/node-edit.html')}`);
     
-    const exportBanner = page.locator('#d7-proxy-ui-container >> text=Content Extraction Engine');
+    const exportBanner = page.locator('.d7-proxy-ui-container >> text=Content Extraction Engine');
     await expect(exportBanner).toBeVisible();
     
-    const exportButton = page.locator('#d7-proxy-ui-container >> text=Export Raw HTML');
+    const exportButton = page.locator('.d7-proxy-ui-container >> text=Export Raw HTML');
     await expect(exportButton).toBeVisible();
   });
 
@@ -74,11 +74,11 @@ test.describe('D7 Admin Proxy UI', () => {
     await expect(legacyTable).toBeHidden();
 
     // Modern manager should be visible
-    const modernManager = page.locator('#d7-proxy-ui-container >> text=Main Menu Manager');
+    const modernManager = page.locator('.d7-proxy-ui-container >> text=Main Menu Manager');
     await expect(modernManager).toBeVisible();
 
     // Verify parsed items are rendered
-    const aboutUsItem = page.locator('#d7-proxy-ui-container >> text=About Us');
+    const aboutUsItem = page.locator('.d7-proxy-ui-container >> text=About Us');
     await expect(aboutUsItem).toBeVisible();
   });
 });
