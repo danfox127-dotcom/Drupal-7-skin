@@ -8,7 +8,8 @@ export function injectComponent(
   position: 'before' | 'after' | 'replace' = 'before'
 ) {
   const container = document.createElement('div');
-  container.id = 'd7-proxy-ui-container';
+  container.className = 'd7-proxy-ui-container';
+  container.id = `d7-proxy-ui-${crypto.randomUUID()}`;
 
   if (position === 'before') {
     targetElement.parentNode?.insertBefore(container, targetElement);
