@@ -3,7 +3,7 @@
   "name": "D7 Admin Proxy UI",
   "version": "0.1.0",
   "description": "A modern React/Tailwind interface for legacy Drupal 7 administration.",
-  "permissions": ["storage", "clipboardWrite"],
+  "permissions": ["storage", "clipboardWrite", "tabs"],
   "host_permissions": [
     "*://*.columbiadoctors.org/admin/*",
     "*://*.columbiadoctors.org/node/*"
