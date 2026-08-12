@@ -3,6 +3,8 @@ import { TaxonomyCombobox } from '../components/TaxonomyCombobox';
 import { HtmlExport } from '../components/HtmlExport';
 import { MenuTree, MenuItem } from '../components/MenuTree';
 import { CommandPalette } from '../components/CommandPalette';
+import { ContentList } from '../components/ContentList';
+import { findContentTable, parseContentList, currentUsername } from '../lib/parseContentList';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
 
 const getSettings = (): Promise<Settings> =>
@@ -58,7 +60,22 @@ const syncTreeToDrupal = (table: HTMLTableElement, items: MenuItem[]) => {
     }
 
     const weightInput = row.querySelector('select.menu-weight, input.menu-weight') as HTMLSelectElement | HTMLInputElement;
-    if (weightInput) weightInput.value = (index - 50).toString();
+    if (weightInput) {
+      const weight = (index - 50).toString();
+      weightInput.value = weight;
+
+      // Assigning a <select> a value with no matching <option> silently leaves it
+      // empty, which would submit a blank weight and scramble the menu order with
+      // no visible error. Drupal's weight selects normally span -50..50, so this
+      // only trips if the range is narrower than the menu is long — worth
+      // surfacing rather than discovering after a save.
+      if (weightInput.value !== weight) {
+        console.warn(
+          `[D7 Proxy] Weight ${weight} is not an available option for mlid ${item.id}; ` +
+          `menu may be longer than Drupal's weight range. Order was not written for this row.`
+        );
+      }
+    }
 
     let plid = '0';
     if (item.depth > 0) {
@@ -169,6 +186,34 @@ const init = async () => {
           onSave={(updatedItems) => syncTreeToDrupal(menuTable, updatedItems)}
         />
       ), 'before');
+    }
+  }
+
+  // Feature 4: Content list
+  if (settings.contentList && new URL(url).pathname.startsWith('/admin/content')) {
+    const table = findContentTable();
+    const rows = parseContentList();
+
+    // Only take over when the table was found AND parsed into something. On a
+    // markup shape we do not recognize, leave Drupal's own table working rather
+    // than replacing it with an empty list.
+    if (table && rows && rows.length > 0) {
+      table.style.display = 'none';
+
+      // Drupal's exposed filter form and bulk-operations block are superseded by
+      // the live filters and per-row actions.
+      document.querySelectorAll('#node-admin-filter, .node-admin-filter').forEach(el => {
+        (el as HTMLElement).style.display = 'none';
+      });
+
+      injectComponent(table, (
+        <ContentList rows={rows} currentUser={currentUsername()} />
+      ), 'before');
+    } else {
+      console.warn(
+        '[D7 Proxy] Content list not replaced: could not parse /admin/content. Leaving Drupal\'s table in place.',
+        { tableFound: Boolean(table), rowsParsed: rows?.length ?? null }
+      );
     }
   }
 };

@@ -178,10 +178,57 @@ injected surface, keyboard-navigable, focus-trapped.
 
 ---
 
-## Phase 3 — Menu manager + content list
+## Phase 3 — Menu manager + content list ✅ COMPLETE
 
-Both evolve or sit beside existing code, and depend only on markup patterns already proven
-against fixtures.
+**Delivered:** `src/lib/treeFilter.ts` (ancestor-retaining filter, shared with Phase 5),
+`MenuTree.tsx` rebuilt to screen 5, `src/lib/parseContentList.ts`,
+`src/components/ContentList.tsx`, and an expanded menu fixture. 47 unit tests plus 22
+browser behaviors and 7 write-back assertions, all passing, zero page errors.
+
+**Write-back verified end to end**, which is the menu manager's whole point. With form
+submission blocked so the result could be inspected: weights sequential from −50, `plid`
+correct across three depths, enabled toggles written, disabled state preserved.
+
+**The content list carries real risk and needs live validation.** It is built against
+Drupal 7 core's `node_admin_nodes` markup, *not* a capture of the live page — that DOM is
+still outstanding from Phase 0. Mitigations:
+
+- Columns are located by **header label, not index**, so added/removed/reordered columns
+  still parse. Aliases cover renames (`Name`, `Submitted by`, `Moderation state`, …).
+- `parseContentList` returns null on markup it does not recognize, and the content script
+  then **leaves Drupal's own table in place** rather than replacing it with an empty list.
+  Verified: an unparseable table results in no takeover and a console warning.
+- Content-type chips are derived from the parsed rows, not hardcoded — the live site has at
+  least ten types (Condition, Event Importer, Gallery, Landing, List, News, Page, Specialty,
+  Testimonial, Timeline Entry).
+- Status is keyword-matched, since core emits only published / not published while
+  "Draft" and "Needs review" come from moderation contrib. An unrecognized state renders
+  uncolored rather than being mislabeled.
+- "My recent edits" needs the logged-in username, read from the admin toolbar. When it
+  cannot be determined the chip is **hidden** rather than filtering to nothing.
+
+**Three bugs found and fixed during verification:**
+
+1. **J/K never fired.** `onKeyDown` was on a non-focusable div, so the shortcuts silently
+   required clicking a row first. Moved to a document listener with three guards: no
+   modifiers (⌘K belongs to the palette), not while the palette is open (its events retarget
+   to the overlay host, so checking the target tag is insufficient), and not while typing
+   (read via `composedPath` because the target may be the shadow host). All four guards
+   verified.
+2. **Weight writes could fail silently.** Assigning a `<select>` a value with no matching
+   `<option>` leaves it empty, which would submit a blank weight and scramble menu order
+   with no error. `syncTreeToDrupal` now warns when the assignment does not stick.
+3. **The menu fixture was two flat rows**, unable to exercise depth parsing, ancestor
+   retention, or `plid` write-back. Expanded to the prototype's 13-item hierarchy with a
+   disabled item and full −50..50 weight ranges.
+
+**One prototype behavior confirmed correct, not a bug:** outdenting a row makes the deeper
+rows that follow it *its* children. That is the semantics of a depth-encoded flat tree and
+matches Drupal's native drag behavior.
+
+**Deferred:** dragging is disabled while a filter is active, because reordering a filtered
+subset cannot be mapped back to the full list unambiguously. The up/down controls stay
+available since they act on full-list adjacency. The footer note tells the user why.
 
 **Menu manager (screen 5).** Evolve `MenuTree.tsx`. Keep `parseDrupalMenuTable` and
 `syncTreeToDrupal` (weights and `plid` write-back) and the existing `MAX_DEPTH = 5`; change

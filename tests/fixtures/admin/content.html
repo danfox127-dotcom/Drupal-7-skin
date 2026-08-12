@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<!--
+  Stand-in for /admin/content, built from Drupal 7 core's node_admin_nodes()
+  output: a tableselect with sortable headers, odd/even row classes, and an
+  Operations column of edit/delete links.
+
+  NOT captured from the live site — that DOM is still outstanding. The parser is
+  label-driven precisely so it survives the differences this fixture will have
+  from the real page.
+-->
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Content | Columbia</title></head>
+  <body class="admin-menu page-admin-content">
+    <div id="toolbar">
+      <div id="toolbar-user"><a href="/user/42">df2832</a></div>
+    </div>
+
+    <h1 id="page-title">Content</h1>
+
+    <div id="node-admin-filter">
+      <fieldset><legend>Show only items where</legend>
+        <input type="submit" value="Filter" />
+      </fieldset>
+    </div>
+
+    <form action="/admin/content" method="post" id="node-admin-content">
+      <table class="sticky-enabled tableheader-processed sticky-table">
+        <thead>
+          <tr>
+            <th class="select-all"><input type="checkbox" /></th>
+            <th><a href="/admin/content?order=title&amp;sort=asc" class="active">Title</a></th>
+            <th><a href="/admin/content?order=type&amp;sort=asc">Content type</a></th>
+            <th><a href="/admin/content?order=author&amp;sort=asc">Author</a></th>
+            <th><a href="/admin/content?order=status&amp;sort=asc">Status</a></th>
+            <th><a href="/admin/content?order=changed&amp;sort=desc">Updated</a></th>
+            <th>Operations</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr class="odd">
+            <td><input type="checkbox" name="nodes[451]" /></td>
+            <td><a href="/node/451">Abin Sajan, MD</a></td>
+            <td>Profile</td>
+            <td><a href="/user/42">df2832</a></td>
+            <td>published</td>
+            <td>08/12/2026 - 14:00</td>
+            <td><a href="/node/451/edit?destination=admin/content">edit</a></td>
+          </tr>
+          <tr class="even">
+            <td><input type="checkbox" name="nodes[452]" /></td>
+            <td><a href="/node/452">Eric Lam, DO</a></td>
+            <td>Profile</td>
+            <td><a href="/user/7">kmoore</a></td>
+            <td>published</td>
+            <td>08/12/2026 - 14:00</td>
+            <td><a href="/node/452/edit?destination=admin/content">edit</a></td>
+          </tr>
+          <tr class="odd">
+            <td><input type="checkbox" name="nodes[453]" /></td>
+            <td><a href="/node/453">New Approach to Atrial Fibrillation Care</a></td>
+            <td>News</td>
+            <td><a href="/user/42">df2832</a></td>
+            <td>not published</td>
+            <td>08/12/2026 - 11:24</td>
+            <td><a href="/node/453/edit?destination=admin/content">edit</a></td>
+          </tr>
+          <tr class="even">
+            <td><input type="checkbox" name="nodes[454]" /></td>
+            <td><a href="/node/454">Cardiology &amp; Cardiac Surgery</a></td>
+            <td>Specialty</td>
+            <td><a href="/user/7">kmoore</a></td>
+            <td>published</td>
+            <td>08/11/2026 - 16:38</td>
+            <td><a href="/node/454/edit?destination=admin/content">edit</a></td>
+          </tr>
+          <tr class="odd">
+            <td><input type="checkbox" name="nodes[455]" /></td>
+            <td><a href="/node/455">Patient Resources</a></td>
+            <td>Page</td>
+            <td><a href="/user/42">df2832</a></td>
+            <td>published</td>
+            <td>08/11/2026 - 09:02</td>
+            <td><a href="/node/455/edit?destination=admin/content">edit</a></td>
+          </tr>
+          <tr class="even">
+            <td><input type="checkbox" name="nodes[456]" /></td>
+            <td><a href="/node/456">Jin Min Min Han, MD</a></td>
+            <td>Profile</td>
+            <td><a href="/user/7">kmoore</a></td>
+            <td>needs review</td>
+            <td>08/10/2026 - 15:15</td>
+            <td><a href="/node/456/edit?destination=admin/content">edit</a></td>
+          </tr>
+          <tr class="odd">
+            <td><input type="checkbox" name="nodes[457]" /></td>
+            <td><a href="/node/457">Heart Failure</a></td>
+            <td>Condition</td>
+            <td><a href="/user/42">df2832</a></td>
+            <td>published</td>
+            <td>08/08/2026 - 13:41</td>
+            <td><a href="/node/457/edit?destination=admin/content">edit</a></td>
+          </tr>
+          <tr class="even">
+            <td><input type="checkbox" name="nodes[458]" /></td>
+            <td><a href="/node/458">Leadership Message</a></td>
+            <td>Page</td>
+            <td><a href="/user/7">kmoore</a></td>
+            <td>not published</td>
+            <td>08/07/2026 - 17:56</td>
+            <td><a href="/node/458/edit?destination=admin/content">edit</a></td>
+          </tr>
+          <tr class="odd">
+            <td><input type="checkbox" name="nodes[459]" /></td>
+            <td><a href="/columbia-surgeons-named-top-doctors">Columbia Surgeons Named to Top Doctors List</a></td>
+            <td>News</td>
+            <td><a href="/user/42">df2832</a></td>
+            <td>published</td>
+            <td>08/06/2026 - 08:20</td>
+            <td><a href="/node/459/edit?destination=admin/content">edit</a></td>
+          </tr>
+        </tbody>
+      </table>
+      <input type="submit" value="Update" />
+    </form>
+  </body>
+</html>
