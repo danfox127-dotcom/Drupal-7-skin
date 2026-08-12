@@ -37,9 +37,9 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
     <button
       type="button"
       onClick={() => onChange(!on)}
-      className={`w-9 h-5 rounded-full transition-colors relative shrink-0 ${on ? 'bg-indigo-500' : 'bg-slate-300'}`}
+      className={`w-9 h-5 rounded-full transition-colors duration-200 ease-studio relative shrink-0 ${on ? 'bg-cu-blue' : 'bg-rule'}`}
     >
-      <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${on ? 'translate-x-4' : 'translate-x-0.5'}`} />
+      <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white transition-transform duration-200 ease-studio ${on ? 'translate-x-4' : 'translate-x-0.5'}`} />
     </button>
   );
 }
@@ -77,36 +77,36 @@ export function App() {
     : null;
 
   return (
-    <div className="w-72 bg-white flex flex-col font-sans text-slate-800 divide-y divide-slate-100">
+    <div className="w-80 bg-white flex flex-col font-sans text-ink divide-y divide-rule-faint">
       {/* Header */}
-      <div className="px-4 py-3 bg-slate-900 text-white flex items-center gap-3">
-        <div className="bg-indigo-500 p-1.5 rounded-lg shrink-0">
-          <Layers size={18} />
-        </div>
+      <div className="px-4 py-3 bg-cu-blue text-white flex items-center gap-3">
+        <Layers size={18} className="shrink-0" />
         <div className="flex-1 min-w-0">
-          <p className="font-black text-sm tracking-tight">D7 Admin Proxy</p>
+          <p className="font-display font-semibold text-control uppercase tracking-[.12em]">D7 Studio</p>
           {displayOrigin ? (
             <div className="flex items-center gap-1.5 mt-0.5">
+              {/* On Primary Blue, white is AA-compliant; Columbia Blue is used
+                  for the muted variant rather than a low-contrast gray. */}
               {isActive
-                ? <Wifi size={10} className="text-green-400 shrink-0" />
-                : <WifiOff size={10} className="text-slate-500 shrink-0" />}
-              <p className="text-[10px] truncate font-medium text-slate-400">
+                ? <Wifi size={10} className="text-white shrink-0" />
+                : <WifiOff size={10} className="text-cu-light shrink-0" />}
+              <p className="text-help truncate">
                 {isActive ? (
-                  <span><span className="text-green-400">Active</span> · {displayOrigin}</span>
+                  <span className="text-white">Active · {displayOrigin}</span>
                 ) : (
-                  <span className="text-slate-500">{displayOrigin} · navigate to an admin page</span>
+                  <span className="text-cu-light">{displayOrigin} · navigate to an admin page</span>
                 )}
               </p>
             </div>
           ) : (
-            <p className="text-[10px] text-slate-500 mt-0.5">No Drupal tab detected</p>
+            <p className="text-help text-cu-light mt-0.5">No Drupal tab detected</p>
           )}
         </div>
       </div>
 
       {/* Quick Links */}
       <div>
-        <p className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+        <p className="px-4 pt-3 pb-1 text-eyebrow-wide font-semibold uppercase text-ink-secondary">
           Quick Links
         </p>
         <ul className="pb-2">
@@ -116,13 +116,13 @@ export function App() {
                 type="button"
                 disabled={!tabOrigin}
                 onClick={() => openLink(link.path)}
-                className="w-full flex items-center gap-3 px-4 py-1.5 text-sm text-slate-700 hover:bg-indigo-50 hover:text-indigo-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed text-left group"
+                className="w-full flex items-center gap-3 px-4 py-1.5 text-control text-ink hover:bg-cu-tint hover:text-cu-blue transition-colors duration-200 ease-studio disabled:opacity-40 disabled:cursor-not-allowed text-left group"
               >
-                <span className="text-slate-400 group-hover:text-indigo-500 transition-colors shrink-0">
+                <span className="text-ink-muted group-hover:text-cu-blue transition-colors duration-200 ease-studio shrink-0">
                   {link.icon}
                 </span>
                 <span className="flex-1">{link.label}</span>
-                <ExternalLink size={11} className="text-slate-300 group-hover:text-indigo-400 transition-colors shrink-0" />
+                <ExternalLink size={11} className="text-ink-muted group-hover:text-cu-blue transition-colors duration-200 ease-studio shrink-0" />
               </button>
             </li>
           ))}
@@ -131,18 +131,18 @@ export function App() {
 
       {/* Feature Toggles */}
       <div className="pb-3">
-        <p className="px-4 pt-3 pb-1 text-[10px] font-bold uppercase tracking-widest text-slate-400">
+        <p className="px-4 pt-3 pb-1 text-eyebrow-wide font-semibold uppercase text-ink-secondary">
           Features
         </p>
         {!loaded ? (
-          <div className="px-4 py-2 text-xs text-slate-400 italic">Loading…</div>
+          <div className="px-4 py-2 text-help text-ink-help">Loading…</div>
         ) : (
           <ul className="flex flex-col gap-0.5">
             {FEATURES.map(f => (
-              <li key={f.key} className="flex items-center gap-3 px-4 py-2 hover:bg-slate-50 transition-colors rounded-lg mx-1">
+              <li key={f.key} className="flex items-center gap-3 px-4 py-2 hover:bg-rail transition-colors duration-200 ease-studio">
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-slate-700">{f.label}</p>
-                  <p className="text-[10px] text-slate-400 truncate">{f.description}</p>
+                  <p className="text-control font-semibold text-ink">{f.label}</p>
+                  <p className="text-help text-ink-help truncate">{f.description}</p>
                 </div>
                 <Toggle on={settings[f.key]} onChange={v => update(f.key, v)} />
               </li>
@@ -153,8 +153,8 @@ export function App() {
 
       {/* Footer */}
       <div className="px-4 py-2 flex items-center justify-between">
-        <span className="text-[9px] text-slate-300 uppercase tracking-widest font-bold">v0.1.0</span>
-        <span className="text-[9px] text-slate-300 uppercase tracking-widest font-bold truncate ml-2">{displayOrigin ?? 'drupal 7'}</span>
+        <span className="text-eyebrow-wide text-ink-help uppercase font-semibold">v0.1.0</span>
+        <span className="text-eyebrow-wide text-ink-help uppercase font-semibold truncate ml-2">{displayOrigin ?? 'drupal 7'}</span>
       </div>
     </div>
   );

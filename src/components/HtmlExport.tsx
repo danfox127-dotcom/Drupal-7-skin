@@ -76,38 +76,38 @@ export const HtmlExport = () => {
   };
 
   return (
-    <div className="p-5 mb-8 bg-gradient-to-br from-slate-50 to-slate-100 border border-slate-200 rounded-2xl flex flex-col gap-4 shadow-sm">
+    <div className="p-5 mb-8 bg-legacy-100 border border-rule flex flex-col gap-4 font-sans">
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4 text-slate-700">
-          <div className={`p-3 rounded-xl transition-colors ${
-            status === 'success' ? 'bg-green-100 text-green-600' : 
-            status === 'error' ? 'bg-red-100 text-red-600' : 
-            'bg-indigo-100 text-indigo-600'
+        <div className="flex items-center gap-4">
+          {/* Status is carried by the icon's shape as well as its color, so it
+              does not rely on color alone. */}
+          <div className={`p-3 transition-colors duration-200 ease-studio ${
+            status === 'success' ? 'bg-cu-tint text-olive' :
+            status === 'error' ? 'bg-cu-tint text-burnt' :
+            'bg-cu-tint text-cu-blue'
           }`}>
-            {status === 'loading' ? <Loader2 size={24} className="animate-spin" /> : 
+            {status === 'loading' ? <Loader2 size={24} className="animate-spin" /> :
              status === 'success' ? <Check size={24} /> :
              status === 'error' ? <AlertCircle size={24} /> :
              <FileCode size={24} />}
           </div>
           <div>
-            <h3 className="font-extrabold text-slate-900 tracking-tight">Content Extraction Engine</h3>
-            <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">
+            <h3 className="font-serif text-heading-sm text-ink">Content Extraction Engine</h3>
+            <p className="text-help text-ink-help">
               {status === 'success' ? 'Copied to clipboard!' : 'Export sanitized public HTML'}
             </p>
           </div>
         </div>
 
-        <button 
+        <button
           disabled={status === 'loading'}
           onClick={handleExport}
-          className={`px-6 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all flex items-center gap-2
-            ${status === 'loading' ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 
-              status === 'success' ? 'bg-green-600 text-white hover:bg-green-700' :
-              status === 'error' ? 'bg-red-600 text-white hover:bg-red-700' :
-              'bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-indigo-200 active:scale-95'}
+          className={`px-6 py-2.5 rounded font-semibold text-control transition-colors duration-200 ease-studio flex items-center gap-2
+            ${status === 'loading' ? 'bg-rule text-ink-muted cursor-not-allowed' :
+              'bg-cu-blue text-white hover:bg-cu-navy'}
           `}
         >
-          {status === 'loading' ? 'Processing...' : 
+          {status === 'loading' ? 'Processing...' :
            status === 'success' ? 'Done!' :
            status === 'error' ? 'Retry' :
            'Export Raw HTML'}
@@ -115,7 +115,7 @@ export const HtmlExport = () => {
       </div>
 
       {status === 'error' && (
-        <div className="text-xs text-red-600 bg-red-50 p-2 rounded-lg border border-red-100 italic">
+        <div className="text-help text-burnt bg-white p-2 rounded border border-rule">
           Error: {errorMsg}
         </div>
       )}

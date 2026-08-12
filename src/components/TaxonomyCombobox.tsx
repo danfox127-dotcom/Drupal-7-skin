@@ -20,13 +20,13 @@ export const TaxonomyCombobox = ({ options, defaultValue, onSelect }: Props) => 
   const [selectedValue, setSelectedValue] = useState(defaultValue || '');
 
   const filteredOptions = useMemo(() => {
-    return options.filter(opt => 
+    return options.filter(opt =>
       opt.label.toLowerCase().includes(search.toLowerCase())
     );
   }, [options, search]);
 
-  const selectedOption = useMemo(() => 
-    options.find(opt => opt.value === selectedValue), 
+  const selectedOption = useMemo(() =>
+    options.find(opt => opt.value === selectedValue),
   [options, selectedValue]);
 
   const handleSelect = (option: Option) => {
@@ -37,40 +37,42 @@ export const TaxonomyCombobox = ({ options, defaultValue, onSelect }: Props) => 
   };
 
   return (
-    <div className="p-4 mb-6 bg-white border border-slate-200 rounded-xl shadow-sm font-sans">
-      <div className="flex items-center gap-2 mb-3 text-indigo-600 font-bold text-xs uppercase tracking-widest">
+    <div className="p-4 mb-6 bg-white border border-rule font-sans">
+      <div className="flex items-center gap-2 mb-3 text-cu-blue font-semibold text-eyebrow uppercase">
         <Search size={14} />
         Menu Parent Selector
       </div>
-      
+
       <div className="relative">
         <button
           type="button"
           onClick={() => setIsOpen(!isOpen)}
-          className="w-full flex items-center justify-between px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-lg text-left focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all"
+          className="w-full flex items-center justify-between px-4 py-2.5 bg-legacy-100 border border-rule-control rounded text-left text-input transition-colors duration-200 ease-studio hover:bg-cu-tint"
         >
-          <span className={selectedOption ? 'text-slate-900' : 'text-slate-400'}>
+          {/* The empty state is visible content on a button, not an input
+              placeholder, so it needs AA contrast rather than placeholder gray. */}
+          <span className={selectedOption ? 'text-ink' : 'text-ink-help'}>
             {selectedOption ? selectedOption.label : 'Search for a parent...'}
           </span>
-          <ChevronDown size={18} className={`text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
+          <ChevronDown size={18} className={`text-ink-muted transition-transform duration-200 ease-studio ${isOpen ? 'rotate-180' : ''}`} />
         </button>
 
         {isOpen && (
-          <div className="absolute z-50 w-full mt-2 bg-white border border-slate-200 rounded-lg shadow-xl overflow-hidden">
-            <div className="p-2 border-b border-slate-100 bg-slate-50">
+          <div className="absolute z-50 w-full mt-2 bg-white border border-rule shadow-modal overflow-hidden">
+            <div className="p-2 border-b border-rule-hair bg-rail">
               <input
                 autoFocus
                 type="text"
                 placeholder="Type to filter..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full px-3 py-2 bg-white border border-slate-300 rounded-md text-sm outline-none focus:ring-2 focus:ring-indigo-500"
+                className="w-full px-3 py-2 bg-white border border-rule-control rounded text-control text-ink placeholder:text-ink-placeholder"
               />
             </div>
-            
+
             <div className="max-h-64 overflow-y-auto">
               {filteredOptions.length === 0 ? (
-                <div className="px-4 py-3 text-sm text-slate-500 text-center italic">
+                <div className="px-4 py-3 text-control text-ink-help text-center italic">
                   No matching parents found
                 </div>
               ) : (
@@ -79,8 +81,8 @@ export const TaxonomyCombobox = ({ options, defaultValue, onSelect }: Props) => 
                     key={option.value}
                     type="button"
                     onClick={() => handleSelect(option)}
-                    className={`w-full flex items-center justify-between px-4 py-2 text-sm text-left hover:bg-indigo-50 transition-colors ${
-                      selectedValue === option.value ? 'bg-indigo-50 text-indigo-700 font-semibold' : 'text-slate-700'
+                    className={`w-full flex items-center justify-between px-4 py-2 text-control text-left transition-colors duration-200 ease-studio hover:bg-cu-tint ${
+                      selectedValue === option.value ? 'bg-cu-tint text-cu-blue font-semibold' : 'text-ink'
                     }`}
                   >
                     <span style={{ paddingLeft: `${option.depth * 12}px` }}>
@@ -96,9 +98,9 @@ export const TaxonomyCombobox = ({ options, defaultValue, onSelect }: Props) => 
       </div>
 
       <div className="mt-3 flex items-center gap-2">
-        <div className="h-1.5 w-1.5 rounded-full bg-green-500 animate-pulse" />
-        <span className="text-[10px] text-slate-400 font-medium uppercase tracking-tight">
-          Proxy UI Active & Synced to Native Form
+        <div className="h-1.5 w-1.5 rounded-full bg-olive" />
+        <span className="text-eyebrow text-ink-help font-semibold uppercase">
+          Proxy UI Active &amp; Synced to Native Form
         </span>
       </div>
     </div>

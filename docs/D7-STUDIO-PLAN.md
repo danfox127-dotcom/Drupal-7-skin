@@ -41,10 +41,35 @@ HTTP server with real paths. We need a green suite before refactoring behind it.
 
 ---
 
-## Phase 1 — Design system foundation
+## Phase 1 — Design system foundation ✅ COMPLETE
 
-Pure styling. Cannot be invalidated by anything learned in Phase 0, so it can proceed in
+Pure styling. Cannot be invalidated by anything learned in Phase 0, so it proceeded in
 parallel.
+
+**Delivered:** `src/styles/tokens.js` (single source of truth), Columbia tokens wired into
+`tailwind.config.js` with off-brand utilities removed outright, `src/styles/fonts.css`,
+global focus ring and shadow-root typography in `main.css`, shared `adoptedStyleSheets` in
+`inject.tsx`, all three injected components plus the popup restyled, and 43 passing
+contrast tests. Compiled CSS dropped 18.4KB → 15.0KB.
+
+**Two AA violations found in the handoff's own palette.** It declares WCAG 2.2 AA
+mandatory, then assigns colors to small text that do not meet it. Measured:
+
+| Token | Handoff use | On white | Needs | Resolution |
+|---|---|---|---|---|
+| `#75787B` | help text, 12.5px | 4.44:1 | 4.5:1 | added `ink.help` `#696C6F` for text; `#75787B` kept for icons (3:1) |
+| `#76881D` | status text, 14.5px | 3.96:1 | 4.5:1 | added `olive.text` `#637218`; `#76881D` kept for fills/dots |
+| `#D0D0CE` | input borders | 1.54:1 | 3:1 (1.4.11) | added `rule.control` `#8B8B8A`; `#D0D0CE` kept for decorative rules |
+| `#9A9A97` | menu-item paths | 2.82:1 | 4.5:1 | paths use `ink.help`; `#9A9A97` limited to disabled/placeholder, which WCAG exempts |
+
+Brand values are preserved wherever AA permits — the split is by role, not a palette
+rewrite. **These four deviations need design sign-off**, since they visibly darken small
+text against what the prototype shows.
+
+Fonts were not bundled: the woff2 download was declined. `fonts.css` holds ready-to-
+uncomment `@font-face` blocks and the stacks fall back gracefully, so dropping the files
+into `src/assets/fonts/` later needs no component changes. Until then headings render in
+Georgia rather than EB Garamond.
 
 **Tailwind tokens.** Extend `tailwind.config.js` with the Columbia palette rather than
 scattering hex values. From the handoff:
@@ -182,8 +207,12 @@ on each site — it would be stale before the first release.
    URL SEO & Sitemap, group flags → Groups.
 5. Falls back to a generic grouping for unknown types rather than an empty rail.
 
-Per-host overrides live in `src/lib/formSchema/hosts/{host}.ts`, keyed by hostname, so
-`columbiadoctors.org` and `vagelos.columbia.edu` can diverge without forking code.
+**Per-host overrides are NOT needed.** The handoff's open question #2 assumed the same
+content type might use different machine names on `columbiadoctors.org` versus
+`vagelos.columbia.edu`. Confirmed with the user: the admin UI is the same across all three
+sites, so one field map serves all of them. Keep the discovery layer host-agnostic and add
+overrides only if a divergence actually turns up — do not build the `hosts/{host}.ts` layer
+speculatively.
 
 **Write-back contract**, uniform for every control: set `.value` on the hidden native input
 and dispatch `new Event('change', { bubbles: true })`, exactly as `TaxonomyCombobox`
@@ -350,7 +379,11 @@ per content type per host — that is what makes the ten upcoming types cheap.
 
 ## Still blocked on you
 
-- Live-site confirmation and captured DOM (Phase 0).
+- Sign-off on the four AA deviations in Phase 1.
+- Live-site confirmation and captured DOM (Phase 0). The admin UI is confirmed identical
+  across the three hosts, which removes the per-host concern, but the saved form DOM is
+  still needed before Phase 4 can begin.
+- Font woff2 files, if headings should render in EB Garamond rather than Georgia.
 - **Specialty field list** is inferred in the handoff and needs a real form to confirm
   (handoff Q7).
 - **Menu tree at scale** — behavior and performance on the full main menu, and whether the
