@@ -8,7 +8,9 @@
     "*://*.columbiadoctors.org/admin/*",
     "*://*.columbiadoctors.org/node/*",
     "*://*.vagelos.columbia.edu/admin/*",
-    "*://*.vagelos.columbia.edu/node/*"
+    "*://*.vagelos.columbia.edu/node/*",
+    "*://*.cuimc.columbia.edu/admin/*",
+    "*://*.cuimc.columbia.edu/node/*"
   ],
   "action": {
     "default_popup": "index.html"
@@ -21,6 +23,8 @@
         "*://*.columbiadoctors.org/node/*",
         "*://*.vagelos.columbia.edu/admin/*",
         "*://*.vagelos.columbia.edu/node/*",
+        "*://*.cuimc.columbia.edu/admin/*",
+        "*://*.cuimc.columbia.edu/node/*",
         "file://*/*"
       ]
     }
