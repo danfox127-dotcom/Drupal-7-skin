@@ -1,7 +1,8 @@
-import { injectComponent } from './inject';
+import { injectComponent, injectOverlay } from './inject';
 import { TaxonomyCombobox } from '../components/TaxonomyCombobox';
 import { HtmlExport } from '../components/HtmlExport';
 import { MenuTree, MenuItem } from '../components/MenuTree';
+import { CommandPalette } from '../components/CommandPalette';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
 
 const getSettings = (): Promise<Settings> =>
@@ -80,9 +81,48 @@ const syncTreeToDrupal = (table: HTMLTableElement, items: MenuItem[]) => {
   if (saveBtn) saveBtn.click();
 };
 
+/**
+ * Wires ⌘K / Ctrl+K to the command palette.
+ *
+ * The overlay is mounted on demand and unmounted on close, rather than kept in the
+ * DOM hidden — a permanently mounted fixed-position element on someone else's page
+ * is a good way to break their layout.
+ *
+ * Listens in the capture phase so Drupal's own key handlers (and CKEditor's, which
+ * binds plenty) cannot swallow the chord first.
+ */
+const registerCommandPalette = () => {
+  let overlay: { unmount: () => void } | null = null;
+
+  const close = () => {
+    overlay?.unmount();
+    overlay = null;
+  };
+
+  document.addEventListener('keydown', (e) => {
+    const isChord = (e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'k';
+    if (!isChord) return;
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Toggle, so a second ⌘K dismisses rather than stacking overlays.
+    if (overlay) {
+      close();
+      return;
+    }
+
+    overlay = injectOverlay(<CommandPalette onClose={close} />);
+  }, true);
+};
+
 const init = async () => {
   const settings = await getSettings();
   const url = window.location.href;
+
+  if (settings.commandPalette) {
+    registerCommandPalette();
+  }
 
   // Feature 1: Taxonomy Combobox
   if (settings.combobox && (url.includes('/node/add/') || (url.includes('/node/') && url.includes('/edit')))) {

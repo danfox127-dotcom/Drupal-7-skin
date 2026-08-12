@@ -125,9 +125,35 @@ passing; shared stylesheet; existing three components restyled with no behavior 
 
 ---
 
-## Phase 2 — Popup + command palette
+## Phase 2 — Popup + command palette ✅ COMPLETE
 
-Both are self-contained, need no live D7 markup, and deliver visible progress.
+Both are self-contained, need no live D7 markup, and delivered visible progress.
+
+**Delivered:** `src/lib/commands.ts` (registry), `src/components/CommandPalette.tsx`,
+`src/components/Toast.tsx`, `src/lib/extractPublicHtml.ts` (sanitizer extracted from
+`HtmlExport` so the palette command and the button share one implementation),
+`injectOverlay` in `inject.tsx`, `src/popup/useImportQueue.ts`, and the popup rebuilt with
+the Import Queue. 61 tests passing; palette verified in Chrome across 15 behaviors
+(open/close/toggle, keyboard nav with wrap-around, filtering, empty state, focus trap,
+DOM cleanup on close) with zero page errors.
+
+**Two deliberate deviations from the prototype, both to avoid shipping dead UI:**
+
+1. **Three palette commands are not registered.** The prototype lists "Save draft to
+   Drupal", "Publish", and "Import from URL"; those belong to the Phase 5 editor and Phase 6
+   import flow. Rows that do nothing are worse than absent rows, so they get added with
+   their features. `tests/command-palette.spec.ts` asserts every registered command has
+   either a `path` or a `run`, which prevents the gap from reopening.
+2. **The "Import from URL" quick link is omitted**, since it would 404 until Phase 6. The
+   Import Queue itself *is* shipped and functional — it persists, de-duplicates, validates,
+   and rejects non-http schemes. Clicking a queued row currently opens the source page in a
+   new tab; Phase 6 repoints it at the mapping review, at which point the design's "open a
+   URL to review its mapping" wording becomes accurate.
+
+**Also worth carrying forward:** the palette lives in its own body-level shadow root via
+`injectOverlay`, because a fixed-position scrim is clipped by any ancestor with a transform
+or overflow and Drupal's admin theme has plenty of both. The ⌘K listener is registered in
+the capture phase so CKEditor's key handling cannot swallow the chord.
 
 **Popup (screen 7).** 320px, `#1D4F91` header with wordmark and active host. `App.tsx`
 already derives the host from the active tab, so that logic stays. Add the **Import
@@ -174,8 +200,9 @@ the menu-parent picker in Phase 5; build it once as a utility with unit tests.
 `#1D4F91` needs review). **Filters apply as you type — no Apply button.** Chip row of
 content types, then dashed-border saved views (My recent edits, Unpublished drafts, Needs
 review). Per-row Edit / View / Copy HTML — no bulk Operations dropdown. J/K to move, ⏎ to
-edit. "Copy HTML" reuses `HtmlExport.tsx`'s sanitizer, so extract that logic out of the
-component now.
+edit. "Copy HTML" reuses the sanitizer already extracted to
+`src/lib/extractPublicHtml.ts` in Phase 2 — call `copyPublicHtml` rather than adding a
+third copy.
 
 **Exit criteria:** manager round-trips a real menu with correct weights/`plid`; ancestor-
 retaining filter unit-tested; content list filters on keystroke with working J/K/⏎.

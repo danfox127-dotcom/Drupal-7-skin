@@ -4,12 +4,15 @@ export interface Settings {
   combobox: boolean;
   htmlExport: boolean;
   menuTree: boolean;
+  /** ⌘K command palette on every matched admin page. */
+  commandPalette: boolean;
 }
 
 export const SETTING_DEFAULTS: Settings = {
   combobox: true,
   htmlExport: true,
   menuTree: true,
+  commandPalette: true,
 };
 
 export function useSettings() {
