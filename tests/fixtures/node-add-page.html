@@ -107,11 +107,23 @@
         </div>
         <div class="form-item form-type-select">
           <label for="edit-menu-parent">Parent item</label>
+          <!--
+            Depth mirrors the live main menu, which nests five levels before a leaf:
+            Specialties > Cardiology & Cardiac Surgery > Our Services >
+            Active BP Blood Pressure Monitoring > Video Tutorial.
+            Drupal encodes depth as leading hyphens.
+          -->
           <select id="edit-menu-parent" name="menu[parent]" class="form-select">
             <option value="main-menu:0" selected="selected">&lt;Main menu&gt;</option>
             <option value="main-menu:100">-About Us</option>
             <option value="main-menu:101">--Annual Report 2021-2022</option>
             <option value="main-menu:102">---Dean's Message</option>
+            <option value="main-menu:200">-Specialties</option>
+            <option value="main-menu:201">--Cardiology &amp; Cardiac Surgery</option>
+            <option value="main-menu:202">---Our Services</option>
+            <option value="main-menu:203">----Active BP Blood Pressure Monitoring</option>
+            <option value="main-menu:204">-----Video Tutorial</option>
+            <option value="main-menu:205">-----FAQ</option>
             <option value="main-menu:107">-Patient Resources</option>
           </select>
         </div>
