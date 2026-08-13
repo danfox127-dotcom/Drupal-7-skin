@@ -6,7 +6,9 @@ import { MenuTree, MenuItem } from '../components/MenuTree';
 import { CommandPalette } from '../components/CommandPalette';
 import { ContentList } from '../components/ContentList';
 import { NodeEditor } from '../components/editor/NodeEditor';
-import { findContentTable, parseContentList, currentUsername, diagnoseContentList } from '../lib/parseContentList';
+import {
+  findContentTable, parseContentList, currentUsername, diagnoseContentList, totalRowsInView,
+} from '../lib/parseContentList';
 import { discoverSchema, explainSchema, isNodeFormPath } from '../lib/formSchema';
 import { getPendingImport } from '../lib/import/pending';
 import { maybeShowImportReview } from './importFlow';
@@ -398,14 +400,31 @@ const init = async () => {
     if (table && rows && rows.length > 0) {
       table.style.display = 'none';
 
-      // Drupal's exposed filter form and bulk-operations block are superseded by
-      // the live filters and per-row actions.
-      document.querySelectorAll('#node-admin-filter, .node-admin-filter').forEach(el => {
+      // tableheader.js leaves a cloned header table behind. Hiding only the real table
+      // leaves that clone floating as a stray bar above the replacement.
+      document.querySelectorAll('table.sticky-header').forEach(el => {
         (el as HTMLElement).style.display = 'none';
       });
 
+      /**
+       * Drupal's own filter is superseded ONLY when this page is the whole list.
+       *
+       * When the View paginates, Drupal's Title filter is the one control that searches
+       * every row; ours searches the 50 that were rendered. Hiding it on demo-dean would
+       * have removed the only way to find anything among 11,760 nodes, and left the
+       * replacement quietly less capable than what it covered up.
+       */
+      const total = totalRowsInView();
+      const paginated = typeof total === 'number' && total > rows.length;
+
+      if (!paginated) {
+        document.querySelectorAll('#node-admin-filter, .node-admin-filter').forEach(el => {
+          (el as HTMLElement).style.display = 'none';
+        });
+      }
+
       injectComponent(table, (
-        <ContentList rows={rows} currentUser={currentUsername()} />
+        <ContentList rows={rows} currentUser={currentUsername()} totalInView={total} />
       ), 'before');
     } else {
       // A string, not an object: Chrome's extension error page renders a logged object

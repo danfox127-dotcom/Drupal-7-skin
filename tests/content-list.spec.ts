@@ -309,6 +309,29 @@ test.describe('parsing /admin/content when it is a View', () => {
     expect(rows[1].updated).toBe('08/11/2026');
   });
 
+  /**
+   * The list only ever holds the page Drupal rendered. On demo-dean that is 50 of 11,760,
+   * so the header has to be able to distinguish "no match here" from "no such content".
+   */
+  test('reads the view total off the Views Bulk Operations select-all button', async ({ page }) => {
+    await load(page, ALIASED_WITH_STICKY_CLONE.replace(
+      '<span class="vbo-table-this-page">Selected <strong>50 rows</strong>\n            in this page.</span>',
+      '<input class="vbo-table-select-all-pages" type="submit" value="Select all 11760 rows in this view.">'
+    ));
+    const total = await page.evaluate(() => (window as any).CL.totalRowsInView(document));
+    expect(total).toBe(11760);
+  });
+
+  test('reads a comma-formatted total from a views summary', async ({ page }) => {
+    await load(page, '<div class="view-header">Displaying 1 - 50 of 11,760</div>');
+    expect(await page.evaluate(() => (window as any).CL.totalRowsInView(document))).toBe(11760);
+  });
+
+  test('returns null when the page states no total, rather than inventing one', async ({ page }) => {
+    await load(page, RENAMED);
+    expect(await page.evaluate(() => (window as any).CL.totalRowsInView(document))).toBeNull();
+  });
+
   test('a sticky clone is never chosen even when it is the only Title-headed table', async ({ page }) => {
     await load(page, `
       <table class="sticky-header">

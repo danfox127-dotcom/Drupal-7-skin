@@ -306,6 +306,31 @@ export function parseContentList(root: ParentNode = document): ContentRow[] | nu
 }
 
 /**
+ * How many rows the whole View holds, not just this page — or null if the page doesn't say.
+ *
+ * This matters because the search box only ever filters the rows Drupal rendered. On
+ * demo-dean that is 50 of 11,760: searching "cardiology" there returns nothing whenever the
+ * match is on page 2, which reads as "no such content" rather than "not on this page". The
+ * header has to be able to say so.
+ *
+ * Views Bulk Operations states the figure outright on its select-all-pages button
+ * ("Select all 11760 rows in this view."). Otherwise a views summary of the form
+ * "Displaying 1 - 50 of 11760" is parsed. Both are optional, hence null.
+ */
+export function totalRowsInView(root: ParentNode = document): number | null {
+  const vbo = root.querySelector<HTMLInputElement>('.vbo-table-select-all-pages');
+  const fromVbo = /\b(\d[\d,]*)\s+rows?\b/i.exec(vbo?.value ?? '');
+  if (fromVbo) return Number(fromVbo[1].replace(/,/g, ''));
+
+  for (const el of Array.from(root.querySelectorAll('.view-header, .item-list, .views-summary, .pager'))) {
+    const match = /\bof\s+(\d[\d,]*)\b/i.exec(norm(el.textContent));
+    if (match) return Number(match[1].replace(/,/g, ''));
+  }
+
+  return null;
+}
+
+/**
  * Best-effort read of the logged-in username from Drupal 7's admin toolbar.
  *
  * Used only to offer the "My recent edits" saved view; when it cannot be
