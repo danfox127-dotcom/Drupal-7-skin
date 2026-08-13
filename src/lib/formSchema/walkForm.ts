@@ -36,10 +36,13 @@ function cleanLabel(label: Element | null): string {
 export function baseNameOf(name: string): string {
   if (!name) return '';
 
-  const managedFile = name.match(/^files\[(.+?)\]$/);
-  if (managedFile) {
-    // files[field_teaser_image_und_0] -> field_teaser_image
-    return managedFile[1].replace(/_und(_\d+)?$/, '').trim();
+  // files[field_teaser_image_und_0] -> field_teaser_image  (core managed_file)
+  // media[field_image_teaser_und_0] -> field_image_teaser   (Media module, which the
+  // live site actually uses — it renders a textfield plus a browse button, not an
+  // <input type=file>)
+  const wrapped = name.match(/^(?:files|media)\[(.+?)\]$/);
+  if (wrapped) {
+    return wrapped[1].replace(/_und(_\d+)?$/, '').trim();
   }
 
   const bracket = name.indexOf('[');
@@ -99,6 +102,16 @@ function classify(controls: HTMLElement[], wrapper: Element): FieldKind {
   if (tag === 'INPUT') {
     const input = first as HTMLInputElement;
     const type = (input.getAttribute('type') ?? 'text').toLowerCase();
+
+    /**
+     * The Media module renders a reference field as a TEXT input with a browse button,
+     * so type=file never appears. Left as text, the overlay would show an editable box
+     * over a media reference and invite someone to type into it.
+     */
+    if (/^media\[/.test(input.name ?? '')
+      || wrapper.querySelector('.media-widget, .launcher, a.button-yellow')) {
+      return 'file';
+    }
 
     if (type === 'checkbox') {
       return controls.length > 1 ? 'checkboxGroup' : 'checkbox';
@@ -182,8 +195,9 @@ function labelForGroupWidget(
   first: HTMLElement,
   fallback: HTMLElement
 ): { label: string; host: HTMLElement } {
-  const container = (first.closest('.form-checkboxes, .form-radios, .field-widget') as HTMLElement | null)
-    ?? fallback;
+  const container = (first.closest(
+    '.form-checkboxes, .form-radios, .field-widget, .container-inline-date, .date-no-float'
+  ) as HTMLElement | null) ?? fallback;
 
   let node: HTMLElement | null = container.parentElement;
   // A small cap: the field's own label is one or two levels out. Walking further
@@ -245,6 +259,12 @@ function collectFieldGroups(form: HTMLFormElement): Map<string, HTMLElement[]> {
     // Structural and security inputs are not user fields.
     if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type)) return false;
     if (/^(form_build_id|form_token|form_id|op|changed)$/.test(input.name ?? '')) return false;
+    /**
+     * Multi-value fields render a "Weight for row N" select per row so the rows can be
+     * dragged. It is UI plumbing, not content — three of them showed up as fields on the
+     * live News form, under Related Content and Groups.
+     */
+    if (/\[_weight\]$/.test(input.name ?? '')) return false;
     return true;
   });
 
@@ -316,12 +336,21 @@ export function walkForm(form: HTMLFormElement): FieldDescriptor[] {
       ?? form;
 
     const kindProbe = classify(controls, wrapper);
-    const isGroupWidget = kindProbe === 'checkboxGroup' || kindProbe === 'radioGroup';
+
+    /**
+     * Widgets built from several controls cannot take their label from the first one.
+     * A checkbox group would be named after its first option ("Allergy" instead of
+     * "Topics"), and a date cluster after its first select — the live News form's date
+     * field came through labelled "Year" rather than from its "Date" legend.
+     */
+    const isMultiControl = kindProbe === 'checkboxGroup'
+      || kindProbe === 'radioGroup'
+      || (kindProbe === 'date' && controls.length > 1);
 
     let label: string;
     let labelHost: HTMLElement;
 
-    if (isGroupWidget) {
+    if (isMultiControl) {
       const resolved = labelForGroupWidget(first, wrapper);
       label = resolved.label;
       labelHost = resolved.host;
