@@ -1,7 +1,7 @@
 import {
   FieldDescriptor, FieldKind, FieldOption, FormSchema, VerticalTab,
 } from './types';
-import { assignSection } from './sectionRules';
+import { assignSection, isAdvancedField } from './sectionRules';
 
 /**
  * Reads a rendered Drupal 7 node form into a normalized schema.
@@ -399,6 +399,7 @@ export function walkForm(form: HTMLFormElement): FieldDescriptor[] {
       elements: controls,
       options: readOptions(controls, kindProbe, labelHost),
       multiValue,
+      advanced: isAdvancedField({ label: label || baseName, baseName }),
     });
   }
 

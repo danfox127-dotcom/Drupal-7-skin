@@ -257,6 +257,41 @@ export const SECTION_RULES: SectionRule[] = [
 ];
 
 /**
+ * Fields that are real but rarely touched, and should not dominate a rail section.
+ *
+ * These come mostly from menu-attribute and link modules: on the live Page form the rail
+ * filled with ID, NAME, RELATIONSHIP, CLASSES, STYLE, TARGET, ACCESS KEY, SECTION STYLE
+ * and MODAL NID, each with a paragraph of help text, pushing the fields an editor
+ * actually uses off the screen.
+ *
+ * Marked rather than hidden: they stay reachable behind a disclosure, because "rarely"
+ * is not "never" and silently dropping a field an editor needs is worse than a long list.
+ */
+const ADVANCED_LABEL_PATTERNS: RegExp[] = [
+  /^id$/, /^name$/, /^relationship$/, /^rel$/,
+  /^class(es)?$/, /^style$/, /^target$/, /^access key$/, /^accesskey$/,
+  /^section style$/, /^modal\.? ?nid$/, /^weight/, /^language$/,
+  /^expanded$/, /^show as expanded$/, /^description$/,
+];
+
+const ADVANCED_NAME_PATTERNS: RegExp[] = [
+  /_attributes?$/, /^menu_attributes/, /\[attributes\]/, /_weight$/,
+];
+
+/**
+ * True when a field belongs behind an "advanced" disclosure rather than inline.
+ *
+ * Deliberately label-driven like the section rules, since these come from contributed
+ * modules whose machine names vary between sites.
+ */
+export function isAdvancedField(input: { label: string; baseName: string }): boolean {
+  const label = input.label.trim().toLowerCase();
+  const name = input.baseName.trim().toLowerCase();
+  return ADVANCED_LABEL_PATTERNS.some(p => p.test(label))
+    || ADVANCED_NAME_PATTERNS.some(p => p.test(name));
+}
+
+/**
  * Assigns a section. Returns the section and the rule id that claimed it, so a
  * misfiled field can be traced to a specific rule rather than guessed at.
  */

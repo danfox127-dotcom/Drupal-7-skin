@@ -71,6 +71,11 @@ export interface FieldDescriptor {
   options?: FieldOption[];
   /** True when Drupal rendered an "Add another item" multi-value widget. */
   multiValue: boolean;
+  /**
+   * Rarely-used field, rendered behind a disclosure so it does not crowd out the fields
+   * an editor actually reaches for. Still fully editable.
+   */
+  advanced: boolean;
 }
 
 /** A vertical tab (Meta tags, URL path settings, …) and its collapsed summary. */

@@ -524,6 +524,64 @@ test.describe('D7 Studio: menu parent depth', () => {
   });
 });
 
+test.describe('D7 Studio: rarely-used fields collapse', () => {
+  /**
+   * The live Page form's Menu Placement section filled with menu-attribute fields — ID,
+   * Name, Relationship, Classes, Style, Target, Access key, Section style, Modal nid —
+   * each with help text, which buried the parent picker the section exists for.
+   *
+   * They collapse rather than disappear: rarely is not never, and a section that silently
+   * omits fields is worse than a long one.
+   */
+  const openMenu = async (page: import('@playwright/test').Page, settings: any) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/add/page`);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Menu Placement' }).click();
+    await expect(page.locator(`${UI} input[placeholder="Filter parent items"]`)).toBeVisible();
+  };
+
+  test('menu-attribute fields are hidden behind a disclosure by default', async ({ page, settings }) => {
+    await openMenu(page, settings);
+
+    // The parent picker is visible; the attribute fields are not.
+    await expect(page.locator(`${UI} aside >> text=Parent item`)).toBeVisible();
+    await expect(page.locator(`${UI} [data-advanced-fields]`)).toHaveCount(0);
+    await expect(page.locator(`${UI} aside >> text=/Show 9 rarely-used fields/`)).toBeVisible();
+  });
+
+  test('they are reachable and editable once revealed', async ({ page, settings }) => {
+    await openMenu(page, settings);
+    await page.locator(`${UI} aside button`, { hasText: /Show 9 rarely-used fields/ }).click();
+
+    await expect(page.locator(`${UI} [data-advanced-fields]`)).toBeVisible();
+    // And they still write through to the native inputs.
+    const classes = page.locator(`${UI} [data-advanced-fields] input`).nth(3);
+    await classes.fill('promo-link');
+    const written = await page.evaluate(() =>
+      (document.getElementById('edit-menu-attr-class') as HTMLInputElement).value);
+    expect(written).toBe('promo-link');
+  });
+
+  test('the section header says how many are held back', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/add/page`);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    // Visible without opening the section, so nothing feels missing.
+    await expect(page.locator(`${UI} aside >> text=/rarely used/`).first()).toBeVisible();
+  });
+
+  test('collapsing does not remove them from the form', async ({ page, settings }) => {
+    // They must still submit while collapsed — hiding a field in the overlay must not
+    // change what Drupal receives.
+    await openMenu(page, settings);
+    const submitted = await page.evaluate(() =>
+      new FormData(document.querySelector('form.node-form') as HTMLFormElement)
+        .has('menu[options][attributes][class]'));
+    expect(submitted).toBe(true);
+  });
+});
+
 test.describe('D7 Studio: safe defaults', () => {
   test('the two-pane editor is OFF by default, leaving the native form intact', async ({ page }) => {
     // It replaces an entire live editing form on discovery rules that are not yet
