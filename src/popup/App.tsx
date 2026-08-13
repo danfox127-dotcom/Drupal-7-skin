@@ -154,7 +154,7 @@ export function App() {
       {/* Footer */}
       <div className="px-4 py-2 flex items-center justify-between">
         <span className="text-[9px] text-slate-300 uppercase tracking-widest font-bold">v0.1.0</span>
-        <span className="text-[9px] text-slate-300 uppercase tracking-widest font-bold">columbiadoctors.org</span>
+        <span className="text-[9px] text-slate-300 uppercase tracking-widest font-bold truncate ml-2">{displayOrigin ?? 'drupal 7'}</span>
       </div>
     </div>
   );

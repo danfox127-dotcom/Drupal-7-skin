@@ -6,7 +6,11 @@
   "permissions": ["storage", "clipboardWrite", "tabs"],
   "host_permissions": [
     "*://*.columbiadoctors.org/admin/*",
-    "*://*.columbiadoctors.org/node/*"
+    "*://*.columbiadoctors.org/node/*",
+    "*://*.vagelos.columbia.edu/admin/*",
+    "*://*.vagelos.columbia.edu/node/*",
+    "*://*.cuimc.columbia.edu/admin/*",
+    "*://*.cuimc.columbia.edu/node/*"
   ],
   "action": {
     "default_popup": "index.html"
@@ -17,6 +21,10 @@
       "matches": [
         "*://*.columbiadoctors.org/admin/*",
         "*://*.columbiadoctors.org/node/*",
+        "*://*.vagelos.columbia.edu/admin/*",
+        "*://*.vagelos.columbia.edu/node/*",
+        "*://*.cuimc.columbia.edu/admin/*",
+        "*://*.cuimc.columbia.edu/node/*",
         "file://*/*"
       ]
     }
