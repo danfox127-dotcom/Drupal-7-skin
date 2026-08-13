@@ -9,7 +9,7 @@ import {
   clearDraft, assessDraft, formatAge,
 } from '../../lib/autosave';
 import { readFormErrors, hasErrors, FormErrors } from '../../lib/validationErrors';
-import { FieldControl } from './FieldControl';
+import { FieldControl, SlottedFieldsContext, EMPTY_SLOTTED } from './FieldControl';
 import { PrimaryField, primaryRole } from './PrimaryField';
 import { TopicsSection } from './TopicsSection';
 import { MenuSection } from './MenuSection';
@@ -263,6 +263,7 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
   const typeFields = fieldsBySection.get('typeFields') ?? [];
 
   return (
+    <SlottedFieldsContext.Provider value={slottedFields ?? EMPTY_SLOTTED}>
     <div className="bg-canvas font-sans">
       {/* Sticky action bar */}
       <div className="sticky top-11 z-40 bg-white border-b border-rule px-4.5 py-3 flex items-center gap-4 flex-wrap">
@@ -487,5 +488,6 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
 
       {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}
     </div>
+    </SlottedFieldsContext.Provider>
   );
 };

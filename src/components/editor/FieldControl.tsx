@@ -13,14 +13,33 @@ import { slotNameFor } from '../../content/inject';
  * still renders and still saves, rather than being dropped.
  */
 
+/**
+ * The set of fields whose native widget was relocated into the overlay host.
+ *
+ * This is context rather than a prop because getting it wrong FAILS SILENTLY AND LOSES
+ * DATA, and it was already wrong in three places. A relocated widget is a light-DOM child
+ * of the shadow host carrying a `slot` attribute; if nothing renders a matching `<slot>`,
+ * the browser does not render that child AT ALL. So the editor showed a reimplemented text
+ * box, the user typed into it, and — because controls inside a shadow root are not
+ * form-associated and so are never submitted — the real field kept its old value and the
+ * typing was discarded with no error anywhere.
+ *
+ * TopicsSection and MenuSection both rendered FieldControl without threading the prop,
+ * which is how Tags became invisible on both demo sites. Reading from context means a
+ * section cannot forget.
+ */
+/** Stable identity, so providing "nothing relocated" does not re-render on every pass. */
+export const EMPTY_SLOTTED: ReadonlySet<string> = new Set();
+export const SlottedFieldsContext = React.createContext<ReadonlySet<string>>(EMPTY_SLOTTED);
+
 interface Props {
   field: FieldDescriptor;
   error?: string | null;
   /** Compact layout for the right rail; roomier in the left column. */
   dense?: boolean;
   /**
-   * True when the native widget was relocated into the overlay host and should be
-   * projected here through a named slot, rather than reimplemented.
+   * Overrides the context. Only needed when rendering a field whose widget was not
+   * relocated by the usual pass; leave unset and the context decides.
    */
   slotted?: boolean;
   onChange?: (field: FieldDescriptor, value: FieldValue) => void;
@@ -40,7 +59,10 @@ export function FieldLabel({ field, htmlFor }: { field: FieldDescriptor; htmlFor
   );
 }
 
-export const FieldControl = ({ field, error, dense, slotted, onChange }: Props) => {
+export const FieldControl = ({ field, error, dense, slotted: slottedProp, onChange }: Props) => {
+  const relocated = React.useContext(SlottedFieldsContext);
+  const slotted = slottedProp ?? relocated.has(field.machineName);
+
   const [value, setValue] = useState<FieldValue>(() => readValue(field));
   const [writeFailed, setWriteFailed] = useState(false);
 

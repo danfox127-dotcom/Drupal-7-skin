@@ -250,4 +250,71 @@ test.describe('parsing /admin/content when it is a View', () => {
     expect(report).toContain('0 table(s)');
     expect(report).toContain('chose: none');
   });
+
+  /**
+   * Regression: demo-dean-cuimc-chai.pantheonsite.io/admin/content, verified live.
+   *
+   * Two failures compounded there. Pathauto meant not one href in a 51-row listing
+   * contained "/node/", so both link-based heuristics scored 0; the last resort then took
+   * the first table with a Title header, which was Drupal's own floating-header CLONE with
+   * an empty tbody. Result: rows parsed: 0 and the whole feature silently declined.
+   */
+  const ALIASED_WITH_STICKY_CLONE = `
+    <table class="sticky-header">
+      <thead><tr><th></th><th>Title</th><th>Type</th><th>Author</th><th>Published</th>
+                 <th>Status</th><th>Updated</th><th>Operations</th></tr></thead>
+      <tbody></tbody>
+    </table>
+    <table class="views-table sticky-enabled cols-8 tableheader-processed sticky-table">
+      <thead><tr><th></th><th>Title</th><th>Type</th><th>Author</th><th>Published</th>
+                 <th>Status</th><th>Updated</th><th>Operations</th></tr></thead>
+      <tbody>
+        <tr class="views-table-row-select-all even">
+          <td colspan="16"><span class="vbo-table-this-page">Selected <strong>50 rows</strong>
+            in this page.</span></td>
+        </tr>
+        <tr><td><input type="checkbox"></td>
+            <td><a href="/events/medicine-grand-rounds-34">Medicine Grand Rounds</a></td>
+            <td>Event</td><td>dfox</td><td>08/12/2026</td><td>Published</td><td>08/12/2026</td>
+            <td><a href="/node/8821/edit">edit</a></td></tr>
+        <tr><td><input type="checkbox"></td>
+            <td><a href="/events/iicd-seminar-series-jun-allard">IICD Seminar Series</a></td>
+            <td>Event</td><td>dfox</td><td>08/11/2026</td><td>Published</td><td>08/11/2026</td>
+            <td><a href="/node/8822/edit">edit</a></td></tr>
+      </tbody>
+    </table>`;
+
+  test('ignores Drupal\'s empty sticky-header clone and parses the real table', async ({ page }) => {
+    await load(page, ALIASED_WITH_STICKY_CLONE);
+    const rows = await rowsOf(page);
+    expect(rows).not.toBeNull();
+    // 2 content rows — the VBO "Selected 50 rows" strip is furniture, not a record.
+    expect(rows).toHaveLength(2);
+    expect(rows[0].title).toBe('Medicine Grand Rounds');
+  });
+
+  test('drops the Views Bulk Operations select-all row instead of listing it as content', async ({ page }) => {
+    await load(page, ALIASED_WITH_STICKY_CLONE);
+    const rows = await rowsOf(page);
+    expect(rows.map((r: any) => r.title)).not.toContain(expect.stringContaining('Selected'));
+    expect(rows.every((r: any) => !/Selected/.test(r.title))).toBe(true);
+  });
+
+  test('finds the title column when every content link is a Pathauto alias', async ({ page }) => {
+    // No "/node/N" title links anywhere — only the operations column is unaliased.
+    await load(page, ALIASED_WITH_STICKY_CLONE);
+    const rows = await rowsOf(page);
+    expect(rows[1].title).toBe('IICD Seminar Series');
+    // nodeId comes from the aliased href, so it is legitimately absent; the row still works.
+    expect(rows[1].updated).toBe('08/11/2026');
+  });
+
+  test('a sticky clone is never chosen even when it is the only Title-headed table', async ({ page }) => {
+    await load(page, `
+      <table class="sticky-header">
+        <thead><tr><th>Title</th><th>Type</th></tr></thead><tbody></tbody>
+      </table>`);
+    // Nothing parseable remains, so Drupal must keep its own page.
+    expect(await rowsOf(page)).toBeNull();
+  });
 });

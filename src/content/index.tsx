@@ -229,6 +229,51 @@ const init = async () => {
           <NodeEditor schema={schema} slottedFields={slotted} />
         </React.StrictMode>
       );
+
+      /**
+       * Verifies every relocated widget can actually be seen.
+       *
+       * A light-DOM child with `slot="x"` renders ONLY if some `<slot name="x">` exists in
+       * the shadow tree. When it does not, the browser hides the child with no error, the
+       * editor shows a reimplemented control in its place, and anything typed there is
+       * dropped — controls inside a shadow root are not form-associated, so they are never
+       * submitted. That is silent data loss, and it shipped: Tags was invisible on both
+       * demo sites because two sections did not thread `slottedFields`.
+       *
+       * Collapsed sections legitimately have no slot yet, so the check EXPANDS everything
+       * first. It only reports, never repairs — a wrong repair here would move a live
+       * widget out of the form and stop it saving.
+       */
+      if (settings.debugSchema) {
+        // Two frames: one for React's commit, one for layout after expanding.
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+        const shadow = mount.container.shadowRoot;
+        if (shadow) {
+          shadow.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(el => el.click());
+          await new Promise(resolve => setTimeout(resolve, 250));
+
+          const rendered = new Set(
+            Array.from(shadow.querySelectorAll('slot'))
+              .map(s => s.getAttribute('name'))
+              .filter((name): name is string => !!name)
+          );
+
+          const orphans = Array.from(mount.container.children)
+            .map(child => child.getAttribute('slot'))
+            .filter((name): name is string => !!name && !rendered.has(name));
+
+          if (orphans.length) {
+            console.error(
+              `${logStamp()} ${orphans.length} relocated widget(s) have no matching slot and are `
+              + 'therefore INVISIBLE, while still being submitted with the form:\n  '
+              + orphans.join('\n  ')
+              + '\nThe section rendering these fields is not passing them through '
+              + 'SlottedFieldsContext. Report this output.'
+            );
+          }
+        }
+      }
     }
 
   }
