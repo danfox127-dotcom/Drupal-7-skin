@@ -13,15 +13,7 @@
     "*://*.columbiadoctors.org/admin/*",
     "*://*.columbiadoctors.org/node/*",
     "*://*.columbia.edu/admin/*",
-    "*://*.columbia.edu/node/*",
-    "*://demo-ps-chai.pantheonsite.io/admin/*",
-    "*://demo-ps-chai.pantheonsite.io/node/*",
-    "*://demo-doctors-chai.pantheonsite.io/admin/*",
-    "*://demo-doctors-chai.pantheonsite.io/node/*",
-    "*://demo-dean-cuimc-chai.pantheonsite.io/admin/*",
-    "*://demo-dean-cuimc-chai.pantheonsite.io/node/*",
-    "*://neil-doctors-chai.pantheonsite.io/admin/*",
-    "*://neil-doctors-chai.pantheonsite.io/node/*"
+    "*://*.columbia.edu/node/*"
   ],
   "optional_host_permissions": [
     "*://*/*"
@@ -43,14 +35,6 @@
         "*://*.columbiadoctors.org/node/*",
         "*://*.columbia.edu/admin/*",
         "*://*.columbia.edu/node/*",
-        "*://demo-ps-chai.pantheonsite.io/admin/*",
-        "*://demo-ps-chai.pantheonsite.io/node/*",
-        "*://demo-doctors-chai.pantheonsite.io/admin/*",
-        "*://demo-doctors-chai.pantheonsite.io/node/*",
-        "*://demo-dean-cuimc-chai.pantheonsite.io/admin/*",
-        "*://demo-dean-cuimc-chai.pantheonsite.io/node/*",
-        "*://neil-doctors-chai.pantheonsite.io/admin/*",
-        "*://neil-doctors-chai.pantheonsite.io/node/*",
         "file://*/*"
       ]
     }
