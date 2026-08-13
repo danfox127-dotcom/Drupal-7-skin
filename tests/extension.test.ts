@@ -327,11 +327,12 @@ test.describe('D7 Studio: relocated native widgets', () => {
         inForm: Boolean(c.closest('form.node-form')),
       }));
     });
-    expect(relocated).toHaveLength(2);
     expect(relocated.every(r => r.visible && r.inForm)).toBe(true);
-    expect(relocated.map(r => r.input).sort()).toEqual([
-      'media[field_image_hero_und_0]', 'media[field_image_teaser_und_0]',
-    ]);
+    // Autocompletes are relocated as well, so this asserts the media pair is present
+    // rather than that it is the whole set.
+    expect(relocated.map(r => r.input)).toEqual(expect.arrayContaining([
+      'media[field_image_teaser_und_0]', 'media[field_image_hero_und_0]',
+    ]));
   });
 
   test('relocated inputs are still submitted with the form', async ({ page }) => {
@@ -367,6 +368,70 @@ test.describe('D7 Studio: relocated native widgets', () => {
       return w.width > 0 && w.left >= a.left - 2 && w.right <= a.right + 2;
     });
     expect(fits).toBe(true);
+  });
+
+  test('autocompletes are relocated so Drupal\'s type-to-select still works', async ({ page }) => {
+    /**
+     * The regression this guards. Drupal binds its autocomplete to the ORIGINAL input on
+     * keyup; a re-rendered text box looks identical and has no type-ahead at all. On
+     * Related Content that behavior is load-bearing — the editor is matching against real
+     * node titles and cannot be expected to know them exactly.
+     */
+    await settingsFor(page);
+    await page.goto(`${HOST}/node/add/news`);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Related Content' }).click();
+
+    const relocated = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host')!;
+      const w = [...host.children].find(c => c.getAttribute('slot')?.includes('field-services'));
+      return {
+        found: Boolean(w),
+        // Multi-value plumbing must travel with the field: the Add button is a SIBLING of
+        // the delta table, so relocating only the inner .form-item would strand it and an
+        // editor could never add a second item.
+        addAnother: Boolean(w?.querySelector('input[value="Add another item"]')),
+        rowWeight: Boolean(w?.querySelector('select[name*="_weight"]')),
+        stillInForm: Boolean(w?.closest('form.node-form')),
+      };
+    });
+    expect(relocated).toEqual({ found: true, addAnother: true, rowWeight: true, stillInForm: true });
+  });
+
+  test('a relocated autocomplete still submits what was typed', async ({ page }) => {
+    await settingsFor(page);
+    await page.goto(`${HOST}/node/add/news`);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Related Content' }).click();
+
+    const input = page.locator('input[name="field_services[und][0][target_id]"]');
+    // Real keystrokes: fill() dispatches only input/change, so it would not exercise the
+    // keyup path Drupal's autocomplete listens on.
+    await input.click();
+    await input.pressSequentially('cardiology', { delay: 20 });
+
+    const value = await page.evaluate(() =>
+      new FormData(document.querySelector('form.node-form') as HTMLFormElement)
+        .get('field_services[und][0][target_id]'));
+    expect(value).toBe('cardiology');
+  });
+
+  test('the editor does not inject the standalone widgets it supersedes', async ({ page }) => {
+    // They mount as siblings of the native controls, inside the content the editor hides,
+    // so with the editor on they would render inside a display:none ancestor — invisible,
+    // while still having hidden the native select they replaced.
+    await settingsFor(page);
+    // This fixture HAS a menu[parent], so the standalone combobox would inject here —
+    // which is what makes the guard meaningful. It has no Title field, so wait on the
+    // rail header instead.
+    await page.goto(`${HOST}/node/123/edit`);
+    await expect(page.locator(`${UI} >> text=Everything Else`)).toBeVisible();
+
+    const zeroWidth = await page.evaluate(() =>
+      [...document.querySelectorAll('.d7-proxy-ui-container')]
+        .filter(h => !h.classList.contains('d7-proxy-ui-form-host'))
+        .filter(h => h.getBoundingClientRect().width === 0).length);
+    expect(zeroWidth).toBe(0);
   });
 
   test('the overlay does not duplicate Drupal\'s own field label', async ({ page }) => {
