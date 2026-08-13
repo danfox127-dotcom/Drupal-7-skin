@@ -5,6 +5,7 @@ import {
 } from 'lucide-react';
 import { useSettings, Settings as SettingsShape } from './useSettings';
 import { useImportQueue, displayUrl } from './useImportQueue';
+import { requestOriginAccess, setPendingImport } from '../lib/import/pending';
 
 interface QuickLink {
   label: string;
@@ -62,6 +63,7 @@ export function App() {
   const { queue, add, remove, loaded: queueLoaded } = useImportQueue();
   const [draftUrl, setDraftUrl] = useState('');
   const [queueError, setQueueError] = useState<string | null>(null);
+  const [importBusy, setImportBusy] = useState<string | null>(null);
 
   useEffect(() => {
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
@@ -94,6 +96,59 @@ export function App() {
     const error = add(draftUrl);
     setQueueError(error);
     if (!error) setDraftUrl('');
+  };
+
+  /**
+   * Starts an import: asks for access to that one origin, fetches through the service
+   * worker, extracts, and parks the result for the node form to review.
+   *
+   * The permission request must happen here — chrome.permissions.request needs a user
+   * gesture in an extension page, and is unavailable to service workers and content
+   * scripts.
+   */
+  const startImport = async (url: string) => {
+    setImportBusy(url);
+    setQueueError(null);
+
+    try {
+      const granted = await requestOriginAccess(url);
+      if (!granted) {
+        setQueueError('Access to that site was declined, so it cannot be fetched.');
+        return;
+      }
+
+      const response = await chrome.runtime.sendMessage({ type: 'fetchSource', url });
+      if (!response?.ok || !response.html) {
+        setQueueError(response?.error ?? 'Could not fetch that page.');
+        return;
+      }
+
+      // Raw HTML is parked as-is. Extraction happens on the node form, where the
+      // text format's allowed-tag list can actually be read — filtering here would
+      // guess at it.
+      await setPendingImport({
+        html: response.html,
+        sourceUrl: response.finalUrl ?? url,
+        targetType: null,
+        createdAt: Date.now(),
+        applied: false,
+      });
+
+      if (!tabOrigin) {
+        setQueueError('Open a Drupal admin tab first — the review fills that form.');
+        return;
+      }
+
+      // The review happens on the node form, because approving it fills that form.
+      chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+        if (tab?.id) chrome.tabs.update(tab.id, { url: `${tabOrigin}/node/add/news` });
+        window.close();
+      });
+    } catch (err) {
+      setQueueError(err instanceof Error ? err.message : 'Import failed.');
+    } finally {
+      setImportBusy(null);
+    }
   };
 
   return (
@@ -157,15 +212,16 @@ export function App() {
           <ul className="mt-2">
             {queue.map(item => (
               <li key={item.url} className="flex items-center gap-2 px-4 py-1.5 hover:bg-rail transition-colors duration-200 ease-studio group">
-                {/* Phase 6 repoints this at the mapping review. For now it opens
-                    the source page, which is genuinely useful and honest. */}
+                {/* Clicking a queued URL now opens its mapping review, which is what
+                    the design always specified. */}
                 <button
                   type="button"
-                  onClick={() => chrome.tabs.create({ url: item.url })}
+                  onClick={() => void startImport(item.url)}
+                  disabled={importBusy !== null}
                   title={item.url}
-                  className="flex-1 min-w-0 text-left text-control text-cu-blue truncate hover:underline"
+                  className="flex-1 min-w-0 text-left text-control text-cu-blue truncate hover:underline disabled:opacity-50"
                 >
-                  {displayUrl(item.url)}
+                  {importBusy === item.url ? 'Fetching…' : displayUrl(item.url)}
                 </button>
                 <button
                   type="button"
@@ -184,7 +240,7 @@ export function App() {
           <p className="px-4 pt-1.5 text-help text-ink-help">
             {queue.length === 0
               ? 'Nothing queued. Paste URLs as you find them.'
-              : `${queue.length} page${queue.length === 1 ? '' : 's'} waiting. One at a time.`}
+              : `${queue.length} page${queue.length === 1 ? '' : 's'} waiting. One at a time — open a URL to review its mapping.`}
           </p>
         )}
       </div>
