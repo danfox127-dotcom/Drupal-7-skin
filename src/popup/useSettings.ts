@@ -8,6 +8,12 @@ export interface Settings {
   commandPalette: boolean;
   /** Modern /admin/content list in place of Drupal's table. */
   contentList: boolean;
+  /**
+   * Prints the discovered form schema to the console on node add/edit pages.
+   * Off by default — it is a diagnostic for validating the field-discovery rules
+   * against real forms, not something an editor needs.
+   */
+  debugSchema: boolean;
 }
 
 export const SETTING_DEFAULTS: Settings = {
@@ -16,6 +22,7 @@ export const SETTING_DEFAULTS: Settings = {
   menuTree: true,
   commandPalette: true,
   contentList: true,
+  debugSchema: false,
 };
 
 export function useSettings() {
