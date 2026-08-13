@@ -1,3 +1,64 @@
+@import './fonts.css';
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  /**
+   * Focus is always visible, 2px solid Primary Blue at 2px offset. The identity
+   * treats this as non-negotiable, so it is set globally rather than per
+   * component — a component cannot forget it.
+   *
+   * :focus-visible rather than :focus so pointer users do not see rings on
+   * click, but keyboard users always do.
+   */
+  :focus-visible {
+    outline: 2px solid theme('colors.cu.blue');
+    outline-offset: 2px;
+  }
+
+  /**
+   * Tailwind's preflight resets `outline` on focus expecting a ring utility to
+   * replace it. We do not use ring utilities, so restore the outline above and
+   * make sure nothing suppresses it.
+   */
+  :focus:not(:focus-visible) {
+    outline: none;
+  }
+
+  /**
+   * These styles live inside shadow roots injected into Drupal's own pages, so
+   * :host carries what would normally sit on <body>. Without this, the host
+   * page's typography leaks into our components.
+   */
+  :host {
+    font-family: theme('fontFamily.sans');
+    font-size: 15px;
+    line-height: 1.4;
+    color: theme('colors.ink.DEFAULT');
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  /** The popup is a normal document, so it needs the same on :root. */
+  :root {
+    font-family: theme('fontFamily.sans');
+    color: theme('colors.ink.DEFAULT');
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /**
+   * Transitions are 200–400ms on the identity's easing curve, with no bounce and
+   * no scale-on-press. Respect reduced-motion by removing them entirely.
+   */
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+    }
+  }
+}
