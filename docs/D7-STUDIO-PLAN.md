@@ -256,7 +256,59 @@ retaining filter unit-tested; content list filters on keystroke with working J/K
 
 ---
 
-## Phase 4 — Field discovery engine
+## Phase 4 — Field discovery engine ✅ COMPLETE (pending live validation)
+
+**Delivered:** `src/lib/formSchema/` — `types.ts`, `sectionRules.ts` (the rules table),
+`walkForm.ts` (DOM walker), `index.ts` (detection, discovery, `explainSchema`). Two
+reconstructed fixtures. 35 tests, all passing, run against real DOM in a browser rather
+than a stubbed document.
+
+**Labels are matched before machine names.** This is the central design decision and it
+follows from what the reference screenshots can and cannot show: labels, help text, tab
+structure, and the vertical-tab summaries are *observed*; every `name` attribute is
+*inferred*. A test asserts that a field with a completely unrecognized machine name still
+routes correctly on its label alone.
+
+**Diagnostic hook, which unblocks the remaining validation.** A `debugSchema` toggle (off by
+default) prints `explainSchema` to the console on any node add/edit page — content type,
+every field with its kind/required/options, the rule that claimed it, and the vertical tabs.
+Getting the rules validated no longer needs a hand-copied DOM dump; enabling the toggle and
+pasting the console block is enough. Fields under `[other]` are exactly the ones no rule
+claimed.
+
+**Phase 4 changes nothing on the page.** Discovery is read-only; Phase 5 consumes the schema.
+Verified: with the toggle off nothing is logged, and the native form is untouched.
+
+**Six bugs found by the fixtures, all fixed:**
+
+1. `/field_display/` in the display rule was too broad and swallowed `field_display_date`,
+   filing the News display date under Display Template. Anchored.
+2. Checkbox-group labels resolved to the *first option's* wrapper — Topics was labeled
+   "Allergy". Group widgets now walk outward and accept only a direct child label or a
+   legend, never a descendant label.
+3. `files[field_teaser_image_und_0]` (Drupal's `managed_file` naming) produced baseName
+   `files`, collapsing Teaser and Featured images into one indistinguishable base.
+4. A date widget became three fields (month/day/year) instead of one.
+5. `Sitewide News`, a single checkbox, was flagged multi-value by a *sibling* field's "Add
+   another item" button.
+6. Only the nearest fieldset legend was matched, so a radio group inside "Customize display"
+   > "Display mode" was never attributed to the display tab. Rules now match any ancestor
+   legend, and `matchedBy` records which one.
+
+**Test-runner note:** these tests need a browser, and the installed Chromium did not match
+the version this Playwright expects. `playwright.config.ts` now honors a `CHROME_PATH` env
+var so an existing binary can be used instead of downloading one:
+
+```
+CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npm test
+```
+
+**Still needs live validation** — fixtures cannot prove machine names. Turn on *Log Form
+Schema* in the popup, open a real `/node/add/news` and `/node/add/page`, and send the console
+blocks. Anything under `[other]`, or a field in the wrong section, points at a specific rule
+id to correct.
+
+### Original plan for this phase
 
 **This is the architectural decision the handoff flags as open question #1, and I recommend
 its own recommendation: derive fields from the rendered DOM. Do not hardcode the matrix.**

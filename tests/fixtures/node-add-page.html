@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<!--
+  /node/add/page — same provenance caveats as node-add-news.html.
+
+  Differs from News in exactly the ways the handoff's field matrix says it should:
+  no Byline / Date / External source / References / Related Content / Topics; body
+  optional rather than required; Teaser AND Featured images; Menu settings present;
+  a required "Full page override"; and an extra "Customize display" vertical tab.
+-->
+<html lang="en">
+<head><meta charset="utf-8" /><title>Create Page | ColumbiaDoctors</title></head>
+<body class="html not-front page-node page-node-add node-type-page">
+  <div id="toolbar"><div id="toolbar-user"><a href="/user/42">df2832</a></div></div>
+  <h1 id="page-title">Create Page</h1>
+
+  <form class="node-form node-page-form" id="page-node-form" action="/node/add/page" method="post">
+    <input type="hidden" name="form_build_id" value="form-def456" />
+    <input type="hidden" name="form_token" value="tok456" />
+    <input type="hidden" name="form_id" value="page_node_form" />
+
+    <div class="field-group-tabs-wrapper">
+      <fieldset class="field-group-tab" id="group-overview">
+        <legend><span class="fieldset-legend">Overview</span></legend>
+
+        <div class="form-item form-type-textfield form-item-title">
+          <label for="edit-title">Title <span class="form-required">*</span></label>
+          <input type="text" id="edit-title" name="title" required="required" class="form-text required" />
+        </div>
+
+        <div class="form-item form-type-textfield">
+          <label for="edit-field-subtitle">Subtitle</label>
+          <input type="text" id="edit-field-subtitle" name="field_subtitle[und][0][value]" class="form-text" />
+        </div>
+
+        <!-- Required, and buried in a vertical tab on the legacy form -->
+        <div class="form-item form-type-select form-item-field-full-page-override">
+          <label for="edit-field-full-page-override">Full page override <span class="form-required">*</span></label>
+          <select id="edit-field-full-page-override" name="field_full_page_override[und]" required="required" class="form-select required">
+            <option value="_none">- Select a value -</option>
+            <option value="default" selected="selected">Default layout</option>
+            <option value="full">Full width</option>
+            <option value="landing">Landing</option>
+          </select>
+          <div class="description">Controls the template used to render this page.</div>
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab" id="group-body">
+        <legend><span class="fieldset-legend">Body</span></legend>
+
+        <div class="form-item form-type-textarea">
+          <label for="edit-body-summary">Summary <span class="form-required">*</span></label>
+          <textarea id="edit-body-summary" name="body[und][0][summary]" required="required" class="form-textarea required"></textarea>
+          <div class="description">Doubles as the meta description.</div>
+        </div>
+
+        <!-- Body is optional on Page, unlike News -->
+        <div class="form-item form-type-textarea text-format-wrapper">
+          <label for="edit-body-value">Body</label>
+          <div class="cke">
+            <textarea id="edit-body-value" name="body[und][0][value]" class="form-textarea text-full"></textarea>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab" id="group-multimedia">
+        <legend><span class="fieldset-legend">Multimedia</span></legend>
+        <div class="form-item form-type-managed-file">
+          <label for="edit-field-teaser-image">Teaser Image</label>
+          <input type="file" id="edit-field-teaser-image" name="files[field_teaser_image_und_0]" class="form-file" />
+        </div>
+        <div class="form-item form-type-managed-file">
+          <label for="edit-field-featured-image">Featured Image</label>
+          <input type="file" id="edit-field-featured-image" name="files[field_featured_image_und_0]" class="form-file" />
+          <div class="description">Used at the top of the page.</div>
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab" id="group-groups">
+        <legend><span class="fieldset-legend">Groups</span></legend>
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-field-group-flag" name="field_group[und]" value="1" class="form-checkbox" />
+          <label for="edit-field-group-flag">Group</label>
+        </div>
+        <fieldset>
+          <legend><span class="fieldset-legend">Groups</span></legend>
+          <div class="form-item form-type-textfield">
+            <label for="edit-og-your-groups">Your Groups</label>
+            <input type="text" id="edit-og-your-groups" name="og_group_ref[und][0][default][0][target_id]" class="form-text form-autocomplete" />
+          </div>
+        </fieldset>
+      </fieldset>
+    </div>
+
+    <div class="vertical-tabs">
+      <!-- Page has Menu settings; News does not -->
+      <fieldset class="vertical-tabs-pane" id="edit-menu">
+        <legend><span class="fieldset-legend">Menu settings</span></legend>
+        <span class="summary">Not in menu</span>
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-menu-enabled" name="menu[enabled]" value="1" class="form-checkbox" />
+          <label for="edit-menu-enabled">Provide a menu link</label>
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-link-title">Menu link title</label>
+          <input type="text" id="edit-menu-link-title" name="menu[link_title]" class="form-text" />
+        </div>
+        <div class="form-item form-type-select">
+          <label for="edit-menu-parent">Parent item</label>
+          <select id="edit-menu-parent" name="menu[parent]" class="form-select">
+            <option value="main-menu:0" selected="selected">&lt;Main menu&gt;</option>
+            <option value="main-menu:100">-About Us</option>
+            <option value="main-menu:101">--Annual Report 2021-2022</option>
+            <option value="main-menu:102">---Dean's Message</option>
+            <option value="main-menu:107">-Patient Resources</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-metatags">
+        <legend><span class="fieldset-legend">Meta tags</span></legend>
+        <span class="summary">Using defaults</span>
+        <div class="form-item form-type-textfield">
+          <label for="edit-metatags-title">Page title</label>
+          <input type="text" id="edit-metatags-title" name="metatags[und][title][value]" value="[node:title]" class="form-text" />
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-path">
+        <legend><span class="fieldset-legend">URL path settings</span></legend>
+        <span class="summary">Automatic alias</span>
+        <div class="form-item form-type-textfield">
+          <label for="edit-path-alias">URL alias</label>
+          <input type="text" id="edit-path-alias" name="path[alias]" class="form-text" />
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-xmlsitemap">
+        <legend><span class="fieldset-legend">XML sitemap</span></legend>
+        <span class="summary">Inclusion: Default (included) | Priority: Default (0.5)</span>
+        <div class="form-item form-type-select">
+          <label for="edit-xmlsitemap-status">Inclusion</label>
+          <select id="edit-xmlsitemap-status" name="xmlsitemap[status]">
+            <option value="default" selected="selected">Default (included)</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-revision-information">
+        <legend><span class="fieldset-legend">Revision information</span></legend>
+        <span class="summary">New revision</span>
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-revision" name="revision" value="1" checked="checked" class="form-checkbox" />
+          <label for="edit-revision">Create new revision</label>
+        </div>
+      </fieldset>
+
+      <!-- Page-only, per the field matrix -->
+      <fieldset class="vertical-tabs-pane" id="edit-display">
+        <legend><span class="fieldset-legend">Customize display</span></legend>
+        <span class="summary">Default</span>
+        <div class="form-item form-type-radios">
+          <fieldset>
+            <legend><span class="fieldset-legend">Display mode</span></legend>
+            <div class="form-radios">
+              <div class="form-item form-type-radio"><input type="radio" id="dm1" name="display_mode" value="default" checked="checked" class="form-radio" /><label for="dm1">Default</label></div>
+              <div class="form-item form-type-radio"><input type="radio" id="dm2" name="display_mode" value="wide" class="form-radio" /><label for="dm2">Wide</label></div>
+            </div>
+          </fieldset>
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-shield">
+        <legend><span class="fieldset-legend">Shield settings</span></legend>
+        <span class="summary">Not hidden</span>
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-shield-hidden" name="shield[hidden]" value="1" class="form-checkbox" />
+          <label for="edit-shield-hidden">Hide from search engines</label>
+        </div>
+      </fieldset>
+    </div>
+
+    <div class="form-actions">
+      <input type="submit" id="edit-submit" name="op" value="Save" class="form-submit" />
+    </div>
+  </form>
+</body>
+</html>

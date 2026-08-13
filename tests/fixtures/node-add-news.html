@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<!--
+  /node/add/news — reconstructed from Drupal 7 core's node form markup plus the
+  handoff's reference screenshots of the live form.
+
+  VERIFIED FROM SCREENSHOTS: field labels, help text, the five field-group tabs
+  (Overview / Body / Related Content / Multimedia / Groups), the Primary Topic
+  select, the 36-term Topics checkbox tree with a nested "Health Insights" branch,
+  the Tags autocomplete, Your Groups / Other Groups, the Sitewide News flag, and the
+  five vertical tabs with their exact summaries.
+
+  INFERRED, NOT VERIFIED: every `name` attribute. Machine names are not visible in a
+  screenshot. This is precisely why the rules table matches on labels first.
+-->
+<html lang="en">
+<head><meta charset="utf-8" /><title>Create News | ColumbiaDoctors</title></head>
+<body class="html not-front page-node page-node-add node-type-news">
+  <div id="toolbar"><div id="toolbar-user"><a href="/user/42">df2832</a></div></div>
+  <h1 id="page-title">Create News</h1>
+
+  <form class="node-form node-news-form" id="news-node-form" action="/node/add/news" method="post">
+    <input type="hidden" name="form_build_id" value="form-abc123" />
+    <input type="hidden" name="form_token" value="tok123" />
+    <input type="hidden" name="form_id" value="news_node_form" />
+    <input type="hidden" name="changed" value="0" />
+
+    <!-- Field group tabs -->
+    <div class="field-group-tabs-wrapper">
+
+      <fieldset class="field-group-tab" id="group-overview">
+        <legend><span class="fieldset-legend">Overview</span></legend>
+
+        <div class="form-item form-type-textfield form-item-title">
+          <label for="edit-title">Title <span class="form-required" title="This field is required.">*</span></label>
+          <input type="text" id="edit-title" name="title" value="" required="required" class="form-text required" />
+        </div>
+
+        <div class="form-item form-type-textfield form-item-field-subtitle-und-0-value">
+          <label for="edit-field-subtitle">Subtitle</label>
+          <input type="text" id="edit-field-subtitle" name="field_subtitle[und][0][value]" value="" class="form-text" />
+          <div class="description">Optional deck shown under the headline.</div>
+        </div>
+
+        <div class="form-item form-type-textfield form-item-field-byline-und-0-value">
+          <label for="edit-field-byline">Byline</label>
+          <input type="text" id="edit-field-byline" name="field_byline[und][0][value]" value="" class="form-text" />
+          <div class="description">Start typing a name.</div>
+        </div>
+
+        <div class="form-item form-type-date-select container-inline-date">
+          <label for="edit-field-display-date">Display Date</label>
+          <div class="date-no-float">
+            <select id="edit-field-display-date-month" name="field_display_date[und][0][value][month]">
+              <option value="8" selected="selected">Aug</option><option value="9">Sep</option>
+            </select>
+            <select id="edit-field-display-date-day" name="field_display_date[und][0][value][day]">
+              <option value="12" selected="selected">12</option><option value="13">13</option>
+            </select>
+            <select id="edit-field-display-date-year" name="field_display_date[und][0][value][year]">
+              <option value="2026" selected="selected">2026</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="form-item form-type-textfield">
+          <label for="edit-field-external-source">External News Source</label>
+          <input type="text" id="edit-field-external-source" name="field_external_source[und][0][value]" class="form-text" />
+          <div class="description">Publication name.</div>
+        </div>
+
+        <div class="form-item form-type-textfield">
+          <label for="edit-field-external-url">External URL</label>
+          <input type="text" id="edit-field-external-url" name="field_external_url[und][0][url]" class="form-text" />
+        </div>
+
+        <!-- Paragraphs widget -->
+        <div class="field-type-paragraphs paragraphs-subform">
+          <div class="form-item form-type-select">
+            <label for="edit-field-paragraphs-type">Paragraph type</label>
+            <select id="edit-field-paragraphs-type" name="field_paragraphs[und][add_more][type]">
+              <option value="contact_map" selected="selected">Contact Information and Map</option>
+              <option value="text_block">Text Block</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Primary Topic + Topics tree + Tags -->
+        <div class="form-item form-type-select form-item-field-primary-topic">
+          <label for="edit-field-primary-topic">Primary Topic</label>
+          <select id="edit-field-primary-topic" name="field_primary_topic[und]">
+            <option value="_none" selected="selected">- None -</option>
+            <option value="12">Cardiology &amp; Cardiac Surgery</option>
+            <option value="34">Surgery</option>
+          </select>
+        </div>
+
+        <div class="form-item form-type-checkboxes form-item-field-topics">
+          <label for="edit-field-topics">Topics</label>
+          <div class="form-checkboxes" id="edit-field-topics">
+            <ul class="term-reference-tree-list">
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t1" name="field_topics[und][]" value="1" class="form-checkbox" /><label for="t1">Allergy</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t2" name="field_topics[und][]" value="2" class="form-checkbox" /><label for="t2">Blood Disorders</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t3" name="field_topics[und][]" value="3" class="form-checkbox" /><label for="t3">Cancer</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t4" name="field_topics[und][]" value="12" class="form-checkbox" /><label for="t4">Cardiology &amp; Cardiac Surgery</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t5" name="field_topics[und][]" value="5" class="form-checkbox" /><label for="t5">Care @ Columbia</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t6" name="field_topics[und][]" value="6" class="form-checkbox" /><label for="t6">Dentistry</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t7" name="field_topics[und][]" value="7" class="form-checkbox" /><label for="t7">Dermatology</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t8" name="field_topics[und][]" value="8" class="form-checkbox" /><label for="t8">Digestive &amp; Liver Disorders</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t9" name="field_topics[und][]" value="9" class="form-checkbox" /><label for="t9">Ear, Nose, and Throat</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t10" name="field_topics[und][]" value="10" class="form-checkbox" /><label for="t10">Emergency Medicine</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t11" name="field_topics[und][]" value="11" class="form-checkbox" /><label for="t11">Endocrinology, Diabetes &amp; Metabolism</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t12" name="field_topics[und][]" value="13" class="form-checkbox" /><label for="t12">Genetics &amp; Inherited Disorders</label></div></li>
+              <!-- Hierarchical branch: "Health Insights" has children, per the screenshot's + expander -->
+              <li>
+                <div class="form-item form-type-checkbox"><input type="checkbox" id="t13" name="field_topics[und][]" value="14" class="form-checkbox" /><label for="t13">Health Insights</label></div>
+                <ul>
+                  <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t13a" name="field_topics[und][]" value="141" class="form-checkbox" /><label for="t13a">Nutrition</label></div></li>
+                  <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t13b" name="field_topics[und][]" value="142" class="form-checkbox" /><label for="t13b">Exercise</label></div></li>
+                </ul>
+              </li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t14" name="field_topics[und][]" value="15" class="form-checkbox" /><label for="t14">Immunology</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t15" name="field_topics[und][]" value="16" class="form-checkbox" /><label for="t15">Infectious Disease</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t16" name="field_topics[und][]" value="17" class="form-checkbox" /><label for="t16">Internal Medicine</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t17" name="field_topics[und][]" value="18" class="form-checkbox" /><label for="t17">Kidney &amp; Bladder</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t18" name="field_topics[und][]" value="19" class="form-checkbox" /><label for="t18">Lung &amp; Breathing Disorders</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t19" name="field_topics[und][]" value="20" class="form-checkbox" /><label for="t19">Neurology</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t20" name="field_topics[und][]" value="21" class="form-checkbox" /><label for="t20">Neurosurgery</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t21" name="field_topics[und][]" value="22" class="form-checkbox" /><label for="t21">Obstetrics &amp; Gynecology</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t22" name="field_topics[und][]" value="23" class="form-checkbox" /><label for="t22">Ophthalmology</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t23" name="field_topics[und][]" value="24" class="form-checkbox" /><label for="t23">Orthopedics</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t24" name="field_topics[und][]" value="25" class="form-checkbox" /><label for="t24">Pain Management</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t25" name="field_topics[und][]" value="26" class="form-checkbox" /><label for="t25">Palliative Care</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t26" name="field_topics[und][]" value="27" class="form-checkbox" /><label for="t26">Pediatrics</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t27" name="field_topics[und][]" value="28" class="form-checkbox" /><label for="t27">Preventive Medicine</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t28" name="field_topics[und][]" value="29" class="form-checkbox" /><label for="t28">Primary Care</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t29" name="field_topics[und][]" value="30" class="form-checkbox" /><label for="t29">Psychiatry &amp; Psychology</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t30" name="field_topics[und][]" value="31" class="form-checkbox" /><label for="t30">Radiology</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t31" name="field_topics[und][]" value="32" class="form-checkbox" /><label for="t31">Rehabilitation Medicine</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t32" name="field_topics[und][]" value="33" class="form-checkbox" /><label for="t32">Rheumatology</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t33" name="field_topics[und][]" value="35" class="form-checkbox" /><label for="t33">Sleep</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t34" name="field_topics[und][]" value="34" class="form-checkbox" /><label for="t34">Surgery</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t35" name="field_topics[und][]" value="36" class="form-checkbox" /><label for="t35">Travel Medicine</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="t36" name="field_topics[und][]" value="37" class="form-checkbox" /><label for="t36">Urology</label></div></li>
+            </ul>
+          </div>
+          <div class="description">Select topics to associate with this content. You can select more than one.</div>
+        </div>
+
+        <div class="form-item form-type-textfield form-item-field-tags">
+          <label for="edit-field-tags">Tags</label>
+          <input type="text" id="edit-field-tags" name="field_tags[und][0][value]" class="form-text form-autocomplete" />
+          <div class="description">You may select tags that best match your content, separate multiple tags with commas.</div>
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab" id="group-body">
+        <legend><span class="fieldset-legend">Body</span></legend>
+
+        <div class="form-item form-type-textarea form-item-body-und-0-summary">
+          <label for="edit-body-summary">Summary <span class="form-required">*</span></label>
+          <textarea id="edit-body-summary" name="body[und][0][summary]" rows="3" required="required" class="form-textarea required"></textarea>
+          <div class="description">One or two sentences used in listings and search results.</div>
+        </div>
+
+        <div class="form-item form-type-textarea form-item-body-und-0-value text-format-wrapper">
+          <label for="edit-body-value">Body <span class="form-required">*</span></label>
+          <div class="cke">
+            <textarea id="edit-body-value" name="body[und][0][value]" rows="20" required="required" class="form-textarea text-full required"></textarea>
+          </div>
+        </div>
+
+        <div class="form-item form-type-textarea">
+          <label for="edit-field-references">References</label>
+          <textarea id="edit-field-references" name="field_references[und][0][value]" rows="4" class="form-textarea"></textarea>
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab" id="group-related">
+        <legend><span class="fieldset-legend">Related Content</span></legend>
+
+        <div class="field-widget-entityreference-autocomplete">
+          <table class="field-multiple-table">
+            <tbody><tr><td>
+              <div class="form-item form-type-textfield">
+                <label for="edit-field-related-conditions">Related Conditions</label>
+                <input type="text" id="edit-field-related-conditions" name="field_related_conditions[und][0][target_id]" class="form-text form-autocomplete" />
+              </div>
+            </td></tr></tbody>
+          </table>
+          <input type="submit" value="Add another item" class="form-submit" />
+        </div>
+
+        <div class="field-widget-entityreference-autocomplete">
+          <div class="form-item form-type-textfield">
+            <label for="edit-field-related-profiles">Related Profiles</label>
+            <input type="text" id="edit-field-related-profiles" name="field_related_profiles[und][0][target_id]" class="form-text form-autocomplete" />
+          </div>
+        </div>
+
+        <div class="field-widget-entityreference-autocomplete">
+          <div class="form-item form-type-textfield">
+            <label for="edit-field-related-treatments">Related Treatments</label>
+            <input type="text" id="edit-field-related-treatments" name="field_related_treatments[und][0][target_id]" class="form-text form-autocomplete" />
+          </div>
+        </div>
+
+        <div class="field-widget-entityreference-autocomplete">
+          <div class="form-item form-type-textfield">
+            <label for="edit-field-related-specialties">Related Specialties</label>
+            <input type="text" id="edit-field-related-specialties" name="field_related_specialties[und][0][target_id]" class="form-text form-autocomplete" />
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab" id="group-multimedia">
+        <legend><span class="fieldset-legend">Multimedia</span></legend>
+        <div class="form-item form-type-managed-file">
+          <label for="edit-field-teaser-image">Teaser Image</label>
+          <input type="file" id="edit-field-teaser-image" name="files[field_teaser_image_und_0]" class="form-file" />
+          <div class="description">Shown in listings and search results.</div>
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab" id="group-groups">
+        <legend><span class="fieldset-legend">Groups</span></legend>
+
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-field-sitewide-news" name="field_sitewide_news[und]" value="1" checked="checked" class="form-checkbox" />
+          <label for="edit-field-sitewide-news">Sitewide News</label>
+          <div class="description">Whether or not to include this article in the sitewide list.</div>
+        </div>
+
+        <fieldset>
+          <legend><span class="fieldset-legend">Groups</span></legend>
+          <div class="description">Optionally assign this news item to a group.</div>
+
+          <div class="form-item form-type-textfield">
+            <label for="edit-og-your-groups">Your Groups</label>
+            <input type="text" id="edit-og-your-groups" name="og_group_ref[und][0][default][0][target_id]" class="form-text form-autocomplete" />
+            <div class="description">Associate this content with groups you belong to.</div>
+          </div>
+          <input type="submit" value="Add another item" class="form-submit" />
+
+          <div class="form-item form-type-textfield">
+            <label for="edit-og-other-groups">Other Groups</label>
+            <input type="text" id="edit-og-other-groups" name="og_group_ref[und][1][admin][0][target_id]" class="form-text form-autocomplete" />
+            <div class="description">As groups administrator, associate this content with groups you do not belong to.</div>
+          </div>
+        </fieldset>
+      </fieldset>
+    </div>
+
+    <!-- Vertical tabs, with the summaries observed in the reference screenshot -->
+    <div class="vertical-tabs">
+      <fieldset class="vertical-tabs-pane" id="edit-metatags">
+        <legend><span class="fieldset-legend">Meta tags</span></legend>
+        <span class="summary">Using defaults</span>
+        <div class="form-item form-type-textfield">
+          <label for="edit-metatags-title">Page title</label>
+          <input type="text" id="edit-metatags-title" name="metatags[und][title][value]" value="[node:title]" class="form-text" />
+        </div>
+        <div class="form-item form-type-textarea">
+          <label for="edit-metatags-description">Description</label>
+          <textarea id="edit-metatags-description" name="metatags[und][description][value]" class="form-textarea">[node:summary]</textarea>
+          <div class="description">Content limited to 380 characters.</div>
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-metatags-keywords">Keywords</label>
+          <input type="text" id="edit-metatags-keywords" name="metatags[und][keywords][value]" class="form-text" />
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-path">
+        <legend><span class="fieldset-legend">URL path settings</span></legend>
+        <span class="summary">Automatic alias</span>
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-path-pathauto" name="path[pathauto]" value="1" checked="checked" class="form-checkbox" />
+          <label for="edit-path-pathauto">Generate automatic URL alias</label>
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-path-alias">URL alias</label>
+          <input type="text" id="edit-path-alias" name="path[alias]" class="form-text" />
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-xmlsitemap">
+        <legend><span class="fieldset-legend">XML sitemap</span></legend>
+        <span class="summary">Inclusion: Default (included) | Priority: Default (0.5)</span>
+        <div class="form-item form-type-select">
+          <label for="edit-xmlsitemap-status">Inclusion</label>
+          <select id="edit-xmlsitemap-status" name="xmlsitemap[status]">
+            <option value="default" selected="selected">Default (included)</option>
+            <option value="1">Included</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-revision-information">
+        <legend><span class="fieldset-legend">Revision information</span></legend>
+        <span class="summary">New revision</span>
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-revision" name="revision" value="1" checked="checked" class="form-checkbox" />
+          <label for="edit-revision">Create new revision</label>
+        </div>
+        <div class="form-item form-type-textarea">
+          <label for="edit-log">Revision log message</label>
+          <textarea id="edit-log" name="log" class="form-textarea"></textarea>
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-shield">
+        <legend><span class="fieldset-legend">Shield settings</span></legend>
+        <span class="summary">Not hidden</span>
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-shield-hidden" name="shield[hidden]" value="1" class="form-checkbox" />
+          <label for="edit-shield-hidden">Hide from search engines</label>
+        </div>
+      </fieldset>
+    </div>
+
+    <div class="form-actions">
+      <input type="submit" id="edit-submit" name="op" value="Save" class="form-submit" />
+    </div>
+  </form>
+</body>
+</html>

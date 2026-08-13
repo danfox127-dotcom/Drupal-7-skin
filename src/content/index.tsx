@@ -5,6 +5,7 @@ import { MenuTree, MenuItem } from '../components/MenuTree';
 import { CommandPalette } from '../components/CommandPalette';
 import { ContentList } from '../components/ContentList';
 import { findContentTable, parseContentList, currentUsername } from '../lib/parseContentList';
+import { discoverSchema, explainSchema, isNodeFormPath } from '../lib/formSchema';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
 
 const getSettings = (): Promise<Settings> =>
@@ -139,6 +140,29 @@ const init = async () => {
 
   if (settings.commandPalette) {
     registerCommandPalette();
+  }
+
+  // Field discovery (Phase 4). Read-only for now: it does not change the page. The
+  // Phase 5 editor consumes the schema; until then this exists so the rules can be
+  // validated against real forms, which is the one thing fixtures cannot prove.
+  if (isNodeFormPath()) {
+    const schema = discoverSchema();
+
+    if (!schema) {
+      if (settings.debugSchema) {
+        console.warn('[D7 Studio] No node form schema could be discovered on this page.');
+      }
+    } else if (settings.debugSchema) {
+      console.info(
+        `%c[D7 Studio] Form schema\n%c${explainSchema(schema)}`,
+        'font-weight:bold',
+        'font-family:monospace'
+      );
+      console.info(
+        '[D7 Studio] Copy the block above and send it back to verify the discovery ' +
+        'rules against this form. Fields listed under [other] are ones no rule claimed.'
+      );
+    }
   }
 
   // Feature 1: Taxonomy Combobox

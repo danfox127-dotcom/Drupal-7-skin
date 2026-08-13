@@ -38,6 +38,8 @@ const FEATURES: Feature[] = [
   { key: 'htmlExport',     label: 'HTML Content Export',  description: 'Copy sanitized public HTML from node edit pages' },
   { key: 'menuTree',       label: 'Menu Tree Manager',    description: 'Drag-and-drop tree on main menu admin page' },
   { key: 'commandPalette', label: 'Command Palette',      description: 'Press ⌘K on any admin page' },
+  { key: 'contentList',    label: 'Modern Content List',  description: 'Live filtering and row actions on /admin/content' },
+  { key: 'debugSchema',    label: 'Log Form Schema',      description: 'Print discovered fields to the console on node forms' },
 ];
 
 function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
