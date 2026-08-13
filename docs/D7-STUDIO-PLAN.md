@@ -125,9 +125,35 @@ passing; shared stylesheet; existing three components restyled with no behavior 
 
 ---
 
-## Phase 2 — Popup + command palette
+## Phase 2 — Popup + command palette ✅ COMPLETE
 
-Both are self-contained, need no live D7 markup, and deliver visible progress.
+Both are self-contained, need no live D7 markup, and delivered visible progress.
+
+**Delivered:** `src/lib/commands.ts` (registry), `src/components/CommandPalette.tsx`,
+`src/components/Toast.tsx`, `src/lib/extractPublicHtml.ts` (sanitizer extracted from
+`HtmlExport` so the palette command and the button share one implementation),
+`injectOverlay` in `inject.tsx`, `src/popup/useImportQueue.ts`, and the popup rebuilt with
+the Import Queue. 61 tests passing; palette verified in Chrome across 15 behaviors
+(open/close/toggle, keyboard nav with wrap-around, filtering, empty state, focus trap,
+DOM cleanup on close) with zero page errors.
+
+**Two deliberate deviations from the prototype, both to avoid shipping dead UI:**
+
+1. **Three palette commands are not registered.** The prototype lists "Save draft to
+   Drupal", "Publish", and "Import from URL"; those belong to the Phase 5 editor and Phase 6
+   import flow. Rows that do nothing are worse than absent rows, so they get added with
+   their features. `tests/command-palette.spec.ts` asserts every registered command has
+   either a `path` or a `run`, which prevents the gap from reopening.
+2. **The "Import from URL" quick link is omitted**, since it would 404 until Phase 6. The
+   Import Queue itself *is* shipped and functional — it persists, de-duplicates, validates,
+   and rejects non-http schemes. Clicking a queued row currently opens the source page in a
+   new tab; Phase 6 repoints it at the mapping review, at which point the design's "open a
+   URL to review its mapping" wording becomes accurate.
+
+**Also worth carrying forward:** the palette lives in its own body-level shadow root via
+`injectOverlay`, because a fixed-position scrim is clipped by any ancestor with a transform
+or overflow and Drupal's admin theme has plenty of both. The ⌘K listener is registered in
+the capture phase so CKEditor's key handling cannot swallow the chord.
 
 **Popup (screen 7).** 320px, `#1D4F91` header with wordmark and active host. `App.tsx`
 already derives the host from the active tab, so that logic stays. Add the **Import
@@ -152,10 +178,57 @@ injected surface, keyboard-navigable, focus-trapped.
 
 ---
 
-## Phase 3 — Menu manager + content list
+## Phase 3 — Menu manager + content list ✅ COMPLETE
 
-Both evolve or sit beside existing code, and depend only on markup patterns already proven
-against fixtures.
+**Delivered:** `src/lib/treeFilter.ts` (ancestor-retaining filter, shared with Phase 5),
+`MenuTree.tsx` rebuilt to screen 5, `src/lib/parseContentList.ts`,
+`src/components/ContentList.tsx`, and an expanded menu fixture. 47 unit tests plus 22
+browser behaviors and 7 write-back assertions, all passing, zero page errors.
+
+**Write-back verified end to end**, which is the menu manager's whole point. With form
+submission blocked so the result could be inspected: weights sequential from −50, `plid`
+correct across three depths, enabled toggles written, disabled state preserved.
+
+**The content list carries real risk and needs live validation.** It is built against
+Drupal 7 core's `node_admin_nodes` markup, *not* a capture of the live page — that DOM is
+still outstanding from Phase 0. Mitigations:
+
+- Columns are located by **header label, not index**, so added/removed/reordered columns
+  still parse. Aliases cover renames (`Name`, `Submitted by`, `Moderation state`, …).
+- `parseContentList` returns null on markup it does not recognize, and the content script
+  then **leaves Drupal's own table in place** rather than replacing it with an empty list.
+  Verified: an unparseable table results in no takeover and a console warning.
+- Content-type chips are derived from the parsed rows, not hardcoded — the live site has at
+  least ten types (Condition, Event Importer, Gallery, Landing, List, News, Page, Specialty,
+  Testimonial, Timeline Entry).
+- Status is keyword-matched, since core emits only published / not published while
+  "Draft" and "Needs review" come from moderation contrib. An unrecognized state renders
+  uncolored rather than being mislabeled.
+- "My recent edits" needs the logged-in username, read from the admin toolbar. When it
+  cannot be determined the chip is **hidden** rather than filtering to nothing.
+
+**Three bugs found and fixed during verification:**
+
+1. **J/K never fired.** `onKeyDown` was on a non-focusable div, so the shortcuts silently
+   required clicking a row first. Moved to a document listener with three guards: no
+   modifiers (⌘K belongs to the palette), not while the palette is open (its events retarget
+   to the overlay host, so checking the target tag is insufficient), and not while typing
+   (read via `composedPath` because the target may be the shadow host). All four guards
+   verified.
+2. **Weight writes could fail silently.** Assigning a `<select>` a value with no matching
+   `<option>` leaves it empty, which would submit a blank weight and scramble menu order
+   with no error. `syncTreeToDrupal` now warns when the assignment does not stick.
+3. **The menu fixture was two flat rows**, unable to exercise depth parsing, ancestor
+   retention, or `plid` write-back. Expanded to the prototype's 13-item hierarchy with a
+   disabled item and full −50..50 weight ranges.
+
+**One prototype behavior confirmed correct, not a bug:** outdenting a row makes the deeper
+rows that follow it *its* children. That is the semantics of a depth-encoded flat tree and
+matches Drupal's native drag behavior.
+
+**Deferred:** dragging is disabled while a filter is active, because reordering a filtered
+subset cannot be mapped back to the full list unambiguously. The up/down controls stay
+available since they act on full-list adjacency. The footer note tells the user why.
 
 **Menu manager (screen 5).** Evolve `MenuTree.tsx`. Keep `parseDrupalMenuTable` and
 `syncTreeToDrupal` (weights and `plid` write-back) and the existing `MAX_DEPTH = 5`; change
@@ -174,8 +247,9 @@ the menu-parent picker in Phase 5; build it once as a utility with unit tests.
 `#1D4F91` needs review). **Filters apply as you type — no Apply button.** Chip row of
 content types, then dashed-border saved views (My recent edits, Unpublished drafts, Needs
 review). Per-row Edit / View / Copy HTML — no bulk Operations dropdown. J/K to move, ⏎ to
-edit. "Copy HTML" reuses `HtmlExport.tsx`'s sanitizer, so extract that logic out of the
-component now.
+edit. "Copy HTML" reuses the sanitizer already extracted to
+`src/lib/extractPublicHtml.ts` in Phase 2 — call `copyPublicHtml` rather than adding a
+third copy.
 
 **Exit criteria:** manager round-trips a real menu with correct weights/`plid`; ancestor-
 retaining filter unit-tested; content list filters on keystroke with working J/K/⏎.

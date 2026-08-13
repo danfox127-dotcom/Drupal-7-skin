@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useMemo } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -16,7 +16,10 @@ import {
   arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { GitBranch, ExternalLink, Trash2, Save, RefreshCw, GripVertical, ChevronRight, ArrowLeft, ArrowRight } from 'lucide-react';
+import {
+  GripVertical, ArrowLeft, ArrowRight, ArrowUp, ArrowDown,
+} from 'lucide-react';
+import { filterTreeRetainingAncestors } from '../lib/treeFilter';
 
 export interface MenuItem {
   id: string;
@@ -31,20 +34,48 @@ interface Props {
   onSave: (items: MenuItem[]) => void;
 }
 
+/** 26px per depth level, and 26px square row controls, per the handoff. */
+const INDENT_PX = 26;
+const MAX_DEPTH = 5;
+
+/** A row control: 26px square, icon-only, Columbia Blue on hover. */
+function RowControl({
+  label, disabled, onClick, children,
+}: {
+  label: string;
+  disabled?: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onClick}
+      className="w-6.5 h-6.5 shrink-0 flex items-center justify-center rounded text-ink-muted hover:text-cu-blue hover:bg-cu-tint disabled:opacity-20 disabled:cursor-not-allowed transition-colors duration-200 ease-studio"
+    >
+      {children}
+    </button>
+  );
+}
+
 interface SortableRowProps {
   item: MenuItem;
+  isMatch: boolean;
+  dragDisabled: boolean;
   onDepthChange: (id: string, delta: number) => void;
+  onMove: (id: string, delta: number) => void;
   onToggleEnabled: (id: string) => void;
-  onDelete: (id: string) => void;
-  maxDepth: number;
   isDragging?: boolean;
 }
 
-const INDENT_PX = 32;
-const MAX_DEPTH = 5;
-
-function SortableRow({ item, onDepthChange, onToggleEnabled, onDelete, isDragging }: SortableRowProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isSorting } = useSortable({ id: item.id });
+function SortableRow({
+  item, isMatch, dragDisabled, onDepthChange, onMove, onToggleEnabled, isDragging,
+}: SortableRowProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isSorting } =
+    useSortable({ id: item.id, disabled: dragDisabled });
 
   const style: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
@@ -56,97 +87,98 @@ function SortableRow({ item, onDepthChange, onToggleEnabled, onDelete, isDraggin
     <div
       ref={setNodeRef}
       style={style}
-      className={`flex items-center gap-2 px-3 py-2 border-b border-rule-faint group transition-colors duration-200 ease-studio ${
+      data-menu-row={item.id}
+      className={`flex items-center gap-2 px-2.5 py-2 border-b border-rule-faint transition-colors duration-200 ease-studio ${
         item.enabled ? 'bg-white hover:bg-cu-tint' : 'bg-rail hover:bg-legacy-200'
-      }`}
+      } ${isMatch ? '' : 'opacity-60'}`}
     >
-      {/* Drag handle */}
       <button
         {...attributes}
         {...listeners}
-        className="cursor-grab active:cursor-grabbing text-ink-muted hover:text-ink-secondary shrink-0 touch-none"
-        tabIndex={-1}
         type="button"
+        tabIndex={-1}
+        disabled={dragDisabled}
+        title={dragDisabled ? 'Clear the filter to reorder by dragging' : 'Drag to reorder'}
+        className="shrink-0 touch-none text-ink-muted hover:text-ink-secondary disabled:opacity-20 disabled:cursor-not-allowed cursor-grab active:cursor-grabbing"
       >
-        <GripVertical size={18} />
+        <GripVertical size={16} />
       </button>
 
-      {/* Indent controls */}
-      <div className="flex items-center gap-1 shrink-0" style={{ marginLeft: item.depth * INDENT_PX }}>
-        <button
-          type="button"
-          disabled={item.depth === 0}
-          onClick={() => onDepthChange(item.id, -1)}
-          className="text-ink-muted hover:text-cu-blue hover:bg-cu-tint disabled:opacity-20 disabled:cursor-not-allowed w-6.5 h-6.5 rounded flex items-center justify-center transition-colors duration-200 ease-studio"
-          title="Decrease indent"
-        >
-          <ArrowLeft size={13} />
-        </button>
-        <button
-          type="button"
-          disabled={item.depth >= MAX_DEPTH}
-          onClick={() => onDepthChange(item.id, 1)}
-          className="text-ink-muted hover:text-cu-blue hover:bg-cu-tint disabled:opacity-20 disabled:cursor-not-allowed w-6.5 h-6.5 rounded flex items-center justify-center transition-colors duration-200 ease-studio"
-          title="Increase indent"
-        >
-          <ArrowRight size={13} />
-        </button>
-      </div>
-
-      {/* Hierarchy indicator */}
-      {item.depth > 0 && (
-        <ChevronRight size={12} className="text-ink-muted shrink-0" />
-      )}
-
-      {/* Content */}
-      <div className="flex-1 min-w-0">
-        <p className={`font-medium text-row-title truncate ${item.enabled ? 'text-ink' : 'text-ink-placeholder'}`}>
+      <div className="flex-1 min-w-0 flex items-baseline gap-3" style={{ paddingLeft: item.depth * INDENT_PX }}>
+        <span className={`font-medium text-row-title truncate ${item.enabled ? 'text-ink' : 'text-ink-placeholder'}`}>
           {item.title}
-        </p>
-        <p className="text-help text-ink-help font-mono truncate">{item.path}</p>
+        </span>
+        <span className="shrink-0 font-mono text-help text-ink-help truncate">{item.path}</span>
       </div>
 
-      {/* Enabled toggle */}
-      <label className="flex items-center gap-1.5 text-control text-ink-secondary cursor-pointer shrink-0 select-none">
-        <div
-          onClick={() => onToggleEnabled(item.id)}
-          className={`w-8 h-4 rounded-full transition-colors duration-200 ease-studio relative ${item.enabled ? 'bg-olive' : 'bg-rule'}`}
-        >
-          <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-transform duration-200 ease-studio ${item.enabled ? 'translate-x-4' : 'translate-x-0.5'}`} />
-        </div>
-      </label>
+      {/* Five controls, in the handoff's order: outdent, indent, up, down, enabled. */}
+      <RowControl label="Outdent" disabled={item.depth === 0} onClick={() => onDepthChange(item.id, -1)}>
+        <ArrowLeft size={13} />
+      </RowControl>
+      <RowControl label="Indent" disabled={item.depth >= MAX_DEPTH} onClick={() => onDepthChange(item.id, 1)}>
+        <ArrowRight size={13} />
+      </RowControl>
+      <RowControl label="Move up" onClick={() => onMove(item.id, -1)}>
+        <ArrowUp size={13} />
+      </RowControl>
+      <RowControl label="Move down" onClick={() => onMove(item.id, 1)}>
+        <ArrowDown size={13} />
+      </RowControl>
 
-      {/* Actions */}
-      <div className="flex items-center gap-1 shrink-0">
-        <a
-          href={item.path}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="p-1.5 text-ink-muted hover:text-cu-blue hover:bg-cu-tint rounded transition-colors duration-200 ease-studio"
-          title="Open link"
-        >
-          <ExternalLink size={14} />
-        </a>
-        <button
-          type="button"
-          onClick={() => onDelete(item.id)}
-          className="p-1.5 text-ink-muted hover:text-burnt hover:bg-cu-tint rounded transition-colors duration-200 ease-studio"
-          title="Remove"
-        >
-          <Trash2 size={14} />
-        </button>
-      </div>
+      <button
+        type="button"
+        onClick={() => onToggleEnabled(item.id)}
+        aria-pressed={item.enabled}
+        className={`shrink-0 px-2 h-6.5 rounded border text-help font-semibold transition-colors duration-200 ease-studio ${
+          item.enabled
+            ? 'border-cu-blue text-cu-blue hover:bg-cu-tint'
+            : 'border-rule-control text-ink-help hover:bg-legacy-200'
+        }`}
+      >
+        {item.enabled ? 'Enabled' : 'Disabled'}
+      </button>
     </div>
   );
 }
 
+/** How many rows differ from the parsed original in order, depth, or enabled state. */
+export function countChanges(current: MenuItem[], original: MenuItem[]): number {
+  const originalIndex = new Map(original.map((item, i) => [item.id, i]));
+  let changes = 0;
+
+  current.forEach((item, index) => {
+    const before = original.find(o => o.id === item.id);
+    if (!before) { changes++; return; }
+    if (originalIndex.get(item.id) !== index) { changes++; return; }
+    if (before.depth !== item.depth || before.enabled !== item.enabled) changes++;
+  });
+
+  return changes;
+}
+
 export const MenuTree = ({ items: initialItems, onSave }: Props) => {
+  // The parsed original, kept for Revert and for the dirty count.
+  const [original] = useState<MenuItem[]>(initialItems);
   const [items, setItems] = useState<MenuItem[]>(initialItems);
   const [activeId, setActiveId] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
   );
+
+  const filtered = useMemo(
+    () => filterTreeRetainingAncestors(items, query, i => `${i.title} ${i.path}`),
+    [items, query]
+  );
+
+  // Reordering a filtered subset cannot be mapped back to the full list
+  // unambiguously, so dragging is disabled while a filter is active. The up/down
+  // controls stay available because they act on full-list adjacency, which is
+  // well defined either way.
+  const dragDisabled = query.trim().length > 0;
+
+  const dirtyCount = useMemo(() => countChanges(items, original), [items, original]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     setActiveId(String(event.active.id));
@@ -160,6 +192,7 @@ export const MenuTree = ({ items: initialItems, onSave }: Props) => {
     setItems(prev => {
       const oldIndex = prev.findIndex(i => i.id === active.id);
       const newIndex = prev.findIndex(i => i.id === over.id);
+      if (oldIndex === -1 || newIndex === -1) return prev;
       return arrayMove(prev, oldIndex, newIndex);
     });
   }, []);
@@ -172,55 +205,69 @@ export const MenuTree = ({ items: initialItems, onSave }: Props) => {
     ));
   }, []);
 
+  /** Swap with the adjacent row in the full list. */
+  const handleMove = useCallback((id: string, delta: number) => {
+    setItems(prev => {
+      const index = prev.findIndex(i => i.id === id);
+      const target = index + delta;
+      if (index === -1 || target < 0 || target >= prev.length) return prev;
+      return arrayMove(prev, index, target);
+    });
+  }, []);
+
   const handleToggleEnabled = useCallback((id: string) => {
     setItems(prev => prev.map(item =>
       item.id === id ? { ...item, enabled: !item.enabled } : item
     ));
   }, []);
 
-  const handleDelete = useCallback((id: string) => {
-    setItems(prev => prev.filter(item => item.id !== id));
-  }, []);
+  const handleRevert = useCallback(() => {
+    setItems(original);
+    setQuery('');
+  }, [original]);
 
   const activeItem = activeId ? items.find(i => i.id === activeId) : null;
 
   return (
-    <div className="bg-white border border-rule shadow-card overflow-hidden font-sans flex flex-col" style={{ maxHeight: '800px' }}>
-      {/* Header */}
-      <div className="bg-white border-b border-rule px-6 py-4 flex items-center justify-between shrink-0">
-        <div className="flex items-center gap-3">
-          <GitBranch size={20} className="text-cu-blue shrink-0" />
-          <div>
-            <h2 className="font-serif text-heading text-ink">Main Menu Manager</h2>
-            <p className="text-eyebrow-wide text-ink-secondary uppercase font-semibold">Modern Proxy UI</p>
-          </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            className="flex items-center gap-2 px-3 py-1.5 bg-white hover:bg-cu-tint text-cu-blue border border-cu-blue rounded transition-colors duration-200 ease-studio text-control font-semibold"
-            onClick={() => window.location.reload()}
-          >
-            <RefreshCw size={14} />
-            Reset
-          </button>
-          <button
-            type="button"
-            className="flex items-center gap-2 px-5 py-1.5 bg-cu-blue hover:bg-cu-navy text-white rounded transition-colors duration-200 ease-studio text-control font-semibold"
-            onClick={() => onSave(items)}
-          >
-            <Save size={14} />
-            Save Changes
-          </button>
-        </div>
+    <div className="bg-white border border-rule font-sans flex flex-col mx-auto" style={{ maxWidth: '1060px', maxHeight: '800px' }}>
+      {/* Sticky action bar */}
+      <div className="sticky top-0 z-10 bg-white border-b border-rule px-5.5 py-3 flex items-center gap-4 shrink-0">
+        <h2 className="font-serif text-heading text-ink shrink-0">Main Menu</h2>
+        <span className="text-help text-ink-help shrink-0">{items.length} items</span>
+
+        <input
+          type="text"
+          placeholder="Filter menu items"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          className="w-56 px-3 py-1.5 bg-white border border-rule-control rounded text-control text-ink placeholder:text-ink-placeholder"
+        />
+
+        <div className="flex-1" />
+
+        <span className={`text-help shrink-0 ${dirtyCount > 0 ? 'text-burnt font-semibold' : 'text-ink-help'}`}>
+          {dirtyCount === 0
+            ? 'No changes'
+            : `${dirtyCount} change${dirtyCount === 1 ? '' : 's'}`}
+        </span>
+
+        <button
+          type="button"
+          onClick={handleRevert}
+          disabled={dirtyCount === 0}
+          className="shrink-0 px-3 py-1.5 bg-white border border-cu-blue text-cu-blue rounded text-control font-semibold hover:bg-cu-tint disabled:opacity-40 disabled:cursor-not-allowed transition-colors duration-200 ease-studio"
+        >
+          Revert
+        </button>
+        <button
+          type="button"
+          onClick={() => onSave(items)}
+          className="shrink-0 px-4 py-1.5 bg-cu-blue hover:bg-cu-navy text-white rounded text-control font-semibold transition-colors duration-200 ease-studio"
+        >
+          Save menu
+        </button>
       </div>
 
-      {/* Item count */}
-      <div className="px-6 py-2 bg-rail border-b border-rule-hair shrink-0">
-        <p className="text-help text-ink-help">{items.length} items · drag to reorder · arrows to change depth</p>
-      </div>
-
-      {/* Tree Area */}
       <div className="flex-1 overflow-y-auto">
         <DndContext
           sensors={sensors}
@@ -228,15 +275,16 @@ export const MenuTree = ({ items: initialItems, onSave }: Props) => {
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
-          <SortableContext items={items.map(i => i.id)} strategy={verticalListSortingStrategy}>
-            {items.map(item => (
+          <SortableContext items={filtered.items.map(i => i.id)} strategy={verticalListSortingStrategy}>
+            {filtered.items.map(item => (
               <SortableRow
                 key={item.id}
                 item={item}
+                isMatch={filtered.isMatch(item)}
+                dragDisabled={dragDisabled}
                 onDepthChange={handleDepthChange}
+                onMove={handleMove}
                 onToggleEnabled={handleToggleEnabled}
-                onDelete={handleDelete}
-                maxDepth={MAX_DEPTH}
                 isDragging={item.id === activeId}
               />
             ))}
@@ -244,22 +292,31 @@ export const MenuTree = ({ items: initialItems, onSave }: Props) => {
 
           <DragOverlay>
             {activeItem && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-white border border-cu-blue shadow-card" style={{ marginLeft: activeItem.depth * INDENT_PX }}>
-                <GripVertical size={18} className="text-cu-blue" />
-                <div className="flex-1 min-w-0">
-                  <p className="font-medium text-ink text-row-title truncate">{activeItem.title}</p>
-                  <p className="text-help text-ink-help font-mono truncate">{activeItem.path}</p>
+              <div className="flex items-center gap-2 px-2.5 py-2 bg-white border border-cu-blue shadow-card">
+                <GripVertical size={16} className="text-cu-blue" />
+                <div className="flex-1 min-w-0" style={{ paddingLeft: activeItem.depth * INDENT_PX }}>
+                  <span className="font-medium text-ink text-row-title truncate">{activeItem.title}</span>
                 </div>
               </div>
             )}
           </DragOverlay>
         </DndContext>
 
-        {items.length === 0 && (
-          <div className="text-center py-12 text-ink-help text-control">
-            All items removed. Reset to restore.
+        {filtered.items.length === 0 && (
+          <div className="text-center py-12 text-control text-ink-help">
+            {query.trim()
+              ? `Nothing matches “${query}”.`
+              : 'All items removed. Revert to restore.'}
           </div>
         )}
+      </div>
+
+      <div className="px-5.5 py-2 border-t border-rule-hair shrink-0">
+        <p className="text-help text-ink-help">
+          {dragDisabled
+            ? 'Filtering keeps parents visible so you never lose your place. Clear the filter to reorder by dragging.'
+            : 'Filtering keeps parents visible so you never lose your place. Weights and parent ids are written back on save.'}
+        </p>
       </div>
     </div>
   );

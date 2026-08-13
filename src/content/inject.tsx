@@ -57,6 +57,41 @@ function applyStyles(shadow: ShadowRoot) {
   shadow.appendChild(style);
 }
 
+/**
+ * Mounts a component in its own shadow root appended to <body>.
+ *
+ * Overlays (the command palette, toasts) cannot live inside another component's
+ * root: a fixed-position scrim is clipped by any ancestor with a transform or
+ * overflow, and Drupal's admin theme has plenty of both. Appending to body keeps
+ * the containing block the viewport.
+ *
+ * Returns a handle so the caller can unmount — an overlay's lifetime is driven by
+ * open/close, unlike the injected form widgets which live as long as the page.
+ */
+export function injectOverlay(component: React.ReactNode) {
+  const container = document.createElement('div');
+  container.className = 'd7-proxy-ui-overlay';
+  container.id = `d7-proxy-ui-overlay-${crypto.randomUUID()}`;
+  document.body.appendChild(container);
+
+  const shadow = container.attachShadow({ mode: 'open' });
+  applyStyles(shadow);
+
+  const rootElement = document.createElement('div');
+  shadow.appendChild(rootElement);
+
+  const root = ReactDOM.createRoot(rootElement);
+  root.render(<React.StrictMode>{component}</React.StrictMode>);
+
+  return {
+    root,
+    unmount() {
+      root.unmount();
+      container.remove();
+    },
+  };
+}
+
 export function injectComponent(
   targetElement: HTMLElement,
   component: React.ReactNode,

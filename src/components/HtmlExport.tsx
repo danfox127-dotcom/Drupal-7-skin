@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { FileCode, Loader2, Check, AlertCircle } from 'lucide-react';
+import { copyPublicHtml } from '../lib/extractPublicHtml';
 
 export const HtmlExport = () => {
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
@@ -10,67 +11,15 @@ export const HtmlExport = () => {
     setErrorMsg('');
 
     try {
-      // 1. Parse Node ID from URL: /node/123/edit
-      const match = window.location.pathname.match(/\/node\/(\d+)/);
-      if (!match) throw new Error('Could not determine Node ID from URL');
-      const nodeId = match[1];
+      // Shared with the ⌘K "Copy public HTML of this node" command, so the two
+      // paths cannot diverge. See src/lib/extractPublicHtml.ts.
+      await copyPublicHtml();
 
-      // 2. Fetch the public-facing URL
-      // We use /node/{id} directly to bypass the admin theme
-      const publicUrl = `${window.location.origin}/node/${nodeId}`;
-      console.log(`📡 Fetching public content from: ${publicUrl}`);
-      
-      const response = await fetch(publicUrl);
-      if (!response.ok) throw new Error(`HTTP Error: ${response.status}`);
-      
-      const html = await response.text();
-
-      // 3. Parse and Extract Main Content
-      const parser = new DOMParser();
-      const doc = parser.parseFromString(html, 'text/html');
-      
-      // Target common Drupal main content wrappers
-      // We prefer <article>, but fallback to #content or .region-content
-      const mainContent = doc.querySelector('article') || 
-                          doc.querySelector('#content') || 
-                          doc.querySelector('.region-content') ||
-                          doc.querySelector('main');
-
-      if (!mainContent) {
-        throw new Error('Could not locate main content wrapper (<article> or #content) in the fetched page.');
-      }
-
-      // 4. Sanitize: Remove noise
-      const selectorsToRemove = [
-        'script', 'style', 'header', 'footer', 'nav', 
-        '.admin-tabs', '.contextual-links-wrapper', 
-        '#skip-link', '.breadcrumb'
-      ];
-      selectorsToRemove.forEach(s => {
-        mainContent.querySelectorAll(s).forEach(el => el.remove());
-      });
-
-      // 5. Clean up attributes (optional but helpful for "Flattening")
-      // Remove data-attributes and drupal-specific classes if needed
-      mainContent.querySelectorAll('*').forEach(el => {
-        el.removeAttribute('data-drupal-selector');
-        el.removeAttribute('data-contextual-id');
-      });
-
-      const sanitizedHtml = mainContent.innerHTML.trim();
-
-      // 6. Copy to Clipboard
-      await navigator.clipboard.writeText(sanitizedHtml);
-      
       setStatus('success');
-      console.log('✅ HTML Exported and copied to clipboard.');
-      
-      // Reset after 3 seconds
       setTimeout(() => setStatus('idle'), 3000);
-
-    } catch (err: any) {
-      console.error('❌ Export failed:', err);
-      setErrorMsg(err.message);
+    } catch (err) {
+      console.error('[D7 Proxy] Export failed:', err);
+      setErrorMsg(err instanceof Error ? err.message : String(err));
       setStatus('error');
     }
   };
