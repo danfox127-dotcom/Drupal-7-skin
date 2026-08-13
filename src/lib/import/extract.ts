@@ -49,6 +49,8 @@ export interface BodyStats {
   embedsRemoved: number;
   classesRemoved: number;
   tagsStripped: string[];
+  /** href/src values dropped for using a disallowed scheme. */
+  unsafeUrlsRemoved: number;
 }
 
 export interface ExtractionResult {
@@ -77,6 +79,47 @@ const KEEP_ATTRS: Record<string, string[]> = {
   a: ['href', 'title'],
   img: ['src', 'alt', 'width', 'height'],
 };
+
+/**
+ * URL-bearing attributes, and the schemes each may use.
+ *
+ * An allowlist of tags and attributes is not sufficient on its own: `href` survives the
+ * attribute filter, so `<a href="javascript:...">` from a source page would be carried
+ * into the proposed body, written into the node, and saved. Drupal's output filter would
+ * often catch it, but a Full HTML format would not — and this tool should not be the
+ * thing that introduces stored XSS into the CMS.
+ *
+ * mailto: is permitted on links because editorial content legitimately uses it. Media
+ * is stricter: no data: URIs, which can carry SVG script payloads.
+ */
+const URL_ATTRS: Record<string, { attr: string; protocols: Set<string> }> = {
+  a: { attr: 'href', protocols: new Set(['http:', 'https:', 'mailto:']) },
+  img: { attr: 'src', protocols: new Set(['http:', 'https:']) },
+};
+
+/**
+ * Returns a safe value for a URL attribute, or null if it should be dropped.
+ *
+ * Control characters are stripped BEFORE the scheme is examined, because browsers
+ * ignore them inside a scheme — `java\nscript:alert(1)` executes as `javascript:`, so
+ * checking the raw string would be bypassable. The cleaned value is what gets written
+ * back, since those characters have no legitimate purpose in a URL.
+ *
+ * Relative URLs are resolved against the source page only to determine the scheme; the
+ * value itself is left relative so the markup is not silently rewritten.
+ */
+export function safeUrlAttribute(raw: string, base: string, protocols: Set<string>): string | null {
+  const cleaned = raw.replace(/[\u0000-\u001F\u007F]/g, '').trim();
+  if (!cleaned) return null;
+
+  try {
+    const url = new URL(cleaned, base);
+    return protocols.has(url.protocol) ? cleaned : null;
+  } catch {
+    // An unparseable URL is not worth guessing at.
+    return null;
+  }
+}
 
 const NOISE_SELECTORS = [
   'script', 'style', 'noscript', 'iframe', 'object', 'embed', 'form',
@@ -138,7 +181,8 @@ function findArticle(doc: Document): Element | null {
  */
 function filterBody(
   article: Element,
-  allowed: string[]
+  allowed: string[],
+  baseUrl: string
 ): { html: string; stats: BodyStats } {
   // An empty list means "nothing allowed", which would silently strip every link and
   // list from the article. That is never what a caller intends, so treat it as
@@ -173,6 +217,7 @@ function filterBody(
   const stats: BodyStats = {
     paragraphs: 0, headings: 0, lists: 0, linksKept: 0,
     inlineStylesRemoved: 0, embedsRemoved: 0, classesRemoved: 0, tagsStripped: [],
+    unsafeUrlsRemoved: 0,
   };
 
   const stripped = new Set<string>();
@@ -199,6 +244,25 @@ function filterBody(
     for (const attr of Array.from(el.attributes)) {
       if (!keep.includes(attr.name.toLowerCase())) el.removeAttribute(attr.name);
     }
+
+    /**
+     * Surviving URL attributes still need their scheme checked. The attribute
+     * allowlist above keeps `href`, so without this a `javascript:` link from the
+     * source page would ride into the node body and be saved.
+     */
+    const urlAttr = URL_ATTRS[tag];
+    if (urlAttr) {
+      const raw = el.getAttribute(urlAttr.attr);
+      if (raw !== null) {
+        const safe = safeUrlAttribute(raw, baseUrl, urlAttr.protocols);
+        if (safe === null) {
+          el.removeAttribute(urlAttr.attr);
+          stats.unsafeUrlsRemoved++;
+        } else if (safe !== raw) {
+          el.setAttribute(urlAttr.attr, safe);
+        }
+      }
+    }
   }
 
   stats.paragraphs = clone.querySelectorAll('p').length;
@@ -217,6 +281,11 @@ function describeImage(img: HTMLImageElement, index: number, base: string): Prop
   let absolute = src;
   try { absolute = new URL(src, base).toString(); } catch { /* keep as-is */ }
 
+  // The review renders these as <img src>, so an unsafe scheme must not survive here
+  // either. A rejected src leaves the entry visible but unusable rather than silently
+  // dropping an image the editor might be looking for.
+  const safeSrc = safeUrlAttribute(absolute, base, URL_ATTRS.img.protocols);
+
   const name = absolute.split('/').pop()?.split('?')[0] || `image-${index + 1}`;
   const width = img.getAttribute('width');
   const height = img.getAttribute('height');
@@ -230,9 +299,20 @@ function describeImage(img: HTMLImageElement, index: number, base: string): Prop
   const tiny = Number(width) > 0 && Number(width) < 100;
   const isChrome = chromeHints.test(absolute) || tiny;
 
+  if (safeSrc === null) {
+    return {
+      id: `img-${index}`,
+      src: '',
+      name,
+      meta,
+      role: 'skip',
+      reason: 'unsupported image URL scheme',
+    };
+  }
+
   return {
     id: `img-${index}`,
-    src: absolute,
+    src: safeSrc,
     name,
     meta,
     role: isChrome ? 'skip' : 'teaser',
@@ -346,11 +426,12 @@ export function extract(
   let bodyStats: BodyStats = {
     paragraphs: 0, headings: 0, lists: 0, linksKept: 0,
     inlineStylesRemoved: 0, embedsRemoved: 0, classesRemoved: 0, tagsStripped: [],
+    unsafeUrlsRemoved: 0,
   };
 
   if (article) {
     article.setAttribute('data-d7-region', 'region-body');
-    const filtered = filterBody(article, allowedTags.tags);
+    const filtered = filterBody(article, allowedTags.tags, sourceUrl);
     bodyStats = filtered.stats;
 
     if (filtered.html) {
@@ -364,6 +445,9 @@ export function extract(
         bodyStats.inlineStylesRemoved ? `${bodyStats.inlineStylesRemoved} inline styles` : null,
         bodyStats.embedsRemoved ? `${bodyStats.embedsRemoved} embeds` : null,
         bodyStats.classesRemoved ? `${bodyStats.classesRemoved} classes` : null,
+        bodyStats.unsafeUrlsRemoved
+          ? `${bodyStats.unsafeUrlsRemoved} unsafe link${bodyStats.unsafeUrlsRemoved === 1 ? '' : 's'}`
+          : null,
       ].filter(Boolean);
 
       proposals.push({

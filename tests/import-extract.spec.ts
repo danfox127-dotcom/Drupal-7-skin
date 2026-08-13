@@ -223,6 +223,101 @@ test.describe('body filtering', () => {
   });
 });
 
+test.describe('URL scheme validation', () => {
+  /**
+   * The threat: source HTML is arbitrary and attacker-influenced (anyone can be asked
+   * to import a URL). `href` survives the attribute allowlist, so without a scheme
+   * check a javascript: link rides into the proposed body, gets written into the node,
+   * and is saved — stored XSS introduced by the migration tool itself. Drupal's output
+   * filter often catches it, but a Full HTML format does not.
+   */
+  const withLink = (href: string) => `<html><body><article>
+    <p>Some prose long enough to be treated as the article body by the extractor here.</p>
+    <p><a href="${href}">click me</a></p>
+    <p>More prose so the container passes the length guard comfortably.</p>
+  </article></body></html>`;
+
+  const bodyFor = async (page: import('@playwright/test').Page, href: string) => {
+    const r = await run(page, withLink(href), { tags: ['a', 'p'], source: 'drupal-filter-tips' });
+    return r.proposals.find(p => p.key === 'body')!;
+  };
+
+  test('drops a javascript: href but keeps the link text', async ({ page }) => {
+    const body = await bodyFor(page, 'javascript:alert(1)');
+    expect(body.value).not.toContain('javascript:');
+    expect(body.value).not.toContain('href');
+    expect(body.value).toContain('click me');
+  });
+
+  test('drops javascript: obfuscated with control characters', async ({ page }) => {
+    // Browsers ignore embedded newlines/tabs inside a scheme, so this executes as
+    // javascript: even though a naive string comparison would not match.
+    for (const payload of ['java\nscript:alert(1)', 'java\tscript:alert(1)', ' javascript:alert(1)', 'JaVaScRiPt:alert(1)']) {
+      const body = await bodyFor(page, payload);
+      expect(body.value, `payload ${JSON.stringify(payload)}`).not.toMatch(/href/i);
+    }
+  });
+
+  test('drops data: and vbscript: hrefs', async ({ page }) => {
+    for (const payload of ['data:text/html;base64,PHNjcmlwdD4=', 'vbscript:msgbox(1)', 'file:///etc/passwd']) {
+      const body = await bodyFor(page, payload);
+      expect(body.value, `payload ${payload}`).not.toContain('href');
+    }
+  });
+
+  test('keeps http, https, mailto and relative hrefs', async ({ page }) => {
+    for (const href of ['https://example.org/a', 'http://example.org/a', 'mailto:someone@example.org', '/relative/path']) {
+      const body = await bodyFor(page, href);
+      expect(body.value, `href ${href}`).toContain(`href="${href}"`);
+    }
+  });
+
+  test('leaves relative hrefs relative rather than silently rewriting them', async ({ page }) => {
+    const body = await bodyFor(page, '/study');
+    expect(body.value).toContain('href="/study"');
+    expect(body.value).not.toContain('heartresearchtoday.org/study');
+  });
+
+  test('counts removals and states them in the provenance line', async ({ page }) => {
+    const r = await run(page, withLink('javascript:alert(1)'), { tags: ['a', 'p'], source: 'drupal-filter-tips' });
+    expect(r.bodyStats.unsafeUrlsRemoved).toBe(1);
+    // Stripping must be visible, not silent.
+    expect(r.proposals.find(p => p.key === 'body')!.source).toContain('unsafe link');
+  });
+
+  test('rejects an unsafe image src instead of rendering it', async ({ page }) => {
+    const r = await run(page, `<html><body><article>
+      <p>Prose long enough to satisfy the article length guard for this extraction test.</p>
+      <img src="javascript:alert(1)" width="600" height="400" />
+    </article></body></html>`);
+    const img = r.images[0];
+    expect(img.src).toBe('');
+    expect(img.role).toBe('skip');
+    expect(img.reason).toContain('unsupported image URL scheme');
+  });
+
+  test('safeUrlAttribute is exported and enforces the allowlist directly', async ({ page }) => {
+    await page.goto('data:text/html,<body></body>');
+    await page.addScriptTag({ content: bundle });
+    const result = await page.evaluate(() => {
+      const api = (window as any).Extract;
+      const links = new Set(['http:', 'https:', 'mailto:']);
+      return {
+        js: api.safeUrlAttribute('javascript:alert(1)', 'https://a.example/', links),
+        obfuscated: api.safeUrlAttribute('java script:alert(1)', 'https://a.example/', links),
+        https: api.safeUrlAttribute('https://b.example/x', 'https://a.example/', links),
+        relative: api.safeUrlAttribute('/x', 'https://a.example/', links),
+        empty: api.safeUrlAttribute('   ', 'https://a.example/', links),
+      };
+    });
+    expect(result.js).toBeNull();
+    expect(result.obfuscated).toBeNull();
+    expect(result.https).toBe('https://b.example/x');
+    expect(result.relative).toBe('/x');
+    expect(result.empty).toBeNull();
+  });
+});
+
 test.describe('images', () => {
   test('finds content images and site chrome alike', async ({ page }) => {
     const r = await run(page);
