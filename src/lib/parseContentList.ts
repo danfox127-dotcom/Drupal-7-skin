@@ -105,15 +105,77 @@ export function nodeIdFromHref(href: string): string | null {
  * contains a Title column — avoids grabbing an unrelated table such as the
  * exposed-filter form.
  */
+/** How many rows in this table link to a node — the strongest signal of a content list. */
+function nodeLinkCount(table: HTMLTableElement): number {
+  return table.querySelectorAll('tbody a[href*="/node/"]').length;
+}
+
 export function findContentTable(root: ParentNode = document): HTMLTableElement | null {
   const byId = root.querySelector<HTMLTableElement>('#node-admin-content table, table#node-admin-content');
   if (byId) return byId;
 
   const tables = Array.from(root.querySelectorAll<HTMLTableElement>('table'));
-  return tables.find(table => {
+
+  /**
+   * A Title header alone is not enough to identify the table.
+   *
+   * `name` is one of the title aliases, so an exposed-filter or admin block with a "Name"
+   * column matched first and the parser then took over the wrong table. A candidate must
+   * also actually link to nodes; among those, the one with the most links wins.
+   */
+  const byHeader = tables.filter(table => {
     const headers = Array.from(table.querySelectorAll('thead th')).map(th => norm(th.textContent).toLowerCase());
     return headers.some(h => COLUMN_ALIASES.title.includes(h) || h.startsWith('title'));
-  }) ?? null;
+  });
+
+  const headerWithLinks = byHeader
+    .filter(table => nodeLinkCount(table) > 0)
+    .sort((a, b) => nodeLinkCount(b) - nodeLinkCount(a));
+  if (headerWithLinks.length) return headerWithLinks[0];
+
+  /**
+   * Fallback that does not depend on header labels at all.
+   *
+   * /admin/content is frequently a View rather than core's node_admin_content, and a view
+   * can rename or omit its headers entirely. But any content listing links to nodes, so
+   * the table with the most `/node/N` links in its body is the content table.
+   */
+  const scored = tables
+    .map(table => ({ table, links: nodeLinkCount(table) }))
+    .filter(entry => entry.links > 0)
+    .sort((a, b) => b.links - a.links);
+
+  if (scored.length) return scored[0].table;
+
+  // An empty content list has a Title header and no rows; still the right table.
+  return byHeader[0] ?? null;
+}
+
+/**
+ * Infers which column holds the title, when the headers did not say.
+ *
+ * Picks the cell index that most often contains a link to a node. Views commonly also tag
+ * it `views-field-title`, which is checked first as a cheaper, stronger hint.
+ */
+export function inferTitleColumn(bodyRows: Element[]): number | null {
+  const tagged = bodyRows[0]?.querySelector('td.views-field-title, td.views-field-title-field');
+  if (tagged) {
+    const index = Array.from(bodyRows[0].querySelectorAll('td')).indexOf(tagged as HTMLTableCellElement);
+    if (index !== -1) return index;
+  }
+
+  const counts = new Map<number, number>();
+  for (const row of bodyRows) {
+    const cells = Array.from(row.querySelectorAll('td'));
+    cells.forEach((cell, index) => {
+      if (cell.querySelector('a[href*="/node/"]')) {
+        counts.set(index, (counts.get(index) ?? 0) + 1);
+      }
+    });
+  }
+
+  if (counts.size === 0) return null;
+  return [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
 }
 
 /**
@@ -127,10 +189,15 @@ export function parseContentList(root: ParentNode = document): ContentRow[] | nu
   const headerCells = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent ?? '');
   const columns = mapColumns(headerCells);
 
-  // Without a title column there is nothing worth rendering.
-  if (columns.title === undefined) return null;
-
   const bodyRows = Array.from(table.querySelectorAll('tbody tr'));
+
+  // Headers did not resolve a title column — infer it from the data instead of giving up.
+  if (columns.title === undefined) {
+    const inferred = inferTitleColumn(bodyRows);
+    if (inferred === null) return null;
+    columns.title = inferred;
+  }
+
   const rows: ContentRow[] = [];
 
   for (const tr of bodyRows) {
@@ -187,4 +254,53 @@ export function currentUsername(root: ParentNode = document): string | null {
   }
 
   return null;
+}
+
+
+/**
+ * Human-readable account of what the parser saw and why it did or did not take over.
+ *
+ * The previous diagnostic logged an object, which Chrome's extension error page renders as
+ * "[object Object]" — useless in the one place someone would go looking. This returns a
+ * string so it survives whatever renders it.
+ */
+export function diagnoseContentList(root: ParentNode = document): string {
+  const tables = Array.from(root.querySelectorAll<HTMLTableElement>('table'));
+  const lines: string[] = [`${tables.length} table(s) on the page`];
+
+  tables.forEach((table, index) => {
+    const headers = Array.from(table.querySelectorAll('thead th')).map(th => norm(th.textContent));
+    const bodyRows = table.querySelectorAll('tbody tr').length;
+    const links = table.querySelectorAll('tbody a[href*="/node/"]').length;
+    lines.push(
+      `  [${index}] id="${table.id || '-'}" class="${table.className || '-'}" ` +
+      `rows=${bodyRows} nodeLinks=${links}`
+    );
+    lines.push(`       headers: ${headers.length ? headers.join(' | ') : '(none)'}`);
+  });
+
+  const chosen = findContentTable(root);
+  if (!chosen) {
+    lines.push('chose: none — no table had a Title header or any /node/N links');
+    return lines.join('\n');
+  }
+
+  lines.push(`chose: id="${chosen.id || '-'}" class="${chosen.className || '-'}"`);
+
+  const headerCells = Array.from(chosen.querySelectorAll('thead th')).map(th => th.textContent ?? '');
+  const columns = mapColumns(headerCells);
+  lines.push(`mapped columns: ${JSON.stringify(columns)}`);
+
+  if (columns.title === undefined) {
+    const inferred = inferTitleColumn(Array.from(chosen.querySelectorAll('tbody tr')));
+    lines.push(`title column inferred from node links: ${inferred ?? 'FAILED'}`);
+  }
+
+  const rows = parseContentList(root);
+  lines.push(`rows parsed: ${rows === null ? 'null (gave up)' : rows.length}`);
+  if (rows && rows.length) {
+    lines.push(`first row: ${JSON.stringify(rows[0])}`);
+  }
+
+  return lines.join('\n');
 }

@@ -1,4 +1,9 @@
 import { test, expect } from '@playwright/test';
+import * as esbuild from 'esbuild';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 import {
   mapColumns, statusKind, statusLabel, nodeIdFromHref,
 } from '../src/lib/parseContentList';
@@ -132,5 +137,117 @@ test.describe('menu dirty count', () => {
   test('counts an added row', () => {
     const next = [...base, { id: 'd', title: 'D', path: '/d', depth: 0, enabled: true }];
     expect(countChanges(next, base)).toBe(1);
+  });
+});
+
+test.describe('parsing /admin/content when it is a View', () => {
+  /**
+   * The real page failed to parse, degrading to Drupal's table. /admin/content is often a
+   * View rather than core's node_admin_content, and a View can rename its headers, omit
+   * the thead entirely, or sit alongside other tables.
+   *
+   * These run in a browser because the fallback reads the rows, not just header strings.
+   */
+  let bundle: string;
+
+  test.beforeAll(async () => {
+    const result = await esbuild.build({
+      entryPoints: [path.join(__dirname, '../src/lib/parseContentList.ts')],
+      bundle: true, write: false, format: 'iife', globalName: 'CL',
+      platform: 'browser', target: 'es2020',
+    });
+    bundle = result.outputFiles[0].text;
+  });
+
+  const load = async (page: import('@playwright/test').Page, body: string) => {
+    await page.goto(`data:text/html,${encodeURIComponent(`<body>${body}</body>`)}`);
+    await page.addScriptTag({ content: bundle });
+  };
+
+  const rowsOf = (page: import('@playwright/test').Page) =>
+    page.evaluate(() => (window as any).CL.parseContentList(document));
+
+  /** A view whose headers are renamed beyond recognition. */
+  const RENAMED = `
+    <table class="views-table">
+      <thead><tr><th>Page name</th><th>Kind</th><th>Last touched</th></tr></thead>
+      <tbody>
+        <tr><td class="views-field views-field-title"><a href="/node/451">Abin Sajan, MD</a></td>
+            <td>Profile</td><td>08/12/2026</td></tr>
+        <tr><td class="views-field views-field-title"><a href="/node/452">Eric Lam, DO</a></td>
+            <td>Profile</td><td>08/11/2026</td></tr>
+      </tbody>
+    </table>`;
+
+  test('parses a view whose Title header was renamed', async ({ page }) => {
+    await load(page, RENAMED);
+    const rows = await rowsOf(page);
+    expect(rows).not.toBeNull();
+    expect(rows).toHaveLength(2);
+    expect(rows[0].title).toBe('Abin Sajan, MD');
+    expect(rows[0].nodeId).toBe('451');
+  });
+
+  test('parses a table with no thead at all', async ({ page }) => {
+    await load(page, `
+      <table class="views-table">
+        <tbody>
+          <tr><td><a href="/node/700">Heart Failure</a></td><td>Condition</td></tr>
+          <tr><td><a href="/node/701">Cardiology</a></td><td>Specialty</td></tr>
+        </tbody>
+      </table>`);
+    const rows = await rowsOf(page);
+    expect(rows).toHaveLength(2);
+    expect(rows.map((r: any) => r.title)).toEqual(['Heart Failure', 'Cardiology']);
+  });
+
+  test('picks the content table over an unrelated one on the same page', async ({ page }) => {
+    // Exposed filters and admin blocks often render their own tables.
+    await load(page, `
+      <table id="filters"><thead><tr><th>Name</th></tr></thead>
+        <tbody><tr><td>Published</td></tr></tbody></table>
+      ${RENAMED}`);
+    const rows = await rowsOf(page);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].nodeId).toBe('451');
+  });
+
+  test('still returns null when no table lists nodes, so Drupal keeps its page', async ({ page }) => {
+    await load(page, `
+      <table><thead><tr><th>Setting</th><th>Value</th></tr></thead>
+        <tbody><tr><td>Cache</td><td>On</td></tr></tbody></table>`);
+    expect(await rowsOf(page)).toBeNull();
+  });
+
+  test('the title column is inferred from whichever column holds node links', async ({ page }) => {
+    // Some views put operations or a checkbox first, so the title is not column 0.
+    await load(page, `
+      <table>
+        <tbody>
+          <tr><td><input type="checkbox"></td><td>Profile</td>
+              <td><a href="/node/900">Jin Min Min Han, MD</a></td></tr>
+        </tbody>
+      </table>`);
+    const rows = await rowsOf(page);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].title).toBe('Jin Min Min Han, MD');
+  });
+
+  test('the diagnostic is a string that names the tables and the outcome', async ({ page }) => {
+    await load(page, RENAMED);
+    const report = await page.evaluate(() => (window as any).CL.diagnoseContentList(document));
+    expect(typeof report).toBe('string');
+    // It has to survive whatever renders it — an object logged here shows as
+    // "[object Object]" on Chrome's extension error page.
+    expect(report).toContain('nodeLinks=2');
+    expect(report).toContain('Page name');
+    expect(report).toContain('rows parsed: 2');
+  });
+
+  test('the diagnostic explains a failure rather than just reporting one', async ({ page }) => {
+    await load(page, '<div>no tables here</div>');
+    const report = await page.evaluate(() => (window as any).CL.diagnoseContentList(document));
+    expect(report).toContain('0 table(s)');
+    expect(report).toContain('chose: none');
   });
 });
