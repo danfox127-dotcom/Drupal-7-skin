@@ -36,7 +36,14 @@ interface Props {
 
 /** 26px per depth level, and 26px square row controls, per the handoff. */
 const INDENT_PX = 26;
-const MAX_DEPTH = 5;
+/**
+ * Drupal's MENU_MAX_DEPTH is 9, i.e. depths 0–8.
+ *
+ * This was 5, which is below what the live main menu already uses — Specialties ›
+ * Cardiology › Our Services › Active BP Monitoring › Video Tutorial reaches depth 4, and
+ * clamping at 5 would block legitimate nesting one level further down.
+ */
+const MAX_DEPTH = 8;
 
 /** A row control: 26px square, icon-only, Columbia Blue on hover. */
 function RowControl({

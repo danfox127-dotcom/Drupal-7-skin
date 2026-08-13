@@ -22,17 +22,36 @@ interface Props {
   errorFor: (field: FieldDescriptor) => string | null;
 }
 
-/** Depth clamp for the parent picker, per the handoff (0–3 here, 0–5 in the manager). */
-const MAX_PARENT_DEPTH = 3;
+/**
+ * Indent per level, in px.
+ *
+ * Smaller than the menu manager's 26px because the rail is only 392px wide and real
+ * menus run deep — the live main menu nests Specialties › Cardiology & Cardiac Surgery ›
+ * Our Services › Active BP Monitoring › Video Tutorial, which is five levels before you
+ * reach a leaf.
+ */
+const INDENT_PX = 14;
+
+/** Beyond this, extra levels stop adding indent so labels keep usable width. */
+const MAX_VISUAL_DEPTH = 8;
 
 export const MenuSection = ({ parent, others, errorFor }: Props) => {
   const [value, setValue] = useState<string>(() => (parent ? String(readValue(parent)) : ''));
   const [query, setQuery] = useState('');
 
-  const options = useMemo(
-    () => (parent?.options ?? []).filter(o => o.depth <= MAX_PARENT_DEPTH),
-    [parent]
-  );
+  /**
+   * EVERY option Drupal offers, at any depth.
+   *
+   * This previously filtered to depth <= 3, which silently removed most of the menu from
+   * the picker — only top-level items and their immediate children could be chosen. On
+   * the live main menu that excludes almost everything worth selecting.
+   *
+   * Filtering by depth was the wrong idea at any number: Drupal's `menu[parent]` select
+   * already contains exactly the legal parents, having excluded anything that would push
+   * the tree past MENU_MAX_DEPTH. Second-guessing that list can only remove valid
+   * choices.
+   */
+  const options = useMemo(() => parent?.options ?? [], [parent]);
 
   const filtered = useMemo(
     () => filterTreeRetainingAncestors(options, query, o => o.label),
@@ -51,6 +70,12 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
     // ancestorIndices returns nearest-first; the trail reads outermost-first.
     return [...chain.reverse().map(o => o.label), options[index].label];
   }, [options, value]);
+
+  /** Deepest level present, for the "N levels deep" hint. */
+  const maxDepth = useMemo(
+    () => options.reduce((deepest, o) => Math.max(deepest, o.depth), 0),
+    [options]
+  );
 
   const select = (option: FieldOption) => {
     setValue(option.value);
@@ -96,7 +121,7 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
                     className={`w-full text-left px-2 py-1 text-control transition-colors duration-200 ease-studio ${
                       isSelected ? 'bg-cu-tint text-cu-blue font-semibold' : 'text-ink hover:bg-cu-tint'
                     } ${isContext ? 'opacity-60' : ''}`}
-                    style={{ paddingLeft: 8 + option.depth * 18 }}
+                    style={{ paddingLeft: 8 + Math.min(option.depth, MAX_VISUAL_DEPTH) * INDENT_PX }}
                   >
                     {option.label}
                   </button>
@@ -104,6 +129,12 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
               })
             )}
           </div>
+
+          <p className="text-help text-ink-help">
+            {filtered.items.length === options.length
+              ? `${options.length} possible parents, ${maxDepth + 1} levels deep.`
+              : `${filtered.matchCount} of ${options.length} match. Parents are kept visible for context.`}
+          </p>
 
           {breadcrumb && breadcrumb.length > 0 && (
             <p className="flex items-center flex-wrap gap-1 text-help text-ink-help">

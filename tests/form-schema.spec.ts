@@ -342,13 +342,23 @@ test.describe('Page form discovery', () => {
       return parent.options.map((o: any) => ({ label: o.label, depth: o.depth }));
     });
     // Drupal encodes depth as leading hyphens; they must be parsed off, not shown.
+    // The fixture now mirrors the live main menu, which reaches five levels.
     expect(depths).toEqual([
       { label: '<Main menu>', depth: 0 },
       { label: 'About Us', depth: 1 },
       { label: 'Annual Report 2021-2022', depth: 2 },
       { label: "Dean's Message", depth: 3 },
+      { label: 'Specialties', depth: 1 },
+      { label: 'Cardiology & Cardiac Surgery', depth: 2 },
+      { label: 'Our Services', depth: 3 },
+      { label: 'Active BP Blood Pressure Monitoring', depth: 4 },
+      { label: 'Video Tutorial', depth: 5 },
+      { label: 'FAQ', depth: 5 },
       { label: 'Patient Resources', depth: 1 },
     ]);
+    // Depth must be parsed correctly beyond three levels, which is where the picker
+    // previously stopped offering options at all.
+    expect(Math.max(...depths.map((d: any) => d.depth))).toBe(5);
   });
 
   test('the required Full page override is found and marked required', async ({ page }) => {

@@ -448,6 +448,82 @@ test.describe('D7 Studio: relocated native widgets', () => {
   });
 });
 
+test.describe('D7 Studio: menu parent depth', () => {
+  /**
+   * The live main menu nests five levels before reaching a leaf. The picker previously
+   * filtered options to depth <= 3, which silently removed most of the menu — only
+   * top-level items and their immediate children could be chosen.
+   *
+   * Filtering by depth was wrong at any number: Drupal's menu[parent] select already
+   * contains exactly the legal parents, so second-guessing it can only remove valid
+   * choices.
+   */
+  const openMenuSection = async (page: import('@playwright/test').Page, settings: any) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/add/page`);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Menu Placement' }).click();
+    await expect(page.locator(`${UI} input[placeholder="Filter parent items"]`)).toBeVisible();
+  };
+
+  test('every parent Drupal offers is selectable, at any depth', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    const labels = await page.locator(`${UI} aside button`).allInnerTexts();
+    // Depth 4 and 5 entries must be present, not just the top two levels.
+    for (const deep of ['Active BP Blood Pressure Monitoring', 'Video Tutorial', 'FAQ']) {
+      expect(labels.some(t => t.trim() === deep), `"${deep}" should be selectable`).toBe(true);
+    }
+  });
+
+  test('reports how deep the menu goes', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    // 11 options spanning depths 0..5.
+    await expect(page.locator(`${UI} aside >> text=/possible parents, 6 levels deep/`)).toBeVisible();
+  });
+
+  test('indentation increases with depth so hierarchy stays readable', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    const pads = await page.evaluate(() => {
+      const root = document.querySelector('.d7-proxy-ui-form-host')!.shadowRoot!;
+      const find = (text: string) => [...root.querySelectorAll('aside button')]
+        .find(b => b.textContent?.trim() === text) as HTMLElement | undefined;
+      return {
+        specialties: parseFloat(getComputedStyle(find('Specialties')!).paddingLeft),
+        services: parseFloat(getComputedStyle(find('Our Services')!).paddingLeft),
+        tutorial: parseFloat(getComputedStyle(find('Video Tutorial')!).paddingLeft),
+      };
+    });
+    expect(pads.services).toBeGreaterThan(pads.specialties);
+    expect(pads.tutorial).toBeGreaterThan(pads.services);
+  });
+
+  test('a deep parent can be selected and is written to the native select', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    await page.locator(`${UI} aside button`, { hasText: /^Video Tutorial$/ }).first().click();
+    await expect(page.locator('#edit-menu-parent')).toHaveValue('main-menu:204');
+  });
+
+  test('filtering a deep item keeps its whole ancestor chain visible', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'video');
+    const labels = (await page.locator(`${UI} aside button`).allInnerTexts()).map(t => t.trim());
+    // The match plus all four ancestors, so the position is never ambiguous.
+    for (const crumb of ['Specialties', 'Cardiology & Cardiac Surgery', 'Our Services',
+                         'Active BP Blood Pressure Monitoring', 'Video Tutorial']) {
+      expect(labels, `"${crumb}" should be retained`).toContain(crumb);
+    }
+  });
+
+  test('the breadcrumb shows the full path for a deep selection', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    await page.locator(`${UI} aside button`, { hasText: /^Video Tutorial$/ }).first().click();
+    const trail = await page.locator(`${UI} aside >> text=/Will appear under/`).innerText();
+    expect(trail).toContain('Specialties');
+    expect(trail).toContain('Our Services');
+    expect(trail).toContain('Video Tutorial');
+  });
+});
+
 test.describe('D7 Studio: safe defaults', () => {
   test('the two-pane editor is OFF by default, leaving the native form intact', async ({ page }) => {
     // It replaces an entire live editing form on discovery rules that are not yet
