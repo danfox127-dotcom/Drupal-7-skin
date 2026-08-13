@@ -44,8 +44,13 @@ export const TaxonomyCombobox = ({ options, defaultValue, onSelect }: Props) => 
       </div>
 
       <div className="relative">
+        {/* A custom combobox with no role or expanded state is invisible to a screen
+            reader — it announces only as a button whose name is the current value. */}
         <button
           type="button"
+          aria-label="Menu parent"
+          aria-haspopup="listbox"
+          aria-expanded={isOpen}
           onClick={() => setIsOpen(!isOpen)}
           className="w-full flex items-center justify-between px-4 py-2.5 bg-legacy-100 border border-rule-control rounded text-left text-input transition-colors duration-200 ease-studio hover:bg-cu-tint"
         >

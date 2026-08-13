@@ -30,11 +30,33 @@ save the rendered DOM (DevTools → Elements → right-click `<form>` → Copy o
 - the vertical-tab block (Meta tags, URL path, XML sitemap, Revision, Shield)
 - `<body>` class list (content-type detection reads `node-type-{type}` from it)
 
-**Also fix the test suite, which is currently red.** All three Playwright tests fail: they
-load `tests/fixtures/node-edit.html`, but the URL guards in `src/content/index.tsx`
-require `/node/` in the path and `node-edit.html` does not contain it. Either restructure
-fixtures to mirror Drupal paths (`fixtures/node/123/edit.html`) or serve them from a local
-HTTP server with real paths. We need a green suite before refactoring behind it.
+**Test suite ✅ FIXED — 209 tests passing, the whole suite green for the first time.**
+
+The three original tests failed because they loaded `tests/fixtures/node-edit.html` over
+`file://`, and the content script gates features on the URL *path* — `/node/…/edit`,
+`/admin/structure/menu/manage/main-menu`, `/admin/content`. A file path containing none of
+those never injected anything. Renaming the fixture would not have helped; the path is what
+gets inspected.
+
+Rewritten to serve fixtures at real Drupal-shaped URLs on a host the manifest matches, via
+`context.route`. That also exercises the real `host_permissions` patterns, which a `file://`
+URL bypasses entirely. Grew from 3 tests to 16, now covering the menu manager's
+ancestor-retaining filter and dirty/revert cycle, the content list, the ⌘K palette, and the
+safe defaults (editor off, diagnostic off).
+
+Two further causes found while fixing them, both wrong assumptions in the *tests*:
+
+- They clicked the combobox's "Search for a parent..." placeholder, which only appears when
+  nothing is selected. A real form has a parent pre-selected, so the trigger shows that
+  value instead.
+- `\`${UI} button\`.first()` matches across **every** injected shadow container, and
+  `HtmlExport` is injected earlier in the DOM — so it clicked "Export Raw HTML". Fixed by
+  giving the combobox trigger proper combobox semantics (`aria-haspopup`, `aria-expanded`,
+  `aria-label`), which it lacked entirely: a screen reader previously announced it only as a
+  button named after its current value.
+
+`playwright.config.ts` and the test's own launch both honor `CHROME_PATH`, so the suite runs
+against an existing browser when the managed Chromium version does not match.
 
 **Exit criteria:** UI confirmed injecting on a real page; saved DOM for two content types;
 `npm test` green.
