@@ -25,6 +25,8 @@ import { Toast } from '../Toast';
 
 interface Props {
   schema: FormSchema;
+  /** machineNames whose native widget was relocated and is projected via a slot. */
+  slottedFields?: Set<string>;
 }
 
 /** Rail section titles and the plain-language note of what each replaced. */
@@ -32,7 +34,7 @@ const SECTION_META: Record<SectionId, { title: string; replaced?: string }> = {
   primary: { title: 'Content' },
   typeFields: { title: 'Details' },
   topics: { title: 'Topics & Tags', replaced: 'the checkbox list and the separate Primary Topic select' },
-  related: { title: 'Related Content', replaced: 'four autocompletes, each needing an exact title' },
+  related: { title: 'Related Content', replaced: 'the Related Content tab, where each field needed an exact title' },
   multimedia: { title: 'Multimedia', replaced: 'the Multimedia tab' },
   menu: { title: 'Menu Placement', replaced: 'the Menu settings vertical tab' },
   display: { title: 'Display Template', replaced: 'a select buried in a vertical tab' },
@@ -49,7 +51,7 @@ const RAIL_ORDER: SectionId[] = [
 
 const SECTION_STATE_KEY = 'railSections';
 
-export const NodeEditor = ({ schema }: Props) => {
+export const NodeEditor = ({ schema, slottedFields }: Props) => {
   const key = useMemo(() => draftKey(window.location), []);
   const baseChanged = useMemo(() => readChangedStamp(schema.form), [schema.form]);
 
@@ -315,14 +317,14 @@ export const NodeEditor = ({ schema }: Props) => {
                 onChange={handleFieldChange}
               />
             ) : (
-              <FieldControl key={field.machineName} field={field} error={errorFor(field)} onChange={handleFieldChange} />
+              <FieldControl key={field.machineName} field={field} error={errorFor(field)} slotted={slottedFields?.has(field.machineName)} onChange={handleFieldChange} />
             );
           })}
 
           {typeFields.length > 0 && (
             <div className="grid grid-cols-2 gap-4">
               {typeFields.map(field => (
-                <FieldControl key={field.machineName} field={field} error={errorFor(field)} onChange={handleFieldChange} />
+                <FieldControl key={field.machineName} field={field} error={errorFor(field)} slotted={slottedFields?.has(field.machineName)} onChange={handleFieldChange} />
               ))}
             </div>
           )}
@@ -393,6 +395,7 @@ export const NodeEditor = ({ schema }: Props) => {
                                 field={field}
                                 dense
                                 error={errorFor(field)}
+                                slotted={slottedFields?.has(field.machineName)}
                                 onChange={handleFieldChange}
                               />
                             ))}

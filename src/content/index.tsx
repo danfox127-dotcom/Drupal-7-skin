@@ -1,4 +1,5 @@
-import { injectComponent, injectOverlay } from './inject';
+import React from 'react';
+import { injectComponent, injectOverlay, injectInsideForm, relocateWidget } from './inject';
 import { TaxonomyCombobox } from '../components/TaxonomyCombobox';
 import { HtmlExport } from '../components/HtmlExport';
 import { MenuTree, MenuItem } from '../components/MenuTree';
@@ -173,14 +174,41 @@ const init = async () => {
     // the real input beneath it, and Drupal's own submit does the save. Removing it
     // would break both.
     if (schema && settings.nodeEditor) {
-      schema.form.style.display = 'none';
-
       // Drupal's tab strips are superseded by the two-pane layout.
       schema.form.parentElement
         ?.querySelectorAll('.field-group-tabs-wrapper > ul, ul.tabs')
         .forEach(el => { (el as HTMLElement).style.display = 'none'; });
 
-      injectComponent(schema.form, <NodeEditor schema={schema} />, 'before');
+      /**
+       * Widgets we do not reimplement are RELOCATED rather than described.
+       *
+       * A media or file field needs Drupal's AJAX upload and media browser; Paragraphs
+       * needs its add-more AJAX. Rebuilding either would mean reimplementing the file
+       * API, and would break whenever the site's media config changed. Moving the real
+       * widget into the overlay keeps Drupal's Browse button, thumbnail, Remove link and
+       * validation working, because they are the same DOM nodes with the same handlers.
+       *
+       * The host must exist before relocating, hence injectInsideForm first with an empty
+       * render, then relocate, then render the editor knowing which fields are slotted.
+       */
+      const RELOCATE_KINDS = new Set(['file', 'paragraphs']);
+      const mount = injectInsideForm(schema.form, null);
+
+      const slotted = new Set<string>();
+      for (const field of schema.fields) {
+        if (!RELOCATE_KINDS.has(field.kind)) continue;
+        const element = field.elements[0];
+        if (!element) continue;
+        if (relocateWidget(mount.container, element, field.machineName)) {
+          slotted.add(field.machineName);
+        }
+      }
+
+      mount.root.render(
+        <React.StrictMode>
+          <NodeEditor schema={schema} slottedFields={slotted} />
+        </React.StrictMode>
+      );
     }
 
     // Feature 6: import review. Runs whether or not the two-pane editor is on —

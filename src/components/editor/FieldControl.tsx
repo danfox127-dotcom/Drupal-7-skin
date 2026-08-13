@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { FieldDescriptor } from '../../lib/formSchema';
 import { readValue, writeValue, FieldValue } from '../../lib/fieldBinding';
+import { slotNameFor } from '../../content/inject';
 
 /**
  * Renders one discovered field and writes changes straight to its native control.
@@ -17,6 +18,11 @@ interface Props {
   error?: string | null;
   /** Compact layout for the right rail; roomier in the left column. */
   dense?: boolean;
+  /**
+   * True when the native widget was relocated into the overlay host and should be
+   * projected here through a named slot, rather than reimplemented.
+   */
+  slotted?: boolean;
   onChange?: (field: FieldDescriptor, value: FieldValue) => void;
 }
 
@@ -34,7 +40,7 @@ export function FieldLabel({ field, htmlFor }: { field: FieldDescriptor; htmlFor
   );
 }
 
-export const FieldControl = ({ field, error, dense, onChange }: Props) => {
+export const FieldControl = ({ field, error, dense, slotted, onChange }: Props) => {
   const [value, setValue] = useState<FieldValue>(() => readValue(field));
   const [writeFailed, setWriteFailed] = useState(false);
 
@@ -59,9 +65,12 @@ export const FieldControl = ({ field, error, dense, onChange }: Props) => {
    * renders as one when it has options. Falling through to a text input showed the
    * raw machine value (`contact_map`) in a box, which is worse than useless.
    */
-  const kind = field.kind === 'paragraphs' && field.options?.length
-    ? 'select'
-    : field.kind;
+  const kind = slotted
+    // A relocated widget renders through its slot regardless of what it is made of.
+    ? 'file'
+    : field.kind === 'paragraphs' && field.options?.length
+      ? 'select'
+      : field.kind;
 
   switch (kind) {
     case 'checkbox':
@@ -170,10 +179,18 @@ export const FieldControl = ({ field, error, dense, onChange }: Props) => {
       break;
 
     case 'file':
-      // A managed_file needs Drupal's own upload flow (AJAX, tokens, the media
-      // library). Reproducing it in the overlay would be a rewrite, so the native
-      // control is surfaced rather than mirrored.
-      control = (
+      /**
+       * Drupal's own widget, projected in through a slot — not a reimplementation.
+       * It keeps its Browse button, media browser, thumbnail and Remove link because it
+       * is the same element with the same handlers, still inside the form.
+       *
+       * The note is only the fallback for a widget whose wrapper could not be located.
+       */
+      control = slotted ? (
+        <div className="d7-slot-host border border-rule rounded p-2 bg-white">
+          <slot name={slotNameFor(field.machineName)} />
+        </div>
+      ) : (
         <div className="px-3 py-2 border border-dashed border-rule-control rounded text-help text-ink-help">
           Uploads use Drupal's own file widget. Use the underlying form for this field.
         </div>
@@ -207,10 +224,11 @@ export const FieldControl = ({ field, error, dense, onChange }: Props) => {
 
   return (
     <div className={dense ? 'flex flex-col gap-1' : 'flex flex-col gap-1.5'}>
-      {field.kind !== 'checkbox' && <FieldLabel field={field} htmlFor={inputId} />}
+      {/* A relocated widget carries Drupal's own label, so ours would duplicate it. */}
+      {field.kind !== 'checkbox' && !slotted && <FieldLabel field={field} htmlFor={inputId} />}
       {control}
 
-      {field.help && (
+      {field.help && !slotted && (
         <p className="text-help text-ink-help">{field.help}</p>
       )}
 
