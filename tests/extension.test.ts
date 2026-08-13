@@ -39,6 +39,15 @@ const read = (name: string) => fs.readFileSync(path.join(FIXTURES, name), 'utf8'
 /** A host the shipped manifest matches. */
 const HOST = 'https://www.cuimc.columbia.edu';
 
+/**
+ * A columbia.edu subdomain the manifest never names.
+ *
+ * The `*://*.columbia.edu/...` wildcard exists so a new Columbia D7 site works with no
+ * manifest edit, rebuild, or reload. This host proves that, and would fail against the
+ * previous per-site pattern list.
+ */
+const UNNAMED_HOST = 'https://someothersite.columbia.edu';
+
 export const test = base.extend<{
   context: BrowserContext;
   extensionId: string;
@@ -61,7 +70,7 @@ export const test = base.extend<{
       ignoreHTTPSErrors: true,
     });
 
-    await context.route(`**cuimc.columbia.edu/**`, route => {
+    await context.route(`**columbia.edu/**`, route => {
       const url = route.request().url();
       const match = ROUTES.find(([pattern]) => pattern.test(url));
       if (!match) {
@@ -245,6 +254,31 @@ test.describe('D7 Studio: command palette', () => {
     await expect(page.locator(`${UI}`).first()).toBeVisible();
     await page.keyboard.press('ControlOrMeta+k');
     await expect(page.locator(`${OVERLAY} >> text=Copy public HTML of this node`)).toBeVisible();
+  });
+});
+
+test.describe('D7 Studio: host matching', () => {
+  test('a columbia.edu subdomain the manifest never names still works', async ({ page }) => {
+    await page.goto(`${UNNAMED_HOST}/node/123/edit`);
+    // The point of the wildcard: no manifest edit needed for a new Columbia site.
+    await expect(page.locator(`${UI} >> text=Menu Parent Selector`)).toBeVisible();
+  });
+
+  test('the bare apex domain matches too, not only subdomains', async ({ page }) => {
+    // Chrome's `*.` matches the domain itself as well as any depth of subdomain.
+    await page.goto('https://columbia.edu/admin/content');
+    await expect(page.locator(`${UI} >> text=9 of 9 items`)).toBeVisible();
+  });
+
+  test('a deep subdomain matches, since `*.` spans multiple levels', async ({ page }) => {
+    await page.goto('https://www.vagelos.columbia.edu/admin/structure/menu/manage/main-menu');
+    await expect(page.locator(`${UI} [data-menu-row]`)).toHaveCount(13);
+  });
+
+  test('paths outside /admin and /node are not matched', async ({ page }) => {
+    // The wildcard widens the HOST, not the paths — the site root stays untouched.
+    await page.goto(`${UNNAMED_HOST}/`);
+    await expect(page.locator(UI)).toHaveCount(0);
   });
 });
 

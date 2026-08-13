@@ -1,6 +1,27 @@
 # Drupal-7-skin
 Use this browser extension to make it easier to navigate drupal 7
 
+## Which sites it runs on
+
+```
+*://*.columbiadoctors.org/{admin,node}/*
+*://*.columbia.edu/{admin,node}/*
+```
+
+The `columbia.edu` wildcard covers **every** Columbia subdomain — `vagelos`, `cuimc`, the
+apex domain, and any new Drupal 7 site — with no manifest edit, rebuild, or reload.
+`columbiadoctors.org` is a separate TLD, so it is listed explicitly.
+
+Only `/admin/*` and `/node/*` paths match: the wildcard widens the host, not the paths, so
+ordinary Columbia pages are untouched. Lookalike domains (`notcolumbia.edu`) and
+suffix-spoofs (`columbia.edu.evil.com`) do not match — Chrome anchors `*.` to a real domain
+boundary, and `tests/extension.test.ts` asserts it.
+
+To add a site on a different domain, add two patterns to both `host_permissions` and
+`content_scripts.matches` in `manifest.json`, rebuild, and reload. The UI itself needs no
+per-site configuration — it reads the rendered form, so any Drupal 7 site with the same
+admin markup works as-is. The **Log Form Schema** toggle prints what a new site parses.
+
 ## Loading the extension in Chrome
 
 The `manifest.json` in the repo root is a **source** manifest for `@crxjs/vite-plugin`.
