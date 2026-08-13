@@ -35,6 +35,18 @@ const INDENT_PX = 14;
 /** Beyond this, extra levels stop adding indent so labels keep usable width. */
 const MAX_VISUAL_DEPTH = 8;
 
+/**
+ * Above this many parents, nothing is listed until the editor types.
+ *
+ * Measured on the live Vagelos form: menu[parent] offers 3,149 options across two menus,
+ * nested up to 16 levels. Rendering that many rows is both slow and useless — no one
+ * scrolls three thousand items. Searching is the only sane entry point at that size.
+ */
+const SEARCH_FIRST_THRESHOLD = 150;
+
+/** Never render more than this many rows at once, however broad the query. */
+const MAX_RENDERED = 120;
+
 export const MenuSection = ({ parent, others, errorFor }: Props) => {
   const [value, setValue] = useState<string>(() => (parent ? String(readValue(parent)) : ''));
   const [query, setQuery] = useState('');
@@ -61,6 +73,15 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
     () => filterTreeRetainingAncestors(options, query, o => o.label),
     [options, query]
   );
+
+  const searching = query.trim().length > 0;
+  /** With a huge menu, an empty query lists nothing rather than everything. */
+  const searchFirst = options.length > SEARCH_FIRST_THRESHOLD && !searching;
+  const visible = useMemo(
+    () => (searchFirst ? [] : filtered.items.slice(0, MAX_RENDERED)),
+    [filtered.items, searchFirst]
+  );
+  const truncated = !searchFirst && filtered.items.length > visible.length;
 
   /**
    * Breadcrumb for the current selection: "Will appear under About Us › Annual Report
@@ -111,10 +132,14 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
           </div>
 
           <div className="max-h-[250px] overflow-y-auto border border-rule rounded">
-            {filtered.items.length === 0 ? (
+            {searchFirst ? (
+              <p className="px-3 py-3 text-help text-ink-help">
+                Type above to search {options.length.toLocaleString()} possible parents.
+              </p>
+            ) : filtered.items.length === 0 ? (
               <p className="px-3 py-3 text-help text-ink-help">Nothing matches “{query}”.</p>
             ) : (
-              filtered.items.map(option => {
+              visible.map(option => {
                 const isSelected = option.value === value;
                 // A row present only to preserve hierarchy is dimmed, so it reads as
                 // context rather than a result.
@@ -137,9 +162,13 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
           </div>
 
           <p className="text-help text-ink-help">
-            {filtered.items.length === options.length
-              ? `${options.length} possible parents, ${maxDepth + 1} levels deep.`
-              : `${filtered.matchCount} of ${options.length} match. Parents are kept visible for context.`}
+            {/* Not searching: state the size and depth of the menu, whether or not it is
+                big enough to withhold the list. Searching: report the match count. */}
+            {!searching
+              ? `${options.length.toLocaleString()} possible parents, ${maxDepth + 1} levels deep.`
+              : truncated
+                ? `Showing ${visible.length} of ${filtered.items.length} rows for ${filtered.matchCount} match${filtered.matchCount === 1 ? '' : 'es'} — keep typing to narrow.`
+                : `${filtered.matchCount} of ${options.length.toLocaleString()} match. Parents are kept visible for context.`}
           </p>
 
           {breadcrumb && breadcrumb.length > 0 && (

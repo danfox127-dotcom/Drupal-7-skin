@@ -30,6 +30,7 @@ const ROUTES: [RegExp, string][] = [
   [/\/admin\/structure\/menu\/manage\/main-menu/, 'menu-manage.html'],
   [/\/admin\/content/, 'admin/content.html'],
   [/\/node\/add\/news/, 'node-add-news-live.html'],
+  [/\/node\/add\/page-bigmenu/, 'node-add-page-bigmenu.html'],
   [/\/node\/add\/page/, 'node-add-page.html'],
   [/\/node\/\d+\/edit/, 'node-edit.html'],
 ];
@@ -521,6 +522,71 @@ test.describe('D7 Studio: menu parent depth', () => {
     expect(trail).toContain('Specialties');
     expect(trail).toContain('Our Services');
     expect(trail).toContain('Video Tutorial');
+  });
+});
+
+test.describe('D7 Studio: parent picker at real scale', () => {
+  /**
+   * Measured on the live Vagelos form: menu[parent] offers 3,149 options across two menus,
+   * nested up to 16 levels. Rendering all of them is slow and useless — nobody scrolls
+   * three thousand rows — so above a threshold the list stays empty until the editor types.
+   */
+  const open = async (page: import('@playwright/test').Page, settings: any) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/add/page-bigmenu`);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Menu Placement' }).click();
+    await expect(page.locator(`${UI} input[placeholder="Filter parent items"]`)).toBeVisible();
+  };
+
+  const rowCount = (page: import('@playwright/test').Page) =>
+    page.locator(`${UI} aside [style*="padding-left"]`).count();
+
+  test('a large menu lists nothing until you type', async ({ page, settings }) => {
+    await open(page, settings);
+    expect(await rowCount(page)).toBe(0);
+    await expect(page.locator(`${UI} aside >> text=/Type above to search/`)).toBeVisible();
+  });
+
+  test('it still reports the size and depth of the menu', async ({ page, settings }) => {
+    await open(page, settings);
+    await expect(page.locator(`${UI} aside >> text=/possible parents, \\d+ levels deep/`).first()).toBeVisible();
+  });
+
+  test('typing narrows to matches with their ancestors', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Detail 7.1');
+    const labels = (await page.locator(`${UI} aside button`).allInnerTexts()).map(t => t.trim());
+    expect(labels).toContain('Detail 7.1 Cardiology');
+    // Ancestors retained, so the position in a 200-row menu is never ambiguous.
+    expect(labels).toContain('Specialty 7');
+    expect(labels).toContain('Service 7.1');
+  });
+
+  test('a broad query is capped rather than rendering everything', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'e');
+    const rows = await rowCount(page);
+    expect(rows).toBeGreaterThan(0);
+    expect(rows).toBeLessThanOrEqual(120);
+    await expect(page.locator(`${UI} aside >> text=/keep typing to narrow/`)).toBeVisible();
+  });
+
+  test('a deep match can still be selected and written back', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Detail 12.1');
+    await page.locator(`${UI} aside button`, { hasText: /^Detail 12\.1 Cardiology$/ }).first().click();
+    await expect(page.locator('#edit-menu-parent')).toHaveValue('main-menu:3121');
+  });
+
+  test('a small menu still lists everything immediately', async ({ page, settings }) => {
+    // The threshold must not change behaviour for ordinary menus.
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/add/page`);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Menu Placement' }).click();
+    expect(await rowCount(page)).toBeGreaterThan(0);
+    await expect(page.locator(`${UI} aside >> text=/Type above to search/`)).toHaveCount(0);
   });
 });
 

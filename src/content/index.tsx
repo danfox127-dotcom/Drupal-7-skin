@@ -317,6 +317,22 @@ const init = async () => {
       const actions = document.querySelector('.form-actions');
       if (actions) (actions as HTMLElement).style.display = 'none';
 
+      /**
+       * Drupal collapses subtrees behind "Show children (N)" links, and only the visible
+       * rows are in the DOM. On the live main menu that is 6 rows out of 3,000+, so the
+       * manager can only reorder what is shown. Saying so beats appearing to manage a
+       * whole menu it cannot see.
+       */
+      const collapsed = Array.from(document.querySelectorAll('a'))
+        .filter(a => /show children/i.test(a.textContent ?? '')).length;
+      if (collapsed > 0) {
+        console.info(
+          `${logStamp()} Menu manager is showing the ${items.length} rows Drupal rendered. `
+          + `${collapsed} subtree(s) are collapsed behind "Show children" and are not included — `
+          + 'expand them in Drupal first if you need to reorder across them.'
+        );
+      }
+
       injectComponent(menuTable, (
         <MenuTree
           items={items}
