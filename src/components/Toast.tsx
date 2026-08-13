@@ -31,7 +31,7 @@ export const Toast = ({ message, onDismiss, timeoutMs = 6000 }: Props) => {
       <button
         type="button"
         onClick={onDismiss}
-        className="text-cu-light font-semibold uppercase text-eyebrow tracking-[.1em] hover:text-white transition-colors duration-200 ease-studio"
+        className="text-cu-light font-semibold uppercase text-eyebrow hover:text-white transition-colors duration-200 ease-studio"
       >
         Dismiss
       </button>
