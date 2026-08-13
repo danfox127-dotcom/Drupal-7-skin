@@ -39,6 +39,7 @@ const FEATURES: Feature[] = [
   { key: 'menuTree',       label: 'Menu Tree Manager',    description: 'Drag-and-drop tree on main menu admin page' },
   { key: 'commandPalette', label: 'Command Palette',      description: 'Press ⌘K on any admin page' },
   { key: 'contentList',    label: 'Modern Content List',  description: 'Live filtering and row actions on /admin/content' },
+  { key: 'nodeEditor',     label: 'Two-Pane Node Editor', description: 'Replaces the node form. Unvalidated against live markup — off by default' },
   { key: 'debugSchema',    label: 'Log Form Schema',      description: 'Print discovered fields to the console on node forms' },
 ];
 

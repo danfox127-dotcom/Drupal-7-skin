@@ -4,6 +4,7 @@ import { HtmlExport } from '../components/HtmlExport';
 import { MenuTree, MenuItem } from '../components/MenuTree';
 import { CommandPalette } from '../components/CommandPalette';
 import { ContentList } from '../components/ContentList';
+import { NodeEditor } from '../components/editor/NodeEditor';
 import { findContentTable, parseContentList, currentUsername } from '../lib/parseContentList';
 import { discoverSchema, explainSchema, isNodeFormPath } from '../lib/formSchema';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
@@ -162,6 +163,22 @@ const init = async () => {
         '[D7 Studio] Copy the block above and send it back to verify the discovery ' +
         'rules against this form. Fields listed under [other] are ones no rule claimed.'
       );
+    }
+
+    // Feature 5: two-pane node editor overlay.
+    //
+    // The native form is hidden rather than removed: every overlay control writes to
+    // the real input beneath it, and Drupal's own submit does the save. Removing it
+    // would break both.
+    if (schema && settings.nodeEditor) {
+      schema.form.style.display = 'none';
+
+      // Drupal's tab strips are superseded by the two-pane layout.
+      schema.form.parentElement
+        ?.querySelectorAll('.field-group-tabs-wrapper > ul, ul.tabs')
+        .forEach(el => { (el as HTMLElement).style.display = 'none'; });
+
+      injectComponent(schema.form, <NodeEditor schema={schema} />, 'before');
     }
   }
 

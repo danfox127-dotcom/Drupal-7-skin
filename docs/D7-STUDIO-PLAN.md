@@ -354,7 +354,67 @@ correct sections and required flags; same for Page; unknown type degrades gracef
 
 ---
 
-## Phase 5 — Two-pane node editor overlay (lead direction)
+## Phase 5 — Two-pane node editor overlay ✅ COMPLETE (off by default)
+
+**Delivered:** `src/lib/fieldBinding.ts` (write-back), `src/lib/autosave.ts`,
+`src/lib/validationErrors.ts`, and `src/components/editor/` — `NodeEditor`,
+`PrimaryField`, `FieldControl`, `TopicsSection`, `MenuSection`. 27 new tests (156 total),
+19 browser behaviors verified, zero page errors.
+
+**Shipped OFF by default.** It replaces an entire live editing form, and the discovery it
+depends on is validated against reconstructed markup, not the real forms. A default that
+could lose an editor's work is not one to inherit; the popup toggle says so plainly.
+
+**A correction to what I said in Phase 4:** write-back does *not* need the machine names to
+be right. `FieldDescriptor.elements` holds references to the real controls, so binding is to
+elements, not names. Names only affect section routing, which is label-first. The editor is
+therefore more robust to a wrong name guess than previously stated.
+
+**The bug that would have broken saving entirely.** With the native form hidden via
+`display:none`, Chrome refuses to submit a form containing an invalid control it cannot
+focus — it fires no submit event and logs "An invalid form control is not focusable". A
+single empty `required` field would have made Save do nothing, with no visible error.
+`submitForm` now sets `form.noValidate`; Drupal still validates server-side and
+`readFormErrors` maps the result back. A regression test covers it.
+
+**Open questions #5 and #6, both answered:**
+
+- **Autosave conflict (#5).** Drafts store the `changed` stamp they were taken against.
+  When Drupal's current stamp differs, the draft is reported *stale* and **nothing is
+  applied** — the editor offers keep-mine / discard. Silently overwriting a newer revision
+  is the one outcome that destroys someone else's work.
+- **Server-side validation (#6).** Two independent signals: elements Drupal marked
+  `.error`, and the message list matched by label (longest-first, so "Related Conditions" is
+  not claimed by "Conditions"). Offending rail sections auto-open, since the native fields
+  are hidden. Messages matching no field are still shown rather than dropped.
+
+**Also handled:** failed writes are surfaced per field rather than silently diverging from
+what Drupal will receive; `writeAll` returns the names that failed; section open/closed state
+persists per content type but never hides a section holding an error.
+
+**Deliberately generic, not bespoke.** Topics & Tags (chips, search, "first topic becomes
+primary" coupled to the Primary Topic select) and Menu Placement (ancestor-retaining filter
+plus breadcrumb, reusing `treeFilter`) got bespoke treatment, as did the four primary writing
+fields. Related Content, Multimedia, Display, SEO, Groups and Revision render through the
+generic `FieldControl`. Every field is functional and writes back; what is missing is the
+design's bespoke *interaction* for those sections — notably Related Content's single search
+across four entity types, and the SEO section's search-result preview card. Those are
+follow-up work, listed below.
+
+**Known gaps, stated rather than hidden:**
+
+- **File uploads are not mirrored.** `managed_file` needs Drupal's AJAX flow, tokens, and the
+  media library; the overlay says so and points at the native widget instead of pretending.
+- **The rich-text bridge is unvalidated.** CKEditor keeps content in its own instance, so
+  `writeValue` injects a page-world script to call `setData`. The textarea write always
+  happens as a fallback, but the bridge itself has only been exercised against a fixture with
+  no real CKEditor attached.
+- **The summary's 380-character limit is hardcoded**, taken from the live form's meta
+  description help text. It should be read from that field.
+- **Date fields render as a single `month-day-year` text input** rather than a date control.
+- Screens 2 (accordion) and 3 (patched native) remain deliberately unbuilt.
+
+### Original plan for this phase
 
 Screen 1, the primary UX win: replaces the five-tab / long-scroll form. Consumes Phase 4's
 descriptors; ships only after Phase 4 is trustworthy.
