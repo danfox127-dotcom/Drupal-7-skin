@@ -123,7 +123,10 @@ function readOptions(controls: HTMLElement[], kind: FieldKind, wrapper: Element)
   // and listing them would look like a choice field.
   if (kind === 'date') return undefined;
 
-  if (kind === 'select') {
+  // Keyed on the actual element, not just the semantic kind: a Paragraphs widget is
+  // classified as `paragraphs` but is backed by a <select>, and reading options only
+  // for kind === 'select' left it with none to render.
+  if (kind === 'select' || controls[0]?.tagName === 'SELECT') {
     const select = controls[0] as HTMLSelectElement;
     return Array.from(select.options).map(opt => {
       // Drupal encodes taxonomy depth as leading hyphens in the option label.

@@ -14,6 +14,15 @@ export interface Settings {
    * against real forms, not something an editor needs.
    */
   debugSchema: boolean;
+  /**
+   * Two-pane node editor overlay.
+   *
+   * OFF BY DEFAULT, deliberately. It replaces the entire node form, and the field
+   * discovery it depends on is built against reconstructed markup rather than a
+   * capture of the live forms. Turning it on before that is validated risks a real
+   * editor losing real work, which is not a default anyone should inherit.
+   */
+  nodeEditor: boolean;
 }
 
 export const SETTING_DEFAULTS: Settings = {
@@ -23,6 +32,7 @@ export const SETTING_DEFAULTS: Settings = {
   commandPalette: true,
   contentList: true,
   debugSchema: false,
+  nodeEditor: false,
 };
 
 export function useSettings() {
