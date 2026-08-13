@@ -152,12 +152,12 @@ export function App() {
   };
 
   return (
-    <div className="w-80 bg-white flex flex-col font-sans text-ink divide-y divide-rule-faint">
+    <div className="w-[360px] bg-white flex flex-col font-sans text-ink divide-y divide-rule-faint">
       {/* Header */}
       <div className="px-4 py-3 bg-cu-blue text-white flex items-center gap-3">
         <Layers size={18} className="shrink-0" />
         <div className="flex-1 min-w-0">
-          <p className="font-display font-semibold text-control uppercase tracking-[.12em]">D7 Studio</p>
+          <p className="font-display font-semibold text-section uppercase tracking-[.08em]">D7 Studio</p>
           {displayOrigin ? (
             <div className="flex items-center gap-1.5 mt-0.5">
               {/* On Primary Blue, white is AA-compliant; Columbia Blue is used
@@ -283,7 +283,9 @@ export function App() {
               <li key={f.key} className="flex items-center gap-3 px-4 py-2 hover:bg-rail transition-colors duration-200 ease-studio">
                 <div className="flex-1 min-w-0">
                   <p className="text-control font-semibold text-ink">{f.label}</p>
-                  <p className="text-help text-ink-help truncate">{f.description}</p>
+                  {/* Wraps rather than truncating. "Replaces the node form. Unvalidated agai…"
+                      hid the part that mattered; a second line costs nothing. */}
+                  <p className="text-help text-ink-help">{f.description}</p>
                 </div>
                 <Toggle on={settings[f.key]} onChange={v => update(f.key, v)} />
               </li>

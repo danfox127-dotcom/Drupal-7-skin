@@ -166,7 +166,9 @@ export const CommandPalette = ({ onClose }: Props) => {
                       isSelected ? 'bg-cu-tint' : 'bg-white'
                     }`}
                   >
-                    <span className="w-[74px] shrink-0 text-[10.5px] leading-[1.2] font-semibold uppercase tracking-[.07em] text-cu-blue">
+                    {/* Was 10.5px — the smallest text in the product, and uppercase at
+                        that. Uses the shared eyebrow size now rather than a one-off. */}
+                    <span className="w-[82px] shrink-0 text-eyebrow font-semibold uppercase text-cu-blue">
                       {showGroup ? command.group : ''}
                     </span>
                     <span className="flex-1 text-row-title text-ink">{command.label}</span>

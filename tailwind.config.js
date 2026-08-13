@@ -31,20 +31,34 @@ export default {
         mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Consolas', 'monospace'],
       },
       fontSize: {
-        // The sizes the handoff actually specifies, named by role so components
-        // stop inventing one-off bracket values.
+        /**
+         * Role-named sizes, so components stop inventing one-off bracket values.
+         *
+         * DELIBERATELY LARGER THAN THE HANDOFF at the small end. The handoff specifies
+         * 12.5px help text, 13px controls and 11px uppercase eyebrows with .1–.12em
+         * tracking. Those are hard to read for the people who use this tool all day,
+         * and fixing contrast (see src/styles/tokens.js) only solved half the problem —
+         * a 4.5:1 ratio at 11px is still 11px.
+         *
+         * Approved trade-off: legibility over exact brand fidelity. Headline sizes are
+         * untouched, so the design's typographic hierarchy is preserved; only the floor
+         * comes up, and the widest tracking is loosened rather than tightened, because
+         * heavy letter-spacing on small uppercase text hurts word recognition.
+         *
+         * Handoff value in a comment where it differs, so the deviation stays visible.
+         */
         'title': ['40px', { lineHeight: '1.15' }],
         'heading': ['26px', { lineHeight: '1.2' }],
         'heading-sm': ['24px', { lineHeight: '1.2' }],
         'subtitle': ['21px', { lineHeight: '1.3' }],
         'body-surface': ['18px', { lineHeight: '1.6' }],
-        'input': ['15px', { lineHeight: '1.4' }],
-        'row-title': ['14.5px', { lineHeight: '1.4' }],
-        'section': ['13.5px', { lineHeight: '1.4' }],
-        'control': ['13px', { lineHeight: '1.4' }],
-        'help': ['12.5px', { lineHeight: '1.45' }],
-        'eyebrow': ['11px', { lineHeight: '1.2', letterSpacing: '.1em' }],
-        'eyebrow-wide': ['11px', { lineHeight: '1.2', letterSpacing: '.12em' }],
+        'input': ['15.5px', { lineHeight: '1.45' }],      // handoff: 15px
+        'row-title': ['15px', { lineHeight: '1.45' }],    // handoff: 14.5px
+        'section': ['14.5px', { lineHeight: '1.4' }],     // handoff: 13.5px
+        'control': ['14px', { lineHeight: '1.45' }],      // handoff: 13px
+        'help': ['13.5px', { lineHeight: '1.5' }],        // handoff: 12.5px
+        'eyebrow': ['12px', { lineHeight: '1.25', letterSpacing: '.06em' }],       // handoff: 11px / .1em
+        'eyebrow-wide': ['12px', { lineHeight: '1.25', letterSpacing: '.08em' }],  // handoff: 11px / .12em
       },
       spacing: {
         // 8-point scale plus the specific values in use.

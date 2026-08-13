@@ -360,7 +360,7 @@ export const NodeEditor = ({ schema }: Props) => {
                         <span className="ml-2 text-help font-semibold text-burnt">needs attention</span>
                       )}
                     </span>
-                    <span className="block text-help text-ink-help truncate">
+                    <span className="block text-help text-ink-help">
                       {fields.length} field{fields.length === 1 ? '' : 's'}
                       {meta.replaced ? ` · replaced ${meta.replaced}` : ''}
                     </span>
