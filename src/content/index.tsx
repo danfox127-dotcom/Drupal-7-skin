@@ -6,7 +6,7 @@ import { MenuTree, MenuItem } from '../components/MenuTree';
 import { CommandPalette } from '../components/CommandPalette';
 import { ContentList } from '../components/ContentList';
 import { NodeEditor } from '../components/editor/NodeEditor';
-import { findContentTable, parseContentList, currentUsername } from '../lib/parseContentList';
+import { findContentTable, parseContentList, currentUsername, diagnoseContentList } from '../lib/parseContentList';
 import { discoverSchema, explainSchema, isNodeFormPath } from '../lib/formSchema';
 import { getPendingImport } from '../lib/import/pending';
 import { maybeShowImportReview } from './importFlow';
@@ -305,9 +305,12 @@ const init = async () => {
         <ContentList rows={rows} currentUser={currentUsername()} />
       ), 'before');
     } else {
+      // A string, not an object: Chrome's extension error page renders a logged object
+      // as "[object Object]", which is exactly where someone goes looking for this.
       console.warn(
-        '[D7 Proxy] Content list not replaced: could not parse /admin/content. Leaving Drupal\'s table in place.',
-        { tableFound: Boolean(table), rowsParsed: rows?.length ?? null }
+        '[D7 Studio] Content list not replaced — leaving Drupal\'s table in place.\n'
+        + diagnoseContentList()
+        + '\n\nSend the block above to get the parser fixed for this page.'
       );
     }
   }
