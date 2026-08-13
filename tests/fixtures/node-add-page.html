@@ -127,6 +127,57 @@
             <option value="main-menu:107">-Patient Resources</option>
           </select>
         </div>
+
+        <!--
+          Menu-attribute fields, from the Menu Attributes / Special Menu Items modules.
+          These filled the rail on the live Page form, each with a paragraph of help text,
+          burying the parent picker. They are real fields, so they collapse rather than
+          being dropped.
+        -->
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-attr-id">ID</label>
+          <input type="text" id="edit-menu-attr-id" name="menu[options][attributes][id]" class="form-text" />
+          <div class="description">Specifies a unique ID for the link.</div>
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-attr-name">Name</label>
+          <input type="text" id="edit-menu-attr-name" name="menu[options][attributes][name]" class="form-text" />
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-attr-rel">Relationship</label>
+          <input type="text" id="edit-menu-attr-rel" name="menu[options][attributes][rel]" class="form-text" />
+          <div class="description">Enter 'nofollow' here to nofollow this link.</div>
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-attr-class">Classes</label>
+          <input type="text" id="edit-menu-attr-class" name="menu[options][attributes][class]" class="form-text" />
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-attr-style">Style</label>
+          <input type="text" id="edit-menu-attr-style" name="menu[options][attributes][style]" class="form-text" />
+        </div>
+        <div class="form-item form-type-select">
+          <label for="edit-menu-attr-target">Target</label>
+          <select id="edit-menu-attr-target" name="menu[options][attributes][target]">
+            <option value="" selected="selected">None (i.e. same window)</option>
+            <option value="_blank">New window</option>
+          </select>
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-attr-accesskey">Access key</label>
+          <input type="text" id="edit-menu-attr-accesskey" name="menu[options][attributes][accesskey]" class="form-text" />
+        </div>
+        <div class="form-item form-type-select">
+          <label for="edit-menu-section-style">Section style</label>
+          <select id="edit-menu-section-style" name="menu[options][section_style]">
+            <option value="" selected="selected">- None -</option>
+          </select>
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-modal-nid">Modal nid</label>
+          <input type="text" id="edit-menu-modal-nid" name="menu[options][modal_nid]" class="form-text" />
+          <div class="description">Enter node id to display node as modal.</div>
+        </div>
       </fieldset>
 
       <fieldset class="vertical-tabs-pane" id="edit-metatags">

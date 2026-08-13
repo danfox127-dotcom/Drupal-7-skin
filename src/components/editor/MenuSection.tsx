@@ -1,5 +1,5 @@
 import React, { useState, useMemo } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { FieldDescriptor, FieldOption } from '../../lib/formSchema';
 import { readValue, writeValue } from '../../lib/fieldBinding';
 import { filterTreeRetainingAncestors, ancestorIndices } from '../../lib/treeFilter';
@@ -38,6 +38,10 @@ const MAX_VISUAL_DEPTH = 8;
 export const MenuSection = ({ parent, others, errorFor }: Props) => {
   const [value, setValue] = useState<string>(() => (parent ? String(readValue(parent)) : ''));
   const [query, setQuery] = useState('');
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  // Menu-attribute fields: real, but not what anyone opens this section for.
+  const advancedOthers = useMemo(() => others.filter(f => f.advanced), [others]);
 
   /**
    * EVERY option Drupal offers, at any depth.
@@ -84,8 +88,10 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Menu link title and the enable checkbox come first — they gate the rest. */}
-      {others.map(field => (
+      {/* Menu link title and the enable checkbox come first — they gate the rest. The
+          menu-attribute fields (ID, CLASSES, STYLE, TARGET, ACCESS KEY, …) are marked
+          advanced and collapse, so they stop burying the parent picker. */}
+      {others.filter(f => !f.advanced).map(field => (
         <FieldControl key={field.machineName} field={field} dense error={errorFor(field)} />
       ))}
 
@@ -152,6 +158,29 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
             <p className="text-help text-burnt font-semibold">{errorFor(parent)}</p>
           )}
         </>
+      )}
+
+      {advancedOthers.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(v => !v)}
+            aria-expanded={showAdvanced}
+            className="self-start flex items-center gap-1.5 text-help font-semibold text-cu-blue hover:underline"
+          >
+            {showAdvanced ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            {showAdvanced
+              ? `Hide ${advancedOthers.length} rarely-used fields`
+              : `Show ${advancedOthers.length} rarely-used fields`}
+          </button>
+          {showAdvanced && (
+            <div data-advanced-fields="menu" className="flex flex-col gap-3 pl-2 border-l-2 border-rule">
+              {advancedOthers.map(field => (
+                <FieldControl key={field.machineName} field={field} dense error={errorFor(field)} />
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

@@ -51,6 +51,77 @@ const RAIL_ORDER: SectionId[] = [
 
 const SECTION_STATE_KEY = 'railSections';
 
+/**
+ * A rail section's fields, with the rarely-used ones behind a disclosure.
+ *
+ * On the live Page form the Menu Placement section filled with ID, NAME, RELATIONSHIP,
+ * CLASSES, STYLE, TARGET, ACCESS KEY, SECTION STYLE and MODAL NID — each with a paragraph
+ * of help text — which pushed the fields an editor actually uses off the screen.
+ *
+ * They are collapsed, not removed: a field an editor occasionally needs must still be
+ * reachable, and a section that silently omits fields is worse than a long one. Anything
+ * carrying a validation error is forced open, so a rejected save is never hidden.
+ */
+function SectionFields({
+  fields, section, errorFor, slottedFields, onChange,
+}: {
+  fields: FieldDescriptor[];
+  section: SectionId;
+  errorFor: (field: FieldDescriptor) => string | null;
+  slottedFields?: Set<string>;
+  onChange?: () => void;
+}) {
+  const common = fields.filter(f => !f.advanced);
+  const advanced = fields.filter(f => f.advanced);
+  const advancedHasError = advanced.some(f => errorFor(f));
+  const [showAdvanced, setShowAdvanced] = useState(false);
+
+  const render = (field: FieldDescriptor) => (
+    <FieldControl
+      key={field.machineName}
+      field={field}
+      dense
+      error={errorFor(field)}
+      slotted={slottedFields?.has(field.machineName)}
+      onChange={onChange}
+    />
+  );
+
+  return (
+    <div className="flex flex-col gap-3">
+      {common.map(render)}
+
+      {advanced.length > 0 && (
+        <div className="flex flex-col gap-3">
+          <button
+            type="button"
+            onClick={() => setShowAdvanced(v => !v)}
+            aria-expanded={showAdvanced || advancedHasError}
+            className="self-start flex items-center gap-1.5 text-help font-semibold text-cu-blue hover:underline"
+          >
+            {showAdvanced || advancedHasError ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+            {showAdvanced || advancedHasError
+              ? `Hide ${advanced.length} rarely-used field${advanced.length === 1 ? '' : 's'}`
+              : `Show ${advanced.length} rarely-used field${advanced.length === 1 ? '' : 's'}`}
+            {advancedHasError && (
+              <span className="text-burnt">· needs attention</span>
+            )}
+          </button>
+
+          {(showAdvanced || advancedHasError) && (
+            <div
+              data-advanced-fields={section}
+              className="flex flex-col gap-3 pl-2 border-l-2 border-rule"
+            >
+              {advanced.map(render)}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export const NodeEditor = ({ schema, slottedFields }: Props) => {
   const key = useMemo(() => draftKey(window.location), []);
   const baseChanged = useMemo(() => readChangedStamp(schema.form), [schema.form]);
@@ -363,7 +434,13 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
                       )}
                     </span>
                     <span className="block text-help text-ink-help">
-                      {fields.length} field{fields.length === 1 ? '' : 's'}
+                      {(() => {
+                        const advanced = fields.filter(f => f.advanced).length;
+                        const shown = fields.length - advanced;
+                        return advanced
+                          ? `${shown} field${shown === 1 ? '' : 's'} · ${advanced} rarely used`
+                          : `${fields.length} field${fields.length === 1 ? '' : 's'}`;
+                      })()}
                       {meta.replaced ? ` · replaced ${meta.replaced}` : ''}
                     </span>
                   </span>
@@ -388,18 +465,13 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
                             return <MenuSection parent={parent} others={others} errorFor={errorFor} />;
                           })()
                         : (
-                          <div className="flex flex-col gap-3">
-                            {fields.map(field => (
-                              <FieldControl
-                                key={field.machineName}
-                                field={field}
-                                dense
-                                error={errorFor(field)}
-                                slotted={slottedFields?.has(field.machineName)}
-                                onChange={handleFieldChange}
-                              />
-                            ))}
-                          </div>
+                          <SectionFields
+                            fields={fields}
+                            section={section}
+                            errorFor={errorFor}
+                            slottedFields={slottedFields}
+                            onChange={handleFieldChange}
+                          />
                         )}
                   </div>
                 )}
