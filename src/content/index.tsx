@@ -7,6 +7,8 @@ import { ContentList } from '../components/ContentList';
 import { NodeEditor } from '../components/editor/NodeEditor';
 import { findContentTable, parseContentList, currentUsername } from '../lib/parseContentList';
 import { discoverSchema, explainSchema, isNodeFormPath } from '../lib/formSchema';
+import { getPendingImport } from '../lib/import/pending';
+import { maybeShowImportReview } from './importFlow';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
 
 const getSettings = (): Promise<Settings> =>
@@ -179,6 +181,13 @@ const init = async () => {
         .forEach(el => { (el as HTMLElement).style.display = 'none'; });
 
       injectComponent(schema.form, <NodeEditor schema={schema} />, 'before');
+    }
+
+    // Feature 6: import review. Runs whether or not the two-pane editor is on —
+    // approval writes to the native inputs, so it fills either surface.
+    if (schema) {
+      const pending = await getPendingImport();
+      if (pending) maybeShowImportReview(pending, schema);
     }
   }
 

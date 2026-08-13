@@ -24,33 +24,30 @@ function notify(el: HTMLElement) {
 }
 
 /**
- * CKEditor keeps its content in its own instance and only syncs to the textarea on
- * submit, so assigning `textarea.value` alone is silently discarded.
+ * Asks the service worker to push the value into the page's rich-text editor.
  *
- * The instance lives in the page's JavaScript world, which a content script cannot
- * reach directly, so this injects a one-shot script into the page to call setData.
- * Best-effort by design: the textarea write below always happens, which is correct
+ * CKEditor holds content in its own instance and only syncs to the textarea on submit,
+ * so assigning `textarea.value` alone is discarded. That instance lives in the page's
+ * JavaScript world, unreachable from a content script.
+ *
+ * This deliberately does NOT append an inline <script> to the page. That approach was
+ * tried and fails on any site whose CSP omits 'unsafe-inline' — verified in testing
+ * with "Executing inline script violates the following Content Security Policy
+ * directive". The service worker uses chrome.scripting with `world: 'MAIN'`, which is
+ * injected by the extension and so is not subject to page CSP.
+ *
+ * Fire-and-forget: the textarea write always happens first and is correct on its own
  * when no rich editor is attached.
  */
 function syncRichEditor(el: HTMLTextAreaElement, value: string): void {
   if (!el.id) return;
 
-  const script = document.createElement('script');
-  script.textContent = `
-    (function () {
-      var id = ${JSON.stringify(el.id)};
-      var value = ${JSON.stringify(value)};
-      try {
-        if (window.CKEDITOR && window.CKEDITOR.instances && window.CKEDITOR.instances[id]) {
-          window.CKEDITOR.instances[id].setData(value);
-        } else if (window.tinyMCE && window.tinyMCE.get(id)) {
-          window.tinyMCE.get(id).setContent(value);
-        }
-      } catch (e) { /* leave the textarea value as the source of truth */ }
-    })();
-  `;
-  document.documentElement.appendChild(script);
-  script.remove();
+  try {
+    void chrome.runtime.sendMessage({ type: 'syncRichEditor', elementId: el.id, value });
+  } catch {
+    // An invalidated extension context (reloaded mid-session) is not worth surfacing;
+    // the textarea already holds the value.
+  }
 }
 
 /** True when a rich editor is attached to this field. */

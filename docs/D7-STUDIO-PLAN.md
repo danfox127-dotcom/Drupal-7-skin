@@ -473,7 +473,70 @@ fields; no implicit writes.
 
 ---
 
-## Phase 6 — Import from URL
+## Phase 6 — Import from URL ✅ COMPLETE
+
+**Delivered:** `src/background/index.ts` (service worker), `src/lib/import/extract.ts`,
+`src/lib/import/pending.ts`, `src/components/import/ImportReview.tsx`,
+`src/content/importFlow.tsx`. 29 new tests (185 total), 18 end-to-end browser checks,
+zero page errors.
+
+**Decisions taken (the two the plan left open):**
+
+- **Permissions: `optional_host_permissions` requested per-origin at first use.** Source
+  domains for a migration cannot be enumerated in advance, but requesting all-URLs access
+  at install time would put a frightening prompt in front of every user for a feature most
+  never touch. The install prompt therefore stays narrow (six Columbia patterns), and the
+  popup asks for *one origin* when a URL is actually imported. The request must happen in
+  the popup — `chrome.permissions.request` needs a user gesture in an extension page and is
+  unavailable to service workers and content scripts.
+- **Source pane: a sanitized copy in a sandboxed iframe, not a live frame.** The design
+  specifies framing the source URL; that does not work, because most sites send
+  `X-Frame-Options` or a restrictive `frame-ancestors`, and outlining a region inside a
+  cross-origin frame requires a blocked read. Rendering our own annotated copy always works
+  **and** makes region outlining possible, since extraction tags each region.
+
+**Open question #4 answered with real configuration.** Drupal renders "Allowed HTML tags:
+&lt;a&gt; &lt;em&gt; …" as filter guidelines on the node form, so the extension reads the
+site's actual allowed-tag list off the page rather than guessing one. When a form publishes
+no list, a conservative default is used and the review says so explicitly.
+
+**Architecture correction made during the build.** The popup originally extracted and stored
+a parsed result, which was wrong twice over: it filtered the body against a tag list it could
+not know, and the "re-filter on the target form" step I had commented never actually ran. The
+popup now stores **raw HTML** and extraction happens on the node form, where the real tag
+list is readable. One code path, filtering against real configuration.
+
+**Two bugs found by running it, not by reasoning about it:**
+
+1. **The rich-text bridge was broken, and CSP proved it.** Phase 5 injected an inline
+   `<script>` to reach CKEditor's page-world instance. The console showed "Executing inline
+   script violates the following Content Security Policy directive" — it would have failed on
+   any site whose CSP omits `unsafe-inline`, i.e. most. Replaced with
+   `chrome.scripting.executeScript({ world: 'MAIN' })` via the service worker, which is
+   extension-injected and not subject to page CSP. **Now verified working**: `setData`
+   reaches a page-world instance with no CSP violation, closing the gap flagged in Phase 5.
+2. **The body duplicated the headline.** Title, dek, byline and date live *inside*
+   `<article>`, so every import shipped them twice — once as their own proposal and again as
+   the body's opening lines. Extraction now drops the regions it already claimed.
+
+**What the flow does, end to end:** paste a URL in the popup → per-origin permission
+request → service worker fetches → raw HTML parked → the node form opens the review →
+per-field accept/reject with editable values and provenance → "Fill the editor with N fields"
+writes to the native inputs → IMPORTED banner. **Nothing is sent to Drupal**; the editor
+still presses Save. Verified: a skipped byline is not written, and the page stays on
+`/node/add/news`.
+
+**Known gaps:**
+
+- **Images are listed and role-assigned but not uploaded.** Copying into the media library
+  needs Drupal's file API, which is the same blocker as the editor's file fields.
+- **The target content type is not chosen.** The popup navigates to `/node/add/news`; the
+  design's type chips are not implemented, so importing to a Page means navigating there
+  first. The review does read and badge whatever type it lands on.
+- **`applyProposals` matches fields by label**, so a proposal with no counterpart on the
+  target type (a byline on a Page) is reported unapplied rather than silently dropped.
+
+### Original plan for this phase
 
 Screen 6, the largest new feature. Last because it depends on the editor existing (approval
 fills editor state) and needs new infrastructure.

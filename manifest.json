@@ -3,7 +3,12 @@
   "name": "D7 Admin Proxy UI",
   "version": "0.1.0",
   "description": "A modern React/Tailwind interface for legacy Drupal 7 administration.",
-  "permissions": ["storage", "clipboardWrite", "tabs"],
+  "permissions": [
+    "storage",
+    "clipboardWrite",
+    "tabs",
+    "scripting"
+  ],
   "host_permissions": [
     "*://*.columbiadoctors.org/admin/*",
     "*://*.columbiadoctors.org/node/*",
@@ -12,12 +17,21 @@
     "*://*.cuimc.columbia.edu/admin/*",
     "*://*.cuimc.columbia.edu/node/*"
   ],
+  "optional_host_permissions": [
+    "*://*/*"
+  ],
+  "background": {
+    "service_worker": "src/background/index.ts",
+    "type": "module"
+  },
   "action": {
     "default_popup": "index.html"
   },
   "content_scripts": [
     {
-      "js": ["src/content/index.tsx"],
+      "js": [
+        "src/content/index.tsx"
+      ],
       "matches": [
         "*://*.columbiadoctors.org/admin/*",
         "*://*.columbiadoctors.org/node/*",
