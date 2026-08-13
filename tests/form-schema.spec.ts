@@ -561,12 +561,39 @@ test.describe('live News form — regressions from the real site', () => {
     expect(summary.required).toBe(true);
   });
 
-  test('this site has one Related field, not the handoff\'s four', async ({ page }) => {
+  test('cuimc News has one Related field — a per-site fact, not a general one', async ({ page }) => {
+    /**
+     * SCOPED TO CUIMC DELIBERATELY. columbiadoctors.org has four related fields
+     * (Conditions, Profiles/Providers, Treatments, Specialties) per the handoff's
+     * matrix; cuimc has a single "Related Services". The field list differs by site,
+     * so this asserts what THIS fixture contains, not what every site contains.
+     */
     await open(page, 'node-add-news-live.html');
     const schema = (await live(page))!;
     const related = schema.fields.filter(f => f.section === 'related');
     expect(related.map(f => f.label)).toEqual(['Related Services']);
     expect(related[0].kind).toBe('autocomplete');
+  });
+
+  test('the related rules cover both sites\' entity types', async ({ page }) => {
+    // The rules must not encode either site's field list. Conditions, Providers,
+    // Profiles, Treatments and Specialties all belong in `related` whether they arrive
+    // prefixed with "Related" or bare.
+    await open(page, 'node-add-news-live.html');
+    const sections = await page.evaluate(() => {
+      const api = (window as any).FormSchema;
+      const labels = [
+        'Related Conditions', 'Related Providers', 'Related Specialties',
+        'Conditions', 'Providers', 'Profiles', 'Treatments', 'Specialties',
+      ];
+      return labels.map(label => ({
+        label,
+        section: api.assignSection({ label, baseName: 'field_unknown_name', groupPath: [] }).section,
+      }));
+    });
+    for (const { label, section } of sections) {
+      expect(section, `"${label}" should route to related`).toBe('related');
+    }
   });
 
   test('framework fields route by name where their labels are generic', async ({ page }) => {

@@ -355,12 +355,24 @@ on each site — it would be stale before the first release.
    URL SEO & Sitemap, group flags → Groups.
 5. Falls back to a generic grouping for unknown types rather than an empty rail.
 
-**Per-host overrides are NOT needed.** The handoff's open question #2 assumed the same
-content type might use different machine names on `columbiadoctors.org` versus
-`vagelos.columbia.edu`. Confirmed with the user: the admin UI is the same across all three
-sites, so one field map serves all of them. Keep the discovery layer host-agnostic and add
-overrides only if a divergence actually turns up — do not build the `hosts/{host}.ts` layer
-speculatively.
+**Per-host divergence is REAL — open question #2 stands.** The admin UI is the same across
+the sites (theme, tab layout, widget types), but the field lists are not:
+
+| | columbiadoctors.org News | cuimc.columbia.edu News |
+|---|---|---|
+| Related content | Conditions, Profiles/Providers, Treatments, Specialties | one `field_services` |
+
+An earlier revision of this plan concluded the sites were identical and dropped per-host
+handling. That was too strong: it generalized from one site's schema dump.
+
+The response is **not** a `hosts/{host}.ts` override layer — it is keeping the rules broad
+enough that no site's field list is encoded anywhere. `related.entityRefs` matches the
+"Related …" prefix plus the bare entity nouns, so it covers both sites without knowing which
+one it is on. Add a host override only if two sites disagree in a way label matching cannot
+bridge.
+
+**When validating against a live form, record which host the dump came from.** A dump from
+one site does not characterize the others.
 
 **Write-back contract**, uniform for every control: set `.value` on the hidden native input
 and dispatch `new Event('change', { bubbles: true })`, exactly as `TaxonomyCombobox`
