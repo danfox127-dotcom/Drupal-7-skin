@@ -69,3 +69,36 @@ export async function requestOriginAccess(url: string): Promise<boolean> {
 
   return chrome.permissions.request({ origins: [origin] });
 }
+
+/**
+ * Where an import should be reviewed, given the tab the user started it from.
+ *
+ * Extracted from the popup so the decision is testable and its intent is stated once.
+ *
+ * The rule that matters: if the tab is ALREADY on a node form, stay there. Navigating
+ * unconditionally to /node/add/news threw away a Page form the user had open and switched
+ * content type under them. A reload is enough, because the content script reads the pending
+ * import at startup.
+ */
+export interface ImportTarget {
+  /** Reload the current tab rather than navigating away. */
+  stay: boolean;
+  /** Content type of the form already open, when there is one. */
+  targetType: string | null;
+}
+
+export function importTarget(tabPath: string | null): ImportTarget {
+  if (!tabPath) return { stay: false, targetType: null };
+
+  const add = tabPath.match(/\/node\/add\/([a-z0-9-_]+)/i);
+  if (add) {
+    // Drupal's URLs hyphenate machine names.
+    return { stay: true, targetType: add[1].replace(/-/g, '_').toLowerCase() };
+  }
+
+  // An edit form is also a form worth staying on; its type comes from the body class,
+  // which only the content script can read.
+  if (/\/node\/\d+\/edit/.test(tabPath)) return { stay: true, targetType: null };
+
+  return { stay: false, targetType: null };
+}

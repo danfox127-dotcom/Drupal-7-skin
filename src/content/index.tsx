@@ -231,11 +231,39 @@ const init = async () => {
       );
     }
 
-    // Feature 6: import review. Runs whether or not the two-pane editor is on —
-    // approval writes to the native inputs, so it fills either surface.
-    if (schema) {
-      const pending = await getPendingImport();
-      if (pending) maybeShowImportReview(pending, schema);
+  }
+
+  /**
+   * Feature 6: import review.
+   *
+   * Deliberately OUTSIDE the schema block above, and it reports when it cannot run.
+   *
+   * A waiting import that silently fails to appear is the worst outcome: the fetch
+   * succeeded, the user was navigated somewhere, and nothing happened with no explanation.
+   * Previously this required a discovered schema and said nothing when there wasn't one,
+   * and said nothing at all if the tab was not on a node form.
+   */
+  {
+    const pending = await getPendingImport();
+
+    if (pending && !pending.applied) {
+      if (!isNodeFormPath()) {
+        console.warn(
+          `${logStamp()} An import from ${pending.sourceUrl} is waiting, but this page is `
+          + 'not a node add/edit form. Open the form you want to fill and it will appear.'
+        );
+      } else {
+        const schema = discoverSchema();
+        if (!schema) {
+          console.warn(
+            `${logStamp()} An import from ${pending.sourceUrl} is waiting, but the fields on `
+            + 'this form could not be read, so there is nothing to fill.\n'
+            + 'Turn on "Log Form Schema" in the extension popup and reload to see why.'
+          );
+        } else {
+          maybeShowImportReview(pending, schema);
+        }
+      }
     }
   }
 

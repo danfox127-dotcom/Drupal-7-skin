@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { availableCommands, filterCommands, COMMANDS, GROUP_ORDER } from '../src/lib/commands';
 import { normalizeUrl, displayUrl } from '../src/popup/useImportQueue';
+import { importTarget } from '../src/lib/import/pending';
 import { nodeIdFromPath, canExportHere } from '../src/lib/extractPublicHtml';
 
 /**
@@ -128,5 +129,38 @@ test.describe('import queue url handling', () => {
   test('display strips the scheme and a trailing slash', () => {
     expect(displayUrl('https://example.com/a/')).toBe('example.com/a');
     expect(displayUrl('http://example.com')).toBe('example.com');
+  });
+});
+
+test.describe('where an import gets reviewed', () => {
+  /**
+   * Reported from real use: starting an import while on a Page form navigated to
+   * /node/add/news, discarding the form the user had open and switching content type.
+   */
+  test('stays on an add form and records its type', () => {
+    expect(importTarget('/node/add/page')).toEqual({ stay: true, targetType: 'page' });
+    expect(importTarget('/node/add/news')).toEqual({ stay: true, targetType: 'news' });
+  });
+
+  test('hyphenated URLs become machine names', () => {
+    // Drupal hyphenates machine names in URLs.
+    expect(importTarget('/node/add/timeline-entry')).toEqual({
+      stay: true, targetType: 'timeline_entry',
+    });
+  });
+
+  test('stays on an edit form, leaving the type to the content script', () => {
+    // Only the content script can read node-type-* from the body class.
+    expect(importTarget('/node/451/edit')).toEqual({ stay: true, targetType: null });
+  });
+
+  test('navigates when the tab is not on a form', () => {
+    for (const path of ['/admin/content', '/node/add', '/', '/node/451']) {
+      expect(importTarget(path), `path ${path}`).toEqual({ stay: false, targetType: null });
+    }
+  });
+
+  test('handles an unknown tab without throwing', () => {
+    expect(importTarget(null)).toEqual({ stay: false, targetType: null });
   });
 });
