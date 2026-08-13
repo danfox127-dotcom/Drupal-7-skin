@@ -1,0 +1,481 @@
+<!DOCTYPE html>
+<!-- Large-menu variant: the live main menu offers 3,149 parents up to 16 levels deep,
+     which is what forced the picker to search first rather than render everything. -->
+<!--
+  /node/add/page — same provenance caveats as node-add-news.html.
+
+  Differs from News in exactly the ways the handoff's field matrix says it should:
+  no Byline / Date / External source / References / Related Content / Topics; body
+  optional rather than required; Teaser AND Featured images; Menu settings present;
+  a required "Full page override"; and an extra "Customize display" vertical tab.
+-->
+<html lang="en">
+<head><meta charset="utf-8" /><title>Create Page | ColumbiaDoctors</title></head>
+<body class="html not-front page-node page-node-add node-type-page">
+  <div id="toolbar"><div id="toolbar-user"><a href="/user/42">df2832</a></div></div>
+  <h1 id="page-title">Create Page</h1>
+
+  <form class="node-form node-page-form" id="page-node-form" action="/node/add/page" method="post">
+    <input type="hidden" name="form_build_id" value="form-def456" />
+    <input type="hidden" name="form_token" value="tok456" />
+    <input type="hidden" name="form_id" value="page_node_form" />
+
+    <div class="field-group-tabs-wrapper">
+      <fieldset class="field-group-tab" id="group-overview">
+        <legend><span class="fieldset-legend">Overview</span></legend>
+
+        <div class="form-item form-type-textfield form-item-title">
+          <label for="edit-title">Title <span class="form-required">*</span></label>
+          <input type="text" id="edit-title" name="title" required="required" class="form-text required" />
+        </div>
+
+        <div class="form-item form-type-textfield">
+          <label for="edit-field-subtitle">Subtitle</label>
+          <input type="text" id="edit-field-subtitle" name="field_subtitle[und][0][value]" class="form-text" />
+        </div>
+
+        <!-- Required, and buried in a vertical tab on the legacy form -->
+        <div class="form-item form-type-select form-item-field-full-page-override">
+          <label for="edit-field-full-page-override">Full page override <span class="form-required">*</span></label>
+          <select id="edit-field-full-page-override" name="field_full_page_override[und]" required="required" class="form-select required">
+            <option value="_none">- Select a value -</option>
+            <option value="default" selected="selected">Default layout</option>
+            <option value="full">Full width</option>
+            <option value="landing">Landing</option>
+          </select>
+          <div class="description">Controls the template used to render this page.</div>
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab" id="group-body">
+        <legend><span class="fieldset-legend">Body</span></legend>
+
+        <div class="form-item form-type-textarea">
+          <label for="edit-body-summary">Summary <span class="form-required">*</span></label>
+          <textarea id="edit-body-summary" name="body[und][0][summary]" required="required" class="form-textarea required"></textarea>
+          <div class="description">Doubles as the meta description.</div>
+        </div>
+
+        <!-- Body is optional on Page, unlike News -->
+        <div class="form-item form-type-textarea text-format-wrapper">
+          <label for="edit-body-value">Body</label>
+          <div class="cke">
+            <textarea id="edit-body-value" name="body[und][0][value]" class="form-textarea text-full"></textarea>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab" id="group-multimedia">
+        <legend><span class="fieldset-legend">Multimedia</span></legend>
+        <div class="form-item form-type-managed-file">
+          <label for="edit-field-teaser-image">Teaser Image</label>
+          <input type="file" id="edit-field-teaser-image" name="files[field_teaser_image_und_0]" class="form-file" />
+        </div>
+        <div class="form-item form-type-managed-file">
+          <label for="edit-field-featured-image">Featured Image</label>
+          <input type="file" id="edit-field-featured-image" name="files[field_featured_image_und_0]" class="form-file" />
+          <div class="description">Used at the top of the page.</div>
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab" id="group-groups">
+        <legend><span class="fieldset-legend">Groups</span></legend>
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-field-group-flag" name="field_group[und]" value="1" class="form-checkbox" />
+          <label for="edit-field-group-flag">Group</label>
+        </div>
+        <fieldset>
+          <legend><span class="fieldset-legend">Groups</span></legend>
+          <div class="form-item form-type-textfield">
+            <label for="edit-og-your-groups">Your Groups</label>
+            <input type="text" id="edit-og-your-groups" name="og_group_ref[und][0][default][0][target_id]" class="form-text form-autocomplete" />
+          </div>
+        </fieldset>
+      </fieldset>
+    </div>
+
+    <div class="vertical-tabs">
+      <!-- Page has Menu settings; News does not -->
+      <fieldset class="vertical-tabs-pane" id="edit-menu">
+        <legend><span class="fieldset-legend">Menu settings</span></legend>
+        <span class="summary">Not in menu</span>
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-menu-enabled" name="menu[enabled]" value="1" class="form-checkbox" />
+          <label for="edit-menu-enabled">Provide a menu link</label>
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-link-title">Menu link title</label>
+          <input type="text" id="edit-menu-link-title" name="menu[link_title]" class="form-text" />
+        </div>
+        <div class="form-item form-type-select">
+          <label for="edit-menu-parent">Parent item</label>
+          <!--
+            Depth mirrors the live main menu, which nests five levels before a leaf:
+            Specialties > Cardiology & Cardiac Surgery > Our Services >
+            Active BP Blood Pressure Monitoring > Video Tutorial.
+            Drupal encodes depth as leading hyphens.
+          -->
+          <select id="edit-menu-parent" name="menu[parent]" class="form-select"><option value="main-menu:0" selected="selected">&lt;Main menu&gt;</option>
+            <option value="main-menu:1001">-Specialty 1</option>
+            <option value="main-menu:2011">--Service 1.1</option>
+            <option value="main-menu:3011">---Detail 1.1 Cardiology</option>
+            <option value="main-menu:2012">--Service 1.2</option>
+            <option value="main-menu:2013">--Service 1.3</option>
+            <option value="main-menu:2014">--Service 1.4</option>
+            <option value="main-menu:1002">-Specialty 2</option>
+            <option value="main-menu:2021">--Service 2.1</option>
+            <option value="main-menu:3021">---Detail 2.1 Cardiology</option>
+            <option value="main-menu:2022">--Service 2.2</option>
+            <option value="main-menu:2023">--Service 2.3</option>
+            <option value="main-menu:2024">--Service 2.4</option>
+            <option value="main-menu:1003">-Specialty 3</option>
+            <option value="main-menu:2031">--Service 3.1</option>
+            <option value="main-menu:3031">---Detail 3.1 Cardiology</option>
+            <option value="main-menu:2032">--Service 3.2</option>
+            <option value="main-menu:2033">--Service 3.3</option>
+            <option value="main-menu:2034">--Service 3.4</option>
+            <option value="main-menu:1004">-Specialty 4</option>
+            <option value="main-menu:2041">--Service 4.1</option>
+            <option value="main-menu:3041">---Detail 4.1 Cardiology</option>
+            <option value="main-menu:2042">--Service 4.2</option>
+            <option value="main-menu:2043">--Service 4.3</option>
+            <option value="main-menu:2044">--Service 4.4</option>
+            <option value="main-menu:1005">-Specialty 5</option>
+            <option value="main-menu:2051">--Service 5.1</option>
+            <option value="main-menu:3051">---Detail 5.1 Cardiology</option>
+            <option value="main-menu:2052">--Service 5.2</option>
+            <option value="main-menu:2053">--Service 5.3</option>
+            <option value="main-menu:2054">--Service 5.4</option>
+            <option value="main-menu:1006">-Specialty 6</option>
+            <option value="main-menu:2061">--Service 6.1</option>
+            <option value="main-menu:3061">---Detail 6.1 Cardiology</option>
+            <option value="main-menu:2062">--Service 6.2</option>
+            <option value="main-menu:2063">--Service 6.3</option>
+            <option value="main-menu:2064">--Service 6.4</option>
+            <option value="main-menu:1007">-Specialty 7</option>
+            <option value="main-menu:2071">--Service 7.1</option>
+            <option value="main-menu:3071">---Detail 7.1 Cardiology</option>
+            <option value="main-menu:2072">--Service 7.2</option>
+            <option value="main-menu:2073">--Service 7.3</option>
+            <option value="main-menu:2074">--Service 7.4</option>
+            <option value="main-menu:1008">-Specialty 8</option>
+            <option value="main-menu:2081">--Service 8.1</option>
+            <option value="main-menu:3081">---Detail 8.1 Cardiology</option>
+            <option value="main-menu:2082">--Service 8.2</option>
+            <option value="main-menu:2083">--Service 8.3</option>
+            <option value="main-menu:2084">--Service 8.4</option>
+            <option value="main-menu:1009">-Specialty 9</option>
+            <option value="main-menu:2091">--Service 9.1</option>
+            <option value="main-menu:3091">---Detail 9.1 Cardiology</option>
+            <option value="main-menu:2092">--Service 9.2</option>
+            <option value="main-menu:2093">--Service 9.3</option>
+            <option value="main-menu:2094">--Service 9.4</option>
+            <option value="main-menu:1010">-Specialty 10</option>
+            <option value="main-menu:2101">--Service 10.1</option>
+            <option value="main-menu:3101">---Detail 10.1 Cardiology</option>
+            <option value="main-menu:2102">--Service 10.2</option>
+            <option value="main-menu:2103">--Service 10.3</option>
+            <option value="main-menu:2104">--Service 10.4</option>
+            <option value="main-menu:1011">-Specialty 11</option>
+            <option value="main-menu:2111">--Service 11.1</option>
+            <option value="main-menu:3111">---Detail 11.1 Cardiology</option>
+            <option value="main-menu:2112">--Service 11.2</option>
+            <option value="main-menu:2113">--Service 11.3</option>
+            <option value="main-menu:2114">--Service 11.4</option>
+            <option value="main-menu:1012">-Specialty 12</option>
+            <option value="main-menu:2121">--Service 12.1</option>
+            <option value="main-menu:3121">---Detail 12.1 Cardiology</option>
+            <option value="main-menu:2122">--Service 12.2</option>
+            <option value="main-menu:2123">--Service 12.3</option>
+            <option value="main-menu:2124">--Service 12.4</option>
+            <option value="main-menu:1013">-Specialty 13</option>
+            <option value="main-menu:2131">--Service 13.1</option>
+            <option value="main-menu:3131">---Detail 13.1 Cardiology</option>
+            <option value="main-menu:2132">--Service 13.2</option>
+            <option value="main-menu:2133">--Service 13.3</option>
+            <option value="main-menu:2134">--Service 13.4</option>
+            <option value="main-menu:1014">-Specialty 14</option>
+            <option value="main-menu:2141">--Service 14.1</option>
+            <option value="main-menu:3141">---Detail 14.1 Cardiology</option>
+            <option value="main-menu:2142">--Service 14.2</option>
+            <option value="main-menu:2143">--Service 14.3</option>
+            <option value="main-menu:2144">--Service 14.4</option>
+            <option value="main-menu:1015">-Specialty 15</option>
+            <option value="main-menu:2151">--Service 15.1</option>
+            <option value="main-menu:3151">---Detail 15.1 Cardiology</option>
+            <option value="main-menu:2152">--Service 15.2</option>
+            <option value="main-menu:2153">--Service 15.3</option>
+            <option value="main-menu:2154">--Service 15.4</option>
+            <option value="main-menu:1016">-Specialty 16</option>
+            <option value="main-menu:2161">--Service 16.1</option>
+            <option value="main-menu:3161">---Detail 16.1 Cardiology</option>
+            <option value="main-menu:2162">--Service 16.2</option>
+            <option value="main-menu:2163">--Service 16.3</option>
+            <option value="main-menu:2164">--Service 16.4</option>
+            <option value="main-menu:1017">-Specialty 17</option>
+            <option value="main-menu:2171">--Service 17.1</option>
+            <option value="main-menu:3171">---Detail 17.1 Cardiology</option>
+            <option value="main-menu:2172">--Service 17.2</option>
+            <option value="main-menu:2173">--Service 17.3</option>
+            <option value="main-menu:2174">--Service 17.4</option>
+            <option value="main-menu:1018">-Specialty 18</option>
+            <option value="main-menu:2181">--Service 18.1</option>
+            <option value="main-menu:3181">---Detail 18.1 Cardiology</option>
+            <option value="main-menu:2182">--Service 18.2</option>
+            <option value="main-menu:2183">--Service 18.3</option>
+            <option value="main-menu:2184">--Service 18.4</option>
+            <option value="main-menu:1019">-Specialty 19</option>
+            <option value="main-menu:2191">--Service 19.1</option>
+            <option value="main-menu:3191">---Detail 19.1 Cardiology</option>
+            <option value="main-menu:2192">--Service 19.2</option>
+            <option value="main-menu:2193">--Service 19.3</option>
+            <option value="main-menu:2194">--Service 19.4</option>
+            <option value="main-menu:1020">-Specialty 20</option>
+            <option value="main-menu:2201">--Service 20.1</option>
+            <option value="main-menu:3201">---Detail 20.1 Cardiology</option>
+            <option value="main-menu:2202">--Service 20.2</option>
+            <option value="main-menu:2203">--Service 20.3</option>
+            <option value="main-menu:2204">--Service 20.4</option>
+            <option value="main-menu:1021">-Specialty 21</option>
+            <option value="main-menu:2211">--Service 21.1</option>
+            <option value="main-menu:3211">---Detail 21.1 Cardiology</option>
+            <option value="main-menu:2212">--Service 21.2</option>
+            <option value="main-menu:2213">--Service 21.3</option>
+            <option value="main-menu:2214">--Service 21.4</option>
+            <option value="main-menu:1022">-Specialty 22</option>
+            <option value="main-menu:2221">--Service 22.1</option>
+            <option value="main-menu:3221">---Detail 22.1 Cardiology</option>
+            <option value="main-menu:2222">--Service 22.2</option>
+            <option value="main-menu:2223">--Service 22.3</option>
+            <option value="main-menu:2224">--Service 22.4</option>
+            <option value="main-menu:1023">-Specialty 23</option>
+            <option value="main-menu:2231">--Service 23.1</option>
+            <option value="main-menu:3231">---Detail 23.1 Cardiology</option>
+            <option value="main-menu:2232">--Service 23.2</option>
+            <option value="main-menu:2233">--Service 23.3</option>
+            <option value="main-menu:2234">--Service 23.4</option>
+            <option value="main-menu:1024">-Specialty 24</option>
+            <option value="main-menu:2241">--Service 24.1</option>
+            <option value="main-menu:3241">---Detail 24.1 Cardiology</option>
+            <option value="main-menu:2242">--Service 24.2</option>
+            <option value="main-menu:2243">--Service 24.3</option>
+            <option value="main-menu:2244">--Service 24.4</option>
+            <option value="main-menu:1025">-Specialty 25</option>
+            <option value="main-menu:2251">--Service 25.1</option>
+            <option value="main-menu:3251">---Detail 25.1 Cardiology</option>
+            <option value="main-menu:2252">--Service 25.2</option>
+            <option value="main-menu:2253">--Service 25.3</option>
+            <option value="main-menu:2254">--Service 25.4</option>
+            <option value="main-menu:1026">-Specialty 26</option>
+            <option value="main-menu:2261">--Service 26.1</option>
+            <option value="main-menu:3261">---Detail 26.1 Cardiology</option>
+            <option value="main-menu:2262">--Service 26.2</option>
+            <option value="main-menu:2263">--Service 26.3</option>
+            <option value="main-menu:2264">--Service 26.4</option>
+            <option value="main-menu:1027">-Specialty 27</option>
+            <option value="main-menu:2271">--Service 27.1</option>
+            <option value="main-menu:3271">---Detail 27.1 Cardiology</option>
+            <option value="main-menu:2272">--Service 27.2</option>
+            <option value="main-menu:2273">--Service 27.3</option>
+            <option value="main-menu:2274">--Service 27.4</option>
+            <option value="main-menu:1028">-Specialty 28</option>
+            <option value="main-menu:2281">--Service 28.1</option>
+            <option value="main-menu:3281">---Detail 28.1 Cardiology</option>
+            <option value="main-menu:2282">--Service 28.2</option>
+            <option value="main-menu:2283">--Service 28.3</option>
+            <option value="main-menu:2284">--Service 28.4</option>
+            <option value="main-menu:1029">-Specialty 29</option>
+            <option value="main-menu:2291">--Service 29.1</option>
+            <option value="main-menu:3291">---Detail 29.1 Cardiology</option>
+            <option value="main-menu:2292">--Service 29.2</option>
+            <option value="main-menu:2293">--Service 29.3</option>
+            <option value="main-menu:2294">--Service 29.4</option>
+            <option value="main-menu:1030">-Specialty 30</option>
+            <option value="main-menu:2301">--Service 30.1</option>
+            <option value="main-menu:3301">---Detail 30.1 Cardiology</option>
+            <option value="main-menu:2302">--Service 30.2</option>
+            <option value="main-menu:2303">--Service 30.3</option>
+            <option value="main-menu:2304">--Service 30.4</option>
+            <option value="main-menu:1031">-Specialty 31</option>
+            <option value="main-menu:2311">--Service 31.1</option>
+            <option value="main-menu:3311">---Detail 31.1 Cardiology</option>
+            <option value="main-menu:2312">--Service 31.2</option>
+            <option value="main-menu:2313">--Service 31.3</option>
+            <option value="main-menu:2314">--Service 31.4</option>
+            <option value="main-menu:1032">-Specialty 32</option>
+            <option value="main-menu:2321">--Service 32.1</option>
+            <option value="main-menu:3321">---Detail 32.1 Cardiology</option>
+            <option value="main-menu:2322">--Service 32.2</option>
+            <option value="main-menu:2323">--Service 32.3</option>
+            <option value="main-menu:2324">--Service 32.4</option>
+            <option value="main-menu:1033">-Specialty 33</option>
+            <option value="main-menu:2331">--Service 33.1</option>
+            <option value="main-menu:3331">---Detail 33.1 Cardiology</option>
+            <option value="main-menu:2332">--Service 33.2</option>
+            <option value="main-menu:2333">--Service 33.3</option>
+            <option value="main-menu:2334">--Service 33.4</option>
+            <option value="main-menu:1034">-Specialty 34</option>
+            <option value="main-menu:2341">--Service 34.1</option>
+            <option value="main-menu:3341">---Detail 34.1 Cardiology</option>
+            <option value="main-menu:2342">--Service 34.2</option>
+            <option value="main-menu:2343">--Service 34.3</option>
+            <option value="main-menu:2344">--Service 34.4</option>
+            <option value="main-menu:1035">-Specialty 35</option>
+            <option value="main-menu:2351">--Service 35.1</option>
+            <option value="main-menu:3351">---Detail 35.1 Cardiology</option>
+            <option value="main-menu:2352">--Service 35.2</option>
+            <option value="main-menu:2353">--Service 35.3</option>
+            <option value="main-menu:2354">--Service 35.4</option>
+            <option value="main-menu:1036">-Specialty 36</option>
+            <option value="main-menu:2361">--Service 36.1</option>
+            <option value="main-menu:3361">---Detail 36.1 Cardiology</option>
+            <option value="main-menu:2362">--Service 36.2</option>
+            <option value="main-menu:2363">--Service 36.3</option>
+            <option value="main-menu:2364">--Service 36.4</option>
+            <option value="main-menu:1037">-Specialty 37</option>
+            <option value="main-menu:2371">--Service 37.1</option>
+            <option value="main-menu:3371">---Detail 37.1 Cardiology</option>
+            <option value="main-menu:2372">--Service 37.2</option>
+            <option value="main-menu:2373">--Service 37.3</option>
+            <option value="main-menu:2374">--Service 37.4</option>
+            <option value="main-menu:1038">-Specialty 38</option>
+            <option value="main-menu:2381">--Service 38.1</option>
+            <option value="main-menu:3381">---Detail 38.1 Cardiology</option>
+            <option value="main-menu:2382">--Service 38.2</option>
+            <option value="main-menu:2383">--Service 38.3</option>
+            <option value="main-menu:2384">--Service 38.4</option>
+            <option value="main-menu:1039">-Specialty 39</option>
+            <option value="main-menu:2391">--Service 39.1</option>
+            <option value="main-menu:3391">---Detail 39.1 Cardiology</option>
+            <option value="main-menu:2392">--Service 39.2</option>
+            <option value="main-menu:2393">--Service 39.3</option>
+            <option value="main-menu:2394">--Service 39.4</option>
+            <option value="main-menu:1040">-Specialty 40</option>
+            <option value="main-menu:2401">--Service 40.1</option>
+            <option value="main-menu:3401">---Detail 40.1 Cardiology</option>
+            <option value="main-menu:2402">--Service 40.2</option>
+            <option value="main-menu:2403">--Service 40.3</option>
+            <option value="main-menu:2404">--Service 40.4</option></select>
+        </div>
+
+        <!--
+          Menu-attribute fields, from the Menu Attributes / Special Menu Items modules.
+          These filled the rail on the live Page form, each with a paragraph of help text,
+          burying the parent picker. They are real fields, so they collapse rather than
+          being dropped.
+        -->
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-attr-id">ID</label>
+          <input type="text" id="edit-menu-attr-id" name="menu[options][attributes][id]" class="form-text" />
+          <div class="description">Specifies a unique ID for the link.</div>
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-attr-name">Name</label>
+          <input type="text" id="edit-menu-attr-name" name="menu[options][attributes][name]" class="form-text" />
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-attr-rel">Relationship</label>
+          <input type="text" id="edit-menu-attr-rel" name="menu[options][attributes][rel]" class="form-text" />
+          <div class="description">Enter 'nofollow' here to nofollow this link.</div>
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-attr-class">Classes</label>
+          <input type="text" id="edit-menu-attr-class" name="menu[options][attributes][class]" class="form-text" />
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-attr-style">Style</label>
+          <input type="text" id="edit-menu-attr-style" name="menu[options][attributes][style]" class="form-text" />
+        </div>
+        <div class="form-item form-type-select">
+          <label for="edit-menu-attr-target">Target</label>
+          <select id="edit-menu-attr-target" name="menu[options][attributes][target]">
+            <option value="" selected="selected">None (i.e. same window)</option>
+            <option value="_blank">New window</option>
+          </select>
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-attr-accesskey">Access key</label>
+          <input type="text" id="edit-menu-attr-accesskey" name="menu[options][attributes][accesskey]" class="form-text" />
+        </div>
+        <div class="form-item form-type-select">
+          <label for="edit-menu-section-style">Section style</label>
+          <select id="edit-menu-section-style" name="menu[options][section_style]">
+            <option value="" selected="selected">- None -</option>
+          </select>
+        </div>
+        <div class="form-item form-type-textfield">
+          <label for="edit-menu-modal-nid">Modal nid</label>
+          <input type="text" id="edit-menu-modal-nid" name="menu[options][modal_nid]" class="form-text" />
+          <div class="description">Enter node id to display node as modal.</div>
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-metatags">
+        <legend><span class="fieldset-legend">Meta tags</span></legend>
+        <span class="summary">Using defaults</span>
+        <div class="form-item form-type-textfield">
+          <label for="edit-metatags-title">Page title</label>
+          <input type="text" id="edit-metatags-title" name="metatags[und][title][value]" value="[node:title]" class="form-text" />
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-path">
+        <legend><span class="fieldset-legend">URL path settings</span></legend>
+        <span class="summary">Automatic alias</span>
+        <div class="form-item form-type-textfield">
+          <label for="edit-path-alias">URL alias</label>
+          <input type="text" id="edit-path-alias" name="path[alias]" class="form-text" />
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-xmlsitemap">
+        <legend><span class="fieldset-legend">XML sitemap</span></legend>
+        <span class="summary">Inclusion: Default (included) | Priority: Default (0.5)</span>
+        <div class="form-item form-type-select">
+          <label for="edit-xmlsitemap-status">Inclusion</label>
+          <select id="edit-xmlsitemap-status" name="xmlsitemap[status]">
+            <option value="default" selected="selected">Default (included)</option>
+          </select>
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-revision-information">
+        <legend><span class="fieldset-legend">Revision information</span></legend>
+        <span class="summary">New revision</span>
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-revision" name="revision" value="1" checked="checked" class="form-checkbox" />
+          <label for="edit-revision">Create new revision</label>
+        </div>
+      </fieldset>
+
+      <!-- Page-only, per the field matrix -->
+      <fieldset class="vertical-tabs-pane" id="edit-display">
+        <legend><span class="fieldset-legend">Customize display</span></legend>
+        <span class="summary">Default</span>
+        <div class="form-item form-type-radios">
+          <fieldset>
+            <legend><span class="fieldset-legend">Display mode</span></legend>
+            <div class="form-radios">
+              <div class="form-item form-type-radio"><input type="radio" id="dm1" name="display_mode" value="default" checked="checked" class="form-radio" /><label for="dm1">Default</label></div>
+              <div class="form-item form-type-radio"><input type="radio" id="dm2" name="display_mode" value="wide" class="form-radio" /><label for="dm2">Wide</label></div>
+            </div>
+          </fieldset>
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane" id="edit-shield">
+        <legend><span class="fieldset-legend">Shield settings</span></legend>
+        <span class="summary">Not hidden</span>
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-shield-hidden" name="shield[hidden]" value="1" class="form-checkbox" />
+          <label for="edit-shield-hidden">Hide from search engines</label>
+        </div>
+      </fieldset>
+    </div>
+
+    <div class="form-actions">
+      <input type="submit" id="edit-submit" name="op" value="Save" class="form-submit" />
+    </div>
+  </form>
+</body>
+</html>

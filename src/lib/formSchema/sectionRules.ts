@@ -70,6 +70,19 @@ export const SECTION_RULES: SectionRule[] = [
     section: 'revision',
     names: [/^revision$/, /^log$/],
   },
+  /**
+   * Every menu[...] field belongs to menu placement, whatever its label says.
+   *
+   * The live Page form has `menu[options][attributes][title]` — the link's tooltip —
+   * labelled simply "Title". `primary.title` claimed it by label and put a menu attribute
+   * in the writing surface beside the real headline, the same failure as the Twitter card
+   * meta tag.
+   */
+  {
+    id: 'menu.byName',
+    section: 'menu',
+    names: [/^menu$/],
+  },
   {
     id: 'display.byName',
     section: 'display',

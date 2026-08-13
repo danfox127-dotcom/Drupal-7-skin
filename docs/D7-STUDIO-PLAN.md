@@ -672,3 +672,44 @@ per content type per host — that is what makes the ten upcoming types cheap.
 - **Menu tree at scale** — behavior and performance on the full main menu, and whether the
   manager should be scoped to a subtree (handoff Q8).
 - Import source-domain scope (decision 3 above).
+
+---
+
+## Testing against demo environments
+
+The manifest deliberately lists **only** Columbia hosts. Pantheon environment hostnames
+(`*-chai.pantheonsite.io`) were used heavily during testing and were briefly committed, but
+they must not ship: Pantheon hostnames are **recyclable**. If an environment is torn down
+and its name reassigned, a released manifest would grant this extension read access to
+whatever site lands on that hostname — a host that no longer belongs to us. A security
+review flagged this as a stale identity mapping, correctly.
+
+To test against a demo site, add the hosts locally and keep them out of commits:
+
+```bash
+# add the patterns to BOTH host_permissions and content_scripts[0].matches, then:
+git update-index --skip-worktree manifest.json   # local edits stop showing up in git status
+npm run build
+# undo when finished:
+git update-index --no-skip-worktree manifest.json
+```
+
+Pantheon environments are also behind HTTP Basic auth, separate from Columbia SSO, so a
+driver needs `httpCredentials` as well as a logged-in Drupal session.
+
+### Driving a browser without losing the session
+
+Do not launch the browser from a script. `launchPersistentContext` makes Chrome a **child
+process of node**, so Playwright tears it down when the script exits — including on error —
+and every teardown costs a fresh SSO login. Spawn Chrome detached with
+`--remote-debugging-port`, then have scripts `connectOverCDP` and close only their own tabs.
+
+Two related traps, both hit during this work:
+
+- Playwright always passes `--disable-extensions` (whitelisting via
+  `--disable-extensions-except`). Calling `chrome.runtime.reload()` in such a browser
+  unloads the extension permanently — it cannot come back, and `Extensions.loadUnpacked`
+  registers it without enabling it. Reload by spawning Chrome yourself, without that flag.
+- `connectOverCDP` does not expose `chrome-extension://` pages when Playwright launched the
+  browser, so feature flags cannot be set that way. A directly-spawned Chrome does expose
+  them, which is how `chrome.storage.local` gets seeded.

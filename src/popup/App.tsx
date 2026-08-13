@@ -5,7 +5,7 @@ import {
 } from 'lucide-react';
 import { useSettings, Settings as SettingsShape } from './useSettings';
 import { useImportQueue, displayUrl } from './useImportQueue';
-import { requestOriginAccess, setPendingImport } from '../lib/import/pending';
+import { requestOriginAccess, setPendingImport, importTarget } from '../lib/import/pending';
 
 interface QuickLink {
   label: string;
@@ -58,6 +58,7 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 
 export function App() {
   const [tabOrigin, setTabOrigin] = useState<string | null>(null);
+  const [tabPath, setTabPath] = useState<string | null>(null);
   const [isActive, setIsActive] = useState(false);
   const { settings, update, loaded } = useSettings();
   const { queue, add, remove, loaded: queueLoaded } = useImportQueue();
@@ -71,6 +72,7 @@ export function App() {
       try {
         const url = new URL(tab.url);
         setTabOrigin(url.origin);
+        setTabPath(url.pathname);
         // Active if the tab URL matches our host_permissions pattern
         setIsActive(tab.url.includes('/admin/') || tab.url.includes('/node/'));
       } catch {
@@ -126,10 +128,12 @@ export function App() {
       // Raw HTML is parked as-is. Extraction happens on the node form, where the
       // text format's allowed-tag list can actually be read — filtering here would
       // guess at it.
+      const target = importTarget(tabPath);
+
       await setPendingImport({
         html: response.html,
         sourceUrl: response.finalUrl ?? url,
-        targetType: null,
+        targetType: target.targetType,
         createdAt: Date.now(),
         applied: false,
       });
@@ -139,9 +143,24 @@ export function App() {
         return;
       }
 
-      // The review happens on the node form, because approving it fills that form.
+      /**
+       * Stay on the form you are already on.
+       *
+       * This used to navigate unconditionally to /node/add/news, so starting an import
+       * from a Page form threw away that form and switched content type. The review only
+       * needs SOME node form to fill; if the tab is already showing one, reload it so the
+       * content script picks up the pending import, and leave the type alone.
+       */
       chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
-        if (tab?.id) chrome.tabs.update(tab.id, { url: `${tabOrigin}/node/add/news` });
+        if (!tab?.id) { window.close(); return; }
+
+        if (target.stay) {
+          chrome.tabs.reload(tab.id);
+        } else {
+          // Not on a form, so there is nothing to preserve. News is the common case; the
+          // review reports whichever type it actually lands on.
+          chrome.tabs.update(tab.id, { url: `${tabOrigin}/node/add/news` });
+        }
         window.close();
       });
     } catch (err) {

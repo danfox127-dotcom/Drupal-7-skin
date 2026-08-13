@@ -6,7 +6,9 @@ import { MenuTree, MenuItem } from '../components/MenuTree';
 import { CommandPalette } from '../components/CommandPalette';
 import { ContentList } from '../components/ContentList';
 import { NodeEditor } from '../components/editor/NodeEditor';
-import { findContentTable, parseContentList, currentUsername, diagnoseContentList } from '../lib/parseContentList';
+import {
+  findContentTable, parseContentList, currentUsername, diagnoseContentList, totalRowsInView,
+} from '../lib/parseContentList';
 import { discoverSchema, explainSchema, isNodeFormPath } from '../lib/formSchema';
 import { getPendingImport } from '../lib/import/pending';
 import { maybeShowImportReview } from './importFlow';
@@ -138,6 +140,20 @@ const registerCommandPalette = () => {
   }, true);
 };
 
+/**
+ * Local time and page, prefixed to anything logged.
+ *
+ * Chrome's extension Errors page never clears itself: entries persist across page reloads
+ * AND across extension reloads, so a warning fixed three builds ago still sits there
+ * looking current. A timestamp makes stale entries obvious at a glance instead of needing
+ * the message text compared against the source.
+ */
+const logStamp = () => {
+  const now = new Date();
+  const time = now.toTimeString().slice(0, 8);
+  return `[D7 Studio ${time}] ${window.location.pathname}`;
+};
+
 const init = async () => {
   const settings = await getSettings();
   const url = window.location.href;
@@ -154,11 +170,11 @@ const init = async () => {
 
     if (!schema) {
       if (settings.debugSchema) {
-        console.warn('[D7 Studio] No node form schema could be discovered on this page.');
+        console.warn(`${logStamp()} No node form schema could be discovered on this page.`);
       }
     } else if (settings.debugSchema) {
       console.info(
-        `%c[D7 Studio] Form schema\n%c${explainSchema(schema)}`,
+        `%c${logStamp()} Form schema\n%c${explainSchema(schema)}`,
         'font-weight:bold',
         'font-family:monospace'
       );
@@ -215,13 +231,86 @@ const init = async () => {
           <NodeEditor schema={schema} slottedFields={slotted} />
         </React.StrictMode>
       );
+
+      /**
+       * Verifies every relocated widget can actually be seen.
+       *
+       * A light-DOM child with `slot="x"` renders ONLY if some `<slot name="x">` exists in
+       * the shadow tree. When it does not, the browser hides the child with no error, the
+       * editor shows a reimplemented control in its place, and anything typed there is
+       * dropped — controls inside a shadow root are not form-associated, so they are never
+       * submitted. That is silent data loss, and it shipped: Tags was invisible on both
+       * demo sites because two sections did not thread `slottedFields`.
+       *
+       * Collapsed sections legitimately have no slot yet, so the check EXPANDS everything
+       * first. It only reports, never repairs — a wrong repair here would move a live
+       * widget out of the form and stop it saving.
+       */
+      if (settings.debugSchema) {
+        // Two frames: one for React's commit, one for layout after expanding.
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+        const shadow = mount.container.shadowRoot;
+        if (shadow) {
+          shadow.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(el => el.click());
+          await new Promise(resolve => setTimeout(resolve, 250));
+
+          const rendered = new Set(
+            Array.from(shadow.querySelectorAll('slot'))
+              .map(s => s.getAttribute('name'))
+              .filter((name): name is string => !!name)
+          );
+
+          const orphans = Array.from(mount.container.children)
+            .map(child => child.getAttribute('slot'))
+            .filter((name): name is string => !!name && !rendered.has(name));
+
+          if (orphans.length) {
+            console.error(
+              `${logStamp()} ${orphans.length} relocated widget(s) have no matching slot and are `
+              + 'therefore INVISIBLE, while still being submitted with the form:\n  '
+              + orphans.join('\n  ')
+              + '\nThe section rendering these fields is not passing them through '
+              + 'SlottedFieldsContext. Report this output.'
+            );
+          }
+        }
+      }
     }
 
-    // Feature 6: import review. Runs whether or not the two-pane editor is on —
-    // approval writes to the native inputs, so it fills either surface.
-    if (schema) {
-      const pending = await getPendingImport();
-      if (pending) maybeShowImportReview(pending, schema);
+  }
+
+  /**
+   * Feature 6: import review.
+   *
+   * Deliberately OUTSIDE the schema block above, and it reports when it cannot run.
+   *
+   * A waiting import that silently fails to appear is the worst outcome: the fetch
+   * succeeded, the user was navigated somewhere, and nothing happened with no explanation.
+   * Previously this required a discovered schema and said nothing when there wasn't one,
+   * and said nothing at all if the tab was not on a node form.
+   */
+  {
+    const pending = await getPendingImport();
+
+    if (pending && !pending.applied) {
+      if (!isNodeFormPath()) {
+        console.warn(
+          `${logStamp()} An import from ${pending.sourceUrl} is waiting, but this page is `
+          + 'not a node add/edit form. Open the form you want to fill and it will appear.'
+        );
+      } else {
+        const schema = discoverSchema();
+        if (!schema) {
+          console.warn(
+            `${logStamp()} An import from ${pending.sourceUrl} is waiting, but the fields on `
+            + 'this form could not be read, so there is nothing to fill.\n'
+            + 'Turn on "Log Form Schema" in the extension popup and reload to see why.'
+          );
+        } else {
+          maybeShowImportReview(pending, schema);
+        }
+      }
     }
   }
 
@@ -275,6 +364,22 @@ const init = async () => {
       const actions = document.querySelector('.form-actions');
       if (actions) (actions as HTMLElement).style.display = 'none';
 
+      /**
+       * Drupal collapses subtrees behind "Show children (N)" links, and only the visible
+       * rows are in the DOM. On the live main menu that is 6 rows out of 3,000+, so the
+       * manager can only reorder what is shown. Saying so beats appearing to manage a
+       * whole menu it cannot see.
+       */
+      const collapsed = Array.from(document.querySelectorAll('a'))
+        .filter(a => /show children/i.test(a.textContent ?? '')).length;
+      if (collapsed > 0) {
+        console.info(
+          `${logStamp()} Menu manager is showing the ${items.length} rows Drupal rendered. `
+          + `${collapsed} subtree(s) are collapsed behind "Show children" and are not included — `
+          + 'expand them in Drupal first if you need to reorder across them.'
+        );
+      }
+
       injectComponent(menuTable, (
         <MenuTree
           items={items}
@@ -295,20 +400,37 @@ const init = async () => {
     if (table && rows && rows.length > 0) {
       table.style.display = 'none';
 
-      // Drupal's exposed filter form and bulk-operations block are superseded by
-      // the live filters and per-row actions.
-      document.querySelectorAll('#node-admin-filter, .node-admin-filter').forEach(el => {
+      // tableheader.js leaves a cloned header table behind. Hiding only the real table
+      // leaves that clone floating as a stray bar above the replacement.
+      document.querySelectorAll('table.sticky-header').forEach(el => {
         (el as HTMLElement).style.display = 'none';
       });
 
+      /**
+       * Drupal's own filter is superseded ONLY when this page is the whole list.
+       *
+       * When the View paginates, Drupal's Title filter is the one control that searches
+       * every row; ours searches the 50 that were rendered. Hiding it on demo-dean would
+       * have removed the only way to find anything among 11,760 nodes, and left the
+       * replacement quietly less capable than what it covered up.
+       */
+      const total = totalRowsInView();
+      const paginated = typeof total === 'number' && total > rows.length;
+
+      if (!paginated) {
+        document.querySelectorAll('#node-admin-filter, .node-admin-filter').forEach(el => {
+          (el as HTMLElement).style.display = 'none';
+        });
+      }
+
       injectComponent(table, (
-        <ContentList rows={rows} currentUser={currentUsername()} />
+        <ContentList rows={rows} currentUser={currentUsername()} totalInView={total} />
       ), 'before');
     } else {
       // A string, not an object: Chrome's extension error page renders a logged object
       // as "[object Object]", which is exactly where someone goes looking for this.
       console.warn(
-        '[D7 Studio] Content list not replaced — leaving Drupal\'s table in place.\n'
+        `${logStamp()} Content list not replaced — leaving Drupal's table in place.\n`
         + diagnoseContentList()
         + '\n\nSend the block above to get the parser fixed for this page.'
       );

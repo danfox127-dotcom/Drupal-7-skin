@@ -14,6 +14,11 @@ interface Props {
   rows: ContentRow[];
   /** Username for the "My recent edits" view; the chip is hidden when null. */
   currentUser: string | null;
+  /**
+   * Rows in the entire View, when the page reports it. Larger than `rows.length` means
+   * Drupal paginated, and this list — and its search — only ever sees the current page.
+   */
+  totalInView?: number | null;
 }
 
 const STATUS_CLASS: Record<string, string> = {
@@ -34,7 +39,7 @@ function RowAction({ label, onClick, href }: { label: string; onClick?: () => vo
   return <button type="button" onClick={onClick} className={className}>{label}</button>;
 }
 
-export const ContentList = ({ rows, currentUser }: Props) => {
+export const ContentList = ({ rows, currentUser, totalInView }: Props) => {
   const [query, setQuery] = useState('');
   const [typeFilter, setTypeFilter] = useState<string | null>(null);
   const [savedView, setSavedView] = useState<string | null>(null);
@@ -70,6 +75,9 @@ export const ContentList = ({ rows, currentUser }: Props) => {
     });
     return views;
   }, [currentUser]);
+
+  /** Drupal paginated: this list holds one page, so the search cannot see the rest. */
+  const paginated = typeof totalInView === 'number' && totalInView > rows.length;
 
   const visible = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -178,10 +186,14 @@ export const ContentList = ({ rows, currentUser }: Props) => {
       {/* Header */}
       <div className="px-5.5 py-3 flex items-center gap-4 border-b border-rule">
         <h1 className="font-serif text-heading text-ink shrink-0">Content</h1>
+        {/*
+          Says what the number actually means. "50 of 50 items" on a site holding 11,760
+          nodes invites the reader to treat this list — and the search box — as the whole
+          content set, when it is one page of Drupal's pager.
+        */}
         <span className="text-help text-ink-help shrink-0">
-          {visible.length === rows.length
-            ? `${rows.length} of ${rows.length} items`
-            : `${visible.length} of ${rows.length} items`}
+          {`${visible.length} of ${rows.length} items`}
+          {paginated && ` on this page · ${totalInView!.toLocaleString()} in total`}
         </span>
         <div className="flex-1" />
         <span className="hidden sm:flex items-center gap-1 px-2 py-1 rounded border border-rule-control text-help text-ink-help">
@@ -200,11 +212,26 @@ export const ContentList = ({ rows, currentUser }: Props) => {
       <div className="px-5.5 pt-3">
         <input
           type="text"
-          placeholder="Search titles — filters as you type, no Apply button"
+          placeholder={paginated
+            ? 'Search the titles on this page — filters as you type, no Apply button'
+            : 'Search titles — filters as you type, no Apply button'}
           value={query}
           onChange={e => setQuery(e.target.value)}
           className="w-full px-3 py-2 bg-white border border-rule-control rounded text-input text-ink placeholder:text-ink-placeholder"
         />
+
+        {/*
+          Only shown once a search returns nothing on a paginated list, which is exactly
+          the moment "no results" would otherwise be read as "no such content".
+        */}
+        {paginated && query.trim() && visible.length === 0 && (
+          <p className="mt-2 text-help text-ink-help">
+            Nothing on this page matches “{query.trim()}”. This searches the{' '}
+            {rows.length} rows Drupal rendered here, not all{' '}
+            {totalInView!.toLocaleString()} — use Drupal’s Title filter above to search
+            everything.
+          </p>
+        )}
       </div>
 
       {/* Type chips, then saved views behind a divider. */}

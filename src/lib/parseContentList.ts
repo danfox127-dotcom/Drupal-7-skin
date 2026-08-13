@@ -105,16 +105,53 @@ export function nodeIdFromHref(href: string): string | null {
  * contains a Title column — avoids grabbing an unrelated table such as the
  * exposed-filter form.
  */
-/** How many rows in this table link to a node — the strongest signal of a content list. */
+/**
+ * How many rows in this table link to a node.
+ *
+ * Counts aliased links too, which is the difference between working and not working on a
+ * site with Pathauto — i.e. nearly all of them. A view's title column renders through
+ * `l()`, so on demo-dean every row linked to `/events/some-title` and NOT ONE href
+ * contained `/node/`; this returned 0 for a 51-row content list and every caller that
+ * depended on it fell through to the wrong table.
+ *
+ * The operations column is the reliable part: `node/N/edit` and `node/N/delete` are never
+ * aliased, because Pathauto aliases the node path itself and not its subpaths. Any anchor
+ * whose href looks like a content destination is counted as a weaker signal.
+ */
 function nodeLinkCount(table: HTMLTableElement): number {
-  return table.querySelectorAll('tbody a[href*="/node/"]').length;
+  const anchors = Array.from(table.querySelectorAll<HTMLAnchorElement>('tbody a[href]'));
+
+  const nodePaths = anchors.filter(a => /\/node\/\d+/.test(a.getAttribute('href') ?? '')).length;
+  if (nodePaths > 0) return nodePaths;
+
+  // Aliased listing: count rows that link somewhere site-local at all.
+  return anchors.filter(a => {
+    const href = a.getAttribute('href') ?? '';
+    return href.startsWith('/') && !href.startsWith('//') && href.length > 1;
+  }).length;
+}
+
+/** Rows that are furniture rather than content. */
+function contentRowCount(table: HTMLTableElement): number {
+  return Array.from(table.querySelectorAll('tbody tr')).filter(isContentRow).length;
+}
+
+/**
+ * Drupal's tableheader.js clones the content table to make a floating header, and inserts
+ * `<table class="sticky-header">` BEFORE the real one. The clone carries the same headers
+ * and an empty tbody, so every header-based heuristic matches it first and then finds
+ * nothing to parse. It is never the table we want.
+ */
+function isStickyHeaderClone(table: HTMLTableElement): boolean {
+  return table.classList.contains('sticky-header');
 }
 
 export function findContentTable(root: ParentNode = document): HTMLTableElement | null {
   const byId = root.querySelector<HTMLTableElement>('#node-admin-content table, table#node-admin-content');
-  if (byId) return byId;
+  if (byId && !isStickyHeaderClone(byId)) return byId;
 
-  const tables = Array.from(root.querySelectorAll<HTMLTableElement>('table'));
+  const tables = Array.from(root.querySelectorAll<HTMLTableElement>('table'))
+    .filter(table => !isStickyHeaderClone(table));
 
   /**
    * A Title header alone is not enough to identify the table.
@@ -147,8 +184,18 @@ export function findContentTable(root: ParentNode = document): HTMLTableElement 
 
   if (scored.length) return scored[0].table;
 
-  // An empty content list has a Title header and no rows; still the right table.
-  return byHeader[0] ?? null;
+  /**
+   * Last resort: among tables with a Title header, take the one with the most CONTENT rows.
+   *
+   * Taking `byHeader[0]` was wrong whenever more than one table carried a Title header,
+   * because it silently preferred DOM order over having any data — which is exactly how
+   * the empty sticky-header clone got chosen over a 51-row listing.
+   */
+  const byRows = byHeader
+    .map(table => ({ table, rows: contentRowCount(table) }))
+    .sort((a, b) => b.rows - a.rows);
+
+  return byRows[0]?.table ?? null;
 }
 
 /**
@@ -179,6 +226,32 @@ export function inferTitleColumn(bodyRows: Element[]): number | null {
 }
 
 /**
+ * Whether a `<tr>` holds content rather than table furniture.
+ *
+ * Views Bulk Operations prepends a full-width control row — on demo-dean it reads
+ * "Selected 50 rows in this page. [Select all 11760 rows in this view.]" as a single
+ * `<td colspan="16">`. It sits in the tbody and parses as a row whose title is that
+ * sentence, so the listing opened with one nonsense entry.
+ *
+ * The colspan test also covers Drupal's "No content available." placeholder and the
+ * pager row, without needing to know each module's class names.
+ */
+function isContentRow(tr: Element): boolean {
+  if (tr.classList.contains('views-table-row-select-all')) return false;
+
+  const cells = Array.from(tr.querySelectorAll('td'));
+  if (cells.length === 0) return false;
+
+  // A single cell spanning the table is a message or control strip, not a record.
+  if (cells.length === 1) {
+    const span = Number(cells[0].getAttribute('colspan') ?? '1');
+    if (span > 1) return false;
+  }
+
+  return true;
+}
+
+/**
  * Returns parsed rows, or null when the page does not look like a content list —
  * in which case the caller must leave Drupal's table alone.
  */
@@ -189,7 +262,7 @@ export function parseContentList(root: ParentNode = document): ContentRow[] | nu
   const headerCells = Array.from(table.querySelectorAll('thead th')).map(th => th.textContent ?? '');
   const columns = mapColumns(headerCells);
 
-  const bodyRows = Array.from(table.querySelectorAll('tbody tr'));
+  const bodyRows = Array.from(table.querySelectorAll('tbody tr')).filter(isContentRow);
 
   // Headers did not resolve a title column — infer it from the data instead of giving up.
   if (columns.title === undefined) {
@@ -230,6 +303,31 @@ export function parseContentList(root: ParentNode = document): ContentRow[] | nu
   }
 
   return rows;
+}
+
+/**
+ * How many rows the whole View holds, not just this page — or null if the page doesn't say.
+ *
+ * This matters because the search box only ever filters the rows Drupal rendered. On
+ * demo-dean that is 50 of 11,760: searching "cardiology" there returns nothing whenever the
+ * match is on page 2, which reads as "no such content" rather than "not on this page". The
+ * header has to be able to say so.
+ *
+ * Views Bulk Operations states the figure outright on its select-all-pages button
+ * ("Select all 11760 rows in this view."). Otherwise a views summary of the form
+ * "Displaying 1 - 50 of 11760" is parsed. Both are optional, hence null.
+ */
+export function totalRowsInView(root: ParentNode = document): number | null {
+  const vbo = root.querySelector<HTMLInputElement>('.vbo-table-select-all-pages');
+  const fromVbo = /\b(\d[\d,]*)\s+rows?\b/i.exec(vbo?.value ?? '');
+  if (fromVbo) return Number(fromVbo[1].replace(/,/g, ''));
+
+  for (const el of Array.from(root.querySelectorAll('.view-header, .item-list, .views-summary, .pager'))) {
+    const match = /\bof\s+(\d[\d,]*)\b/i.exec(norm(el.textContent));
+    if (match) return Number(match[1].replace(/,/g, ''));
+  }
+
+  return null;
 }
 
 /**
