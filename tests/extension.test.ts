@@ -29,7 +29,7 @@ const FIXTURES = path.join(__dirname, 'fixtures');
 const ROUTES: [RegExp, string][] = [
   [/\/admin\/structure\/menu\/manage\/main-menu/, 'menu-manage.html'],
   [/\/admin\/content/, 'admin/content.html'],
-  [/\/node\/add\/news/, 'node-add-news.html'],
+  [/\/node\/add\/news/, 'node-add-news-live.html'],
   [/\/node\/add\/page/, 'node-add-page.html'],
   [/\/node\/\d+\/edit/, 'node-edit.html'],
 ];
@@ -282,13 +282,114 @@ test.describe('D7 Studio: host matching', () => {
   });
 });
 
+test.describe('D7 Studio: relocated native widgets', () => {
+  /**
+   * Media and Paragraphs widgets are moved into the overlay rather than reimplemented.
+   * The properties below are what make that safe, and each fails silently if broken —
+   * a widget that looks right but is no longer submitted loses the editor's work.
+   */
+  const inRail = async (page: import('@playwright/test').Page) => {
+    await settingsFor(page);
+    await page.goto(`${HOST}/node/add/news`);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Multimedia' }).click();
+  };
+
+  let settingsFor: (page: import('@playwright/test').Page) => Promise<void>;
+
+  test.beforeEach(async ({ settings }) => {
+    settingsFor = async () => { await settings({ nodeEditor: true, combobox: false, htmlExport: false }); };
+  });
+
+  test('the overlay mounts inside the form, and the form is not display:none', async ({ page }) => {
+    await inRail(page);
+    // Both are prerequisites: a widget outside the form is not submitted, and a
+    // descendant of a display:none ancestor cannot be revealed at all.
+    const state = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host')!;
+      const form = document.querySelector('form.node-form') as HTMLFormElement;
+      return {
+        hostInForm: Boolean(host.closest('form.node-form')),
+        formVisible: getComputedStyle(form).display !== 'none',
+        originalContentHidden: form.querySelectorAll('[data-d7-hidden]').length > 0,
+      };
+    });
+    expect(state).toEqual({ hostInForm: true, formVisible: true, originalContentHidden: true });
+  });
+
+  test('media widgets are relocated, visible, and still inside the form', async ({ page }) => {
+    await inRail(page);
+    const relocated = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host')!;
+      return [...host.children].filter(c => c.hasAttribute('slot')).map(c => ({
+        input: (c.querySelector('input') as HTMLInputElement | null)?.name,
+        visible: getComputedStyle(c as HTMLElement).display !== 'none',
+        inForm: Boolean(c.closest('form.node-form')),
+      }));
+    });
+    expect(relocated).toHaveLength(2);
+    expect(relocated.every(r => r.visible && r.inForm)).toBe(true);
+    expect(relocated.map(r => r.input).sort()).toEqual([
+      'media[field_image_hero_und_0]', 'media[field_image_teaser_und_0]',
+    ]);
+  });
+
+  test('relocated inputs are still submitted with the form', async ({ page }) => {
+    // The property that would break saving without any visible symptom.
+    await inRail(page);
+    const submitted = await page.evaluate(() => {
+      const fd = new FormData(document.querySelector('form.node-form') as HTMLFormElement);
+      return {
+        teaser: fd.has('media[field_image_teaser_und_0]'),
+        hero: fd.has('media[field_image_hero_und_0]'),
+        title: fd.has('title_field[und][0][value]'),
+      };
+    });
+    expect(submitted).toEqual({ teaser: true, hero: true, title: true });
+  });
+
+  test('a value entered in the relocated widget reaches the form data', async ({ page }) => {
+    await inRail(page);
+    await page.fill('input[name="media[field_image_teaser_und_0]"]', '12345');
+    const value = await page.evaluate(() =>
+      new FormData(document.querySelector('form.node-form') as HTMLFormElement)
+        .get('media[field_image_teaser_und_0]'));
+    expect(value).toBe('12345');
+  });
+
+  test('the widget renders inside the rail column, not beside it', async ({ page }) => {
+    await inRail(page);
+    const fits = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host')!;
+      const widget = [...host.children].find(c => c.getAttribute('slot')?.includes('teaser')) as HTMLElement;
+      const aside = host.shadowRoot!.querySelector('aside')!;
+      const w = widget.getBoundingClientRect(), a = aside.getBoundingClientRect();
+      return w.width > 0 && w.left >= a.left - 2 && w.right <= a.right + 2;
+    });
+    expect(fits).toBe(true);
+  });
+
+  test('the overlay does not duplicate Drupal\'s own field label', async ({ page }) => {
+    await inRail(page);
+    // Drupal's widget carries its own <label>; ours would read "TEASER IMAGE" above it.
+    const count = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host')!;
+      return host.shadowRoot!.querySelectorAll('.text-eyebrow').length
+        ? [...host.shadowRoot!.querySelectorAll('*')]
+            .filter(e => /^teaser image$/i.test((e.textContent ?? '').trim())).length
+        : 0;
+    });
+    expect(count).toBe(0);
+  });
+});
+
 test.describe('D7 Studio: safe defaults', () => {
   test('the two-pane editor is OFF by default, leaving the native form intact', async ({ page }) => {
     // It replaces an entire live editing form on discovery rules that are not yet
     // validated against real markup, so it must not be on for a fresh install.
     await page.goto(`${HOST}/node/add/news`);
     await expect(page.locator('form.node-form')).toBeVisible();
-    await expect(page.locator('#edit-title')).toBeVisible();
+    await expect(page.locator('#edit-title-field')).toBeVisible();
   });
 
   test('turning the editor on replaces the form but keeps the native inputs', async ({ page, settings }) => {
@@ -296,12 +397,16 @@ test.describe('D7 Studio: safe defaults', () => {
     await page.goto(`${HOST}/node/add/news`);
 
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
-    await expect(page.locator('form.node-form')).toBeHidden();
+    // The form stays displayed and its ORIGINAL CONTENT is hidden instead. Hiding the
+    // form itself would make relocated widgets unrevealable, since a descendant of a
+    // display:none ancestor cannot be shown.
+    await expect(page.locator('form.node-form')).toBeVisible();
+    await expect(page.locator('form.node-form [data-d7-hidden]').first()).toBeAttached();
     // Hidden, never removed: the overlay writes to these and Drupal's submit saves them.
-    await expect(page.locator('#edit-title')).toHaveCount(1);
+    await expect(page.locator('#edit-title-field')).toHaveCount(1);
 
     await page.fill(`${UI} input[aria-label="Title"]`, 'Ablation outcomes at five years');
-    await expect(page.locator('#edit-title')).toHaveValue('Ablation outcomes at five years');
+    await expect(page.locator('#edit-title-field')).toHaveValue('Ablation outcomes at five years');
   });
 
   test('the schema diagnostic is off by default and on when enabled', async ({ page, settings }) => {
@@ -309,12 +414,12 @@ test.describe('D7 Studio: safe defaults', () => {
     page.on('console', m => logs.push(m.text()));
 
     await page.goto(`${HOST}/node/add/news`);
-    await expect(page.locator('#edit-title')).toBeVisible();
+    await expect(page.locator('#edit-title-field')).toBeVisible();
     expect(logs.some(l => l.includes('Form schema'))).toBe(false);
 
     await settings({ debugSchema: true });
     await page.reload();
-    await expect(page.locator('#edit-title')).toBeVisible();
+    await expect(page.locator('#edit-title-field')).toBeVisible();
     await expect.poll(() => logs.some(l => l.includes('content type: news'))).toBe(true);
   });
 });
