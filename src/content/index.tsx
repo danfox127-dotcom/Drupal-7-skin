@@ -138,6 +138,20 @@ const registerCommandPalette = () => {
   }, true);
 };
 
+/**
+ * Local time and page, prefixed to anything logged.
+ *
+ * Chrome's extension Errors page never clears itself: entries persist across page reloads
+ * AND across extension reloads, so a warning fixed three builds ago still sits there
+ * looking current. A timestamp makes stale entries obvious at a glance instead of needing
+ * the message text compared against the source.
+ */
+const logStamp = () => {
+  const now = new Date();
+  const time = now.toTimeString().slice(0, 8);
+  return `[D7 Studio ${time}] ${window.location.pathname}`;
+};
+
 const init = async () => {
   const settings = await getSettings();
   const url = window.location.href;
@@ -154,11 +168,11 @@ const init = async () => {
 
     if (!schema) {
       if (settings.debugSchema) {
-        console.warn('[D7 Studio] No node form schema could be discovered on this page.');
+        console.warn(`${logStamp()} No node form schema could be discovered on this page.`);
       }
     } else if (settings.debugSchema) {
       console.info(
-        `%c[D7 Studio] Form schema\n%c${explainSchema(schema)}`,
+        `%c${logStamp()} Form schema\n%c${explainSchema(schema)}`,
         'font-weight:bold',
         'font-family:monospace'
       );
@@ -308,7 +322,7 @@ const init = async () => {
       // A string, not an object: Chrome's extension error page renders a logged object
       // as "[object Object]", which is exactly where someone goes looking for this.
       console.warn(
-        '[D7 Studio] Content list not replaced — leaving Drupal\'s table in place.\n'
+        `${logStamp()} Content list not replaced — leaving Drupal's table in place.\n`
         + diagnoseContentList()
         + '\n\nSend the block above to get the parser fixed for this page.'
       );
