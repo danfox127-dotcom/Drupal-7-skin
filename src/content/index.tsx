@@ -191,7 +191,13 @@ const init = async () => {
        * The host must exist before relocating, hence injectInsideForm first with an empty
        * render, then relocate, then render the editor knowing which fields are slotted.
        */
-      const RELOCATE_KINDS = new Set(['file', 'paragraphs']);
+      /**
+       * Autocompletes are relocated for the same reason as media widgets: Drupal's
+       * type-to-select is jQuery bound to the ORIGINAL input, so a re-rendered text box
+       * looks the same and has no type-ahead at all. That behavior is load-bearing on
+       * Related Content, where an editor is matching against real node titles.
+       */
+      const RELOCATE_KINDS = new Set(['file', 'paragraphs', 'autocomplete']);
       const mount = injectInsideForm(schema.form, null);
 
       const slotted = new Set<string>();
@@ -199,7 +205,7 @@ const init = async () => {
         if (!RELOCATE_KINDS.has(field.kind)) continue;
         const element = field.elements[0];
         if (!element) continue;
-        if (relocateWidget(mount.container, element, field.machineName)) {
+        if (relocateWidget(mount.container, element, field.machineName, field.baseName)) {
           slotted.add(field.machineName);
         }
       }
@@ -219,8 +225,19 @@ const init = async () => {
     }
   }
 
+  /**
+   * The editor supersedes the standalone widgets below.
+   *
+   * They inject as siblings of the native controls, which live inside the form content the
+   * editor hides — so with the editor on they would render inside a display:none ancestor
+   * and be invisible, while still hiding the native select they replaced. The editor's own
+   * rail covers both: Menu Placement has a filter and breadcrumb, and Copy public HTML is
+   * on the command palette.
+   */
+  const editorActive = Boolean(settings.nodeEditor && document.querySelector('.d7-proxy-ui-form-host'));
+
   // Feature 1: Taxonomy Combobox
-  if (settings.combobox && (url.includes('/node/add/') || (url.includes('/node/') && url.includes('/edit')))) {
+  if (!editorActive && settings.combobox && (url.includes('/node/add/') || (url.includes('/node/') && url.includes('/edit')))) {
     const parentSelect = document.querySelector('select[name="menu[parent]"]') as HTMLSelectElement;
     if (parentSelect) {
       const options = parseDrupalSelect(parentSelect);
@@ -241,7 +258,7 @@ const init = async () => {
   }
 
   // Feature 2: HTML Export
-  if (settings.htmlExport && url.includes('/node/') && url.includes('/edit')) {
+  if (!editorActive && settings.htmlExport && url.includes('/node/') && url.includes('/edit')) {
     const pageTitle = document.querySelector('#page-title');
     if (pageTitle) {
       injectComponent(pageTitle as HTMLElement, <HtmlExport />, 'after');

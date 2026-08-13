@@ -169,14 +169,45 @@ export function slotNameFor(machineName: string): string {
  * Returns the slot name on success, or null when no wrapper could be identified — in
  * which case the caller should fall back to rendering a note.
  */
+/**
+ * Finds the outermost wrapper that belongs to THIS field and nothing else.
+ *
+ * Taking the nearest `.form-item` is not enough for a multi-value field: Drupal puts each
+ * delta in its own `.form-item` inside a table, with the "Add another item" button as a
+ * SIBLING of that table. Relocating only the inner item leaves the Add button behind in
+ * the hidden form content, so an editor could type one related item and never add a
+ * second — which is most of the point of the field.
+ *
+ * So it climbs while every control inside the candidate still belongs to this field, by
+ * name prefix. That keeps the deltas, the row-weight selects and the add-more button
+ * together, and stops before swallowing a neighbouring field.
+ */
+function widgetWrapperFor(element: HTMLElement, baseName: string): HTMLElement | null {
+  let best = (element.closest<HTMLElement>('.form-item') ?? element.parentElement) as HTMLElement | null;
+  if (!best) return null;
+
+  let node = best.parentElement;
+  while (node && node.tagName !== 'FORM' && !node.classList.contains('d7-proxy-ui-form-host')) {
+    const names = Array.from(node.querySelectorAll<HTMLElement>('input, select, textarea'))
+      .map(el => (el as HTMLInputElement).name)
+      .filter(Boolean);
+
+    if (names.length === 0 || !names.every(name => name.startsWith(baseName))) break;
+
+    best = node;
+    node = node.parentElement;
+  }
+
+  return best;
+}
+
 export function relocateWidget(
   host: HTMLElement,
   element: HTMLElement,
-  machineName: string
+  machineName: string,
+  baseName: string
 ): string | null {
-  const wrapper = element.closest<HTMLElement>(
-    '.form-item, .field-widget, .field-type-image, .field-type-file, .field-type-paragraphs'
-  );
+  const wrapper = widgetWrapperFor(element, baseName);
   if (!wrapper || wrapper === host || host.contains(wrapper)) return null;
 
   const slot = slotNameFor(machineName);
