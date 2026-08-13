@@ -401,7 +401,7 @@ test.describe('resilience to unknown and malformed markup', () => {
     expect(label).toBe('field_mystery');
   });
 
-  test('an unclaimed field goes to "other" rather than disappearing', async ({ page }) => {
+  test('an unclaimed field is still surfaced rather than disappearing', async ({ page }) => {
     await open(page, 'node-add-news.html');
     const result = await page.evaluate(() => {
       const form = document.querySelector('form.node-form')!;
@@ -414,7 +414,14 @@ test.describe('resilience to unknown and malformed markup', () => {
       const f = schema.fields.find((x: any) => x.baseName === 'field_frobnicator');
       return { section: f?.section, matchedBy: f?.matchedBy, label: f?.label };
     });
-    expect(result).toEqual({ section: 'other', matchedBy: 'fallback', label: 'Widget Frobnicator' });
+    // Appended outside any vertical tab, so it reads as content and joins the left
+    // column. The guarantee being tested is that it is surfaced at all — see the live
+    // News form tests for the vertical-tab case, which routes to `other`.
+    expect(result).toEqual({
+      section: 'typeFields',
+      matchedBy: 'fallback:contentTab',
+      label: 'Widget Frobnicator',
+    });
   });
 
   test('a form with no readable fields yields null, so Drupal keeps its own form', async ({ page }) => {
@@ -461,5 +468,114 @@ test.describe('explainSchema diagnostics', () => {
     expect(schema.explain).toContain('[topics]');
     expect(schema.explain).toContain('rule=');
     expect(schema.explain).toContain('Meta tags — Using defaults');
+  });
+});
+
+test.describe('live News form — regressions from the real site', () => {
+  /**
+   * These assert against machine names and structures observed on
+   * cuimc.columbia.edu, not inferred ones. Every bug below was found by running the
+   * schema diagnostic on the real form; the fixture reproduces only the shapes that
+   * broke.
+   */
+  const live = (page: import('@playwright/test').Page) => schemaOf(page, '/node/add/news');
+
+  test('the i18n Title field is found even though it is named title_field', async ({ page }) => {
+    await open(page, 'node-add-news-live.html');
+    const schema = (await live(page))!;
+    const title = schema.fields.find(f => f.machineName === 'title_field[und][0][value]')!;
+    // The whole label-first bet: a /^title$/ name pattern would have missed this.
+    expect(title.section).toBe('primary');
+    expect(title.matchedBy).toContain(':label');
+    expect(title.required).toBe(true);
+  });
+
+  test('a metatag labelled "Title" does NOT land in the writing surface', async ({ page }) => {
+    await open(page, 'node-add-news-live.html');
+    const schema = (await live(page))!;
+    const twitter = schema.fields.find(f => f.machineName.includes('twitter:title'))!;
+    expect(twitter.section).toBe('seo');
+    expect(twitter.matchedBy).toContain('seo.byName');
+
+    // And exactly one field is in primary per role — no duplicate "Title".
+    const primaryTitles = schema.fields.filter(f => f.section === 'primary' && /^title$/i.test(f.label));
+    expect(primaryTitles).toHaveLength(1);
+  });
+
+  test('multi-value row-weight selects are not treated as fields', async ({ page }) => {
+    await open(page, 'node-add-news-live.html');
+    const schema = (await live(page))!;
+    expect(schema.fields.filter(f => /Weight for row/i.test(f.label))).toEqual([]);
+    expect(schema.fields.filter(f => f.machineName.includes('_weight'))).toEqual([]);
+  });
+
+  test('Media module image fields are recognized as files, not editable text', async ({ page }) => {
+    await open(page, 'node-add-news-live.html');
+    const schema = (await live(page))!;
+    const teaser = schema.fields.find(f => f.label === 'Teaser Image')!;
+    const hero = schema.fields.find(f => f.label === 'Hero Image')!;
+
+    // media[...] renders a textfield plus a browse button; left as text the overlay
+    // would invite typing into a media reference.
+    expect(teaser.kind).toBe('file');
+    expect(hero.kind).toBe('file');
+    expect(teaser.section).toBe('multimedia');
+    // And the two stay distinct rather than collapsing to a shared `media` base.
+    expect(teaser.baseName).toBe('field_image_teaser');
+    expect(hero.baseName).toBe('field_image_hero');
+  });
+
+  test('the date cluster takes its label from the legend, not from "Year"', async ({ page }) => {
+    await open(page, 'node-add-news-live.html');
+    const schema = (await live(page))!;
+    const dates = schema.fields.filter(f => f.kind === 'date');
+    expect(dates).toHaveLength(1);
+    expect(dates[0].label).toBe('Date');
+    expect(dates[0].section).toBe('typeFields');
+  });
+
+  test('an unclaimed content field joins the left column, not a rail section', async ({ page }) => {
+    await open(page, 'node-add-news-live.html');
+    const schema = (await live(page))!;
+    const type = schema.fields.find(f => f.baseName === 'field_news_types')!;
+    // "Type" is content on the Overview tab; exiling it to `other` hides it behind a
+    // rail section an editor may never open.
+    expect(type.section).toBe('typeFields');
+    expect(type.matchedBy).toBe('fallback:contentTab');
+  });
+
+  test('an unclaimed field inside a vertical tab still goes to other', async ({ page }) => {
+    await open(page, 'node-add-news-live.html');
+    const schema = (await live(page))!;
+    const depth = schema.fields.find(f => f.baseName === 'comment_thread_depth')!;
+    expect(depth.section).toBe('other');
+    expect(depth.matchedBy).toBe('fallback:verticalTab');
+  });
+
+  test('Summary is recognized as a rich text field, so writes go through CKEditor', async ({ page }) => {
+    await open(page, 'node-add-news-live.html');
+    const schema = (await live(page))!;
+    const summary = schema.fields.find(f => f.baseName === 'field_summary')!;
+    expect(summary.section).toBe('primary');
+    expect(summary.kind).toBe('wysiwyg');
+    expect(summary.required).toBe(true);
+  });
+
+  test('this site has one Related field, not the handoff\'s four', async ({ page }) => {
+    await open(page, 'node-add-news-live.html');
+    const schema = (await live(page))!;
+    const related = schema.fields.filter(f => f.section === 'related');
+    expect(related.map(f => f.label)).toEqual(['Related Services']);
+    expect(related[0].kind).toBe('autocomplete');
+  });
+
+  test('framework fields route by name where their labels are generic', async ({ page }) => {
+    await open(page, 'node-add-news-live.html');
+    const schema = (await live(page))!;
+    const sectionOf = (base: string) => schema.fields.find(f => f.baseName === base)?.section;
+    expect(sectionOf('metatags')).toBe('seo');
+    expect(sectionOf('path')).toBe('seo');
+    expect(sectionOf('log')).toBe('revision');
+    expect(sectionOf('shield')).toBe('display');
   });
 });

@@ -28,6 +28,16 @@ export interface SectionRule {
   groups?: (string | RegExp)[];
 }
 
+/**
+ * Legends that identify Drupal's vertical-tab block, i.e. configuration rather than
+ * content. Used only by the fallback, to decide where an unclaimed field belongs.
+ */
+const VERTICAL_TAB_LEGENDS = [
+  'meta tag', 'url path', 'url alias', 'xml sitemap', 'revision information',
+  'shield settings', 'customize display', 'menu settings', 'comment settings',
+  'authoring information', 'publishing options',
+];
+
 const matches = (value: string, patterns: (string | RegExp)[] | undefined): boolean => {
   if (!patterns || !value) return false;
   return patterns.some(p =>
@@ -39,6 +49,33 @@ const matches = (value: string, patterns: (string | RegExp)[] | undefined): bool
  * Ordered rules. Read top to bottom; first hit wins.
  */
 export const SECTION_RULES: SectionRule[] = [
+  /**
+   * Framework fields, claimed by NAME before anything else.
+   *
+   * These must outrank the label rules below. On the live News form the Twitter card
+   * meta tag is labelled simply "Title", so `primary.title` claimed it by label and a
+   * meta tag was placed in the writing surface next to the real headline. Its name
+   * (`metatags[…]`) is unambiguous where its label is not.
+   *
+   * The same reasoning covers `path`, `xmlsitemap`, `revision` and `log`: their labels
+   * are generic, their names are not.
+   */
+  {
+    id: 'seo.byName',
+    section: 'seo',
+    names: [/^metatags$/, /^path$/, /^xmlsitemap$/],
+  },
+  {
+    id: 'revision.byName',
+    section: 'revision',
+    names: [/^revision$/, /^log$/],
+  },
+  {
+    id: 'display.byName',
+    section: 'display',
+    names: [/^shield$/],
+  },
+
   // --- Left column: the writing surface -----------------------------------
   // Exact names, because "title" as a substring appears in menu link title,
   // page title meta tag, and more.
@@ -227,6 +264,18 @@ export function assignSection(input: {
     }
   }
 
-  // Unknown types must degrade to a generic grouping, never an empty rail.
-  return { section: 'other', matchedBy: 'fallback' };
+  /**
+   * Unclaimed fields degrade to a generic grouping, never disappear.
+   *
+   * Where they land depends on context. A field sitting in one of Drupal's vertical
+   * tabs is configuration, so it goes to the `other` rail section. A field on a content
+   * tab is content — the live News form has a `field_news_types` select labelled simply
+   * "Type" that no rule claims — so it joins the left column beside the body rather
+   * than being exiled to a rail section the editor may never open.
+   */
+  const inVerticalTab = groups.some(group => VERTICAL_TAB_LEGENDS.some(legend => group.includes(legend)));
+
+  return inVerticalTab
+    ? { section: 'other', matchedBy: 'fallback:verticalTab' }
+    : { section: 'typeFields', matchedBy: 'fallback:contentTab' };
 }

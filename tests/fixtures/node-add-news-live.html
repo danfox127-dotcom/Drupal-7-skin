@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<!--
+  /node/add/news — the SHAPES OBSERVED ON THE LIVE SITE, not inferred ones.
+  Reconstructed from the schema diagnostic run against cuimc.columbia.edu.
+
+  Every machine name here is real, and almost none matched what was originally guessed:
+
+    title_field[und][0][value]        not `title`     (the i18n Title module)
+    field_summary[und][0][value]      not `body[…][summary]`, and it is a WYSIWYG
+    field_news_byline[und]            an autocomplete, not a textfield
+    field_news_date[und][0][value][…] a Year/Month/Day cluster inside a "Date" legend
+    media[field_image_teaser_und_0]   the Media module, NOT files[…], and type=text
+    field_services[und][0][target_id] ONE related field, not the four the handoff shows
+    field_news_types[und]             a "Type" select no rule claims
+    metatags[und][twitter:title]      labelled just "Title", inside a nested fieldset
+
+  That last one is why this fixture exists: its label collided with the real headline
+  and put a meta tag in the writing surface. Deliberately kept small — the full form has
+  36 fields and a 75-term taxonomy tree; this covers the shapes that broke.
+-->
+<html lang="en">
+<head><meta charset="utf-8" /><title>Create News | CUIMC</title></head>
+<body class="html page-node page-node-add node-type-news">
+  <h1 id="page-title">Create News</h1>
+
+  <form class="node-form node-news-form" id="news-node-form" action="/node/add/news" method="post">
+    <input type="hidden" name="form_build_id" value="form-live" />
+    <input type="hidden" name="form_token" value="tok-live" />
+    <input type="hidden" name="form_id" value="news_node_form" />
+
+    <div class="field-group-tabs-wrapper">
+      <fieldset class="field-group-tab">
+        <legend><span class="fieldset-legend">Overview</span></legend>
+
+        <!-- i18n Title module: title_field, not title -->
+        <div class="form-item form-type-textfield">
+          <label for="edit-title-field">Title <span class="form-required">*</span></label>
+          <input type="text" id="edit-title-field" name="title_field[und][0][value]" required="required" class="form-text required" />
+        </div>
+
+        <div class="form-item form-type-textfield">
+          <label for="edit-field-subtitle">Subtitle</label>
+          <input type="text" id="edit-field-subtitle" name="field_subtitle[und][0][value]" class="form-text" />
+        </div>
+
+        <!-- Summary is its own field AND a rich text area -->
+        <div class="form-item form-type-textarea text-format-wrapper">
+          <label for="edit-field-summary">Summary <span class="form-required">*</span></label>
+          <div class="cke">
+            <textarea id="edit-field-summary" name="field_summary[und][0][value]" required="required" class="form-textarea text-full required"></textarea>
+          </div>
+        </div>
+
+        <!-- Unclaimed by any rule: a content field labelled simply "Type" -->
+        <div class="form-item form-type-select">
+          <label for="edit-field-news-types">Type</label>
+          <select id="edit-field-news-types" name="field_news_types[und]">
+            <option value="_none">- None -</option>
+            <option value="1">Press Release</option>
+          </select>
+        </div>
+
+        <div class="form-item form-type-textfield">
+          <label for="edit-field-news-byline">Byline</label>
+          <input type="text" id="edit-field-news-byline" name="field_news_byline[und]" class="form-text form-autocomplete" />
+        </div>
+
+        <!-- Date cluster: the label must come from the legend, not from "Year" -->
+        <fieldset class="container-inline-date">
+          <legend><span class="fieldset-legend">Date</span></legend>
+          <div class="date-no-float">
+            <div class="form-item form-type-select">
+              <label for="edit-news-date-year">Year</label>
+              <select id="edit-news-date-year" name="field_news_date[und][0][value][year]">
+                <option value="2026" selected="selected">2026</option><option value="2025">2025</option>
+              </select>
+            </div>
+            <div class="form-item form-type-select">
+              <label for="edit-news-date-month">Month</label>
+              <select id="edit-news-date-month" name="field_news_date[und][0][value][month]">
+                <option value="8" selected="selected">Aug</option><option value="9">Sep</option>
+              </select>
+            </div>
+            <div class="form-item form-type-select">
+              <label for="edit-news-date-day">Day</label>
+              <select id="edit-news-date-day" name="field_news_date[und][0][value][day]">
+                <option value="13" selected="selected">13</option><option value="14">14</option>
+              </select>
+            </div>
+          </div>
+        </fieldset>
+
+        <div class="form-item form-type-textfield">
+          <label for="edit-field-news-external-source">External News Source</label>
+          <input type="text" id="edit-field-news-external-source" name="field_news_external_source[und]" class="form-text form-autocomplete" />
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab">
+        <legend><span class="fieldset-legend">Body</span></legend>
+
+        <div class="form-item form-type-textarea text-format-wrapper">
+          <label for="edit-body-value">Body <span class="form-required">*</span></label>
+          <div class="cke">
+            <textarea id="edit-body-value" name="body[und][0][value]" required="required" class="form-textarea text-full required"></textarea>
+          </div>
+        </div>
+
+        <div class="form-item form-type-select">
+          <label for="edit-news-primary-topic">Primary Topic</label>
+          <select id="edit-news-primary-topic" name="field_news_categories_primary[und]">
+            <option value="_none" selected="selected">- None -</option>
+            <option value="12">Cardiology</option>
+          </select>
+        </div>
+
+        <div class="form-item form-type-checkboxes">
+          <label for="edit-news-categories">Topics</label>
+          <div class="form-checkboxes" id="edit-news-categories">
+            <ul>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="c1" name="field_news_categories[und][0][1][1]" value="12" class="form-checkbox" /><label for="c1">Cardiology</label></div></li>
+              <li><div class="form-item form-type-checkbox"><input type="checkbox" id="c2" name="field_news_categories[und][0][1][2]" value="13" class="form-checkbox" /><label for="c2">Neurology</label></div></li>
+            </ul>
+          </div>
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab">
+        <legend><span class="fieldset-legend">Related Content</span></legend>
+        <!-- ONE related field on this site, with a row-weight select that must be ignored -->
+        <div class="field-widget-entityreference-autocomplete">
+          <table class="field-multiple-table">
+            <tbody><tr>
+              <td>
+                <div class="form-item form-type-textfield">
+                  <label for="edit-field-services">Related Services</label>
+                  <input type="text" id="edit-field-services" name="field_services[und][0][target_id]" class="form-text form-autocomplete" />
+                </div>
+              </td>
+              <td>
+                <div class="form-item form-type-select">
+                  <label for="edit-services-weight">Weight for row 1</label>
+                  <select id="edit-services-weight" name="field_services[und][0][_weight]"><option value="0">0</option></select>
+                </div>
+              </td>
+            </tr></tbody>
+          </table>
+          <input type="submit" value="Add another item" class="form-submit" />
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab">
+        <legend><span class="fieldset-legend">Multimedia</span></legend>
+        <!-- Media module: a TEXT input plus a browse launcher, never type=file -->
+        <div class="form-item form-type-textfield media-widget">
+          <label for="edit-image-teaser">Teaser Image</label>
+          <input type="text" id="edit-image-teaser" name="media[field_image_teaser_und_0]" class="form-text" />
+          <a class="button-yellow launcher" href="#">Browse</a>
+        </div>
+        <div class="form-item form-type-textfield media-widget">
+          <label for="edit-image-hero">Hero Image</label>
+          <input type="text" id="edit-image-hero" name="media[field_image_hero_und_0]" class="form-text" />
+          <a class="button-yellow launcher" href="#">Browse</a>
+        </div>
+      </fieldset>
+
+      <fieldset class="field-group-tab">
+        <legend><span class="fieldset-legend">Groups</span></legend>
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-field-sitewide" name="field_sitewide[und]" value="1" class="form-checkbox" />
+          <label for="edit-field-sitewide">Sitewide News</label>
+        </div>
+        <div class="field-widget-entityreference-autocomplete">
+          <table class="field-multiple-table">
+            <tbody><tr>
+              <td>
+                <div class="form-item form-type-textfield">
+                  <label for="edit-og-your">Your groups</label>
+                  <input type="text" id="edit-og-your" name="og_group_ref[und][0][default][0][target_id]" class="form-text form-autocomplete" />
+                </div>
+              </td>
+              <td>
+                <div class="form-item form-type-select">
+                  <label for="edit-og-weight">Weight for row 1</label>
+                  <select id="edit-og-weight" name="og_group_ref[und][0][default][0][_weight]"><option value="0">0</option></select>
+                </div>
+              </td>
+            </tr></tbody>
+          </table>
+        </div>
+      </fieldset>
+    </div>
+
+    <div class="vertical-tabs">
+      <fieldset class="vertical-tabs-pane">
+        <legend><span class="fieldset-legend">Meta tags</span></legend>
+        <div class="form-item form-type-textfield">
+          <label for="edit-metatags-title">Page title</label>
+          <input type="text" id="edit-metatags-title" name="metatags[und][title][value]" class="form-text" />
+        </div>
+        <!-- Nested fieldset, and its label is simply "Title" -->
+        <fieldset>
+          <legend><span class="fieldset-legend">Show Twitter card</span></legend>
+          <div class="form-item form-type-textfield">
+            <label for="edit-metatags-twitter-title">Title</label>
+            <input type="text" id="edit-metatags-twitter-title" name="metatags[und][twitter:title][value]" class="form-text" />
+          </div>
+        </fieldset>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane">
+        <legend><span class="fieldset-legend">URL path settings</span></legend>
+        <div class="form-item form-type-textfield">
+          <label for="edit-path-alias">URL alias</label>
+          <input type="text" id="edit-path-alias" name="path[alias]" class="form-text" />
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane">
+        <legend><span class="fieldset-legend">Revision information</span></legend>
+        <div class="form-item form-type-textarea">
+          <label for="edit-log">Revision log message</label>
+          <textarea id="edit-log" name="log" class="form-textarea"></textarea>
+        </div>
+      </fieldset>
+
+      <fieldset class="vertical-tabs-pane">
+        <legend><span class="fieldset-legend">Shield settings</span></legend>
+        <div class="form-item form-type-checkbox">
+          <input type="checkbox" id="edit-shield" name="shield" value="1" class="form-checkbox" />
+          <label for="edit-shield">Shield content</label>
+        </div>
+      </fieldset>
+
+      <!-- An unclaimed field inside a vertical tab belongs in `other`, not the left column -->
+      <fieldset class="vertical-tabs-pane">
+        <legend><span class="fieldset-legend">Comment settings</span></legend>
+        <div class="form-item form-type-select">
+          <label for="edit-comment-oddity">Threading depth</label>
+          <select id="edit-comment-oddity" name="comment_thread_depth"><option value="1">1</option></select>
+        </div>
+      </fieldset>
+    </div>
+
+    <div class="form-actions">
+      <input type="submit" id="edit-submit" name="op" value="Save" class="form-submit" />
+    </div>
+  </form>
+</body>
+</html>
