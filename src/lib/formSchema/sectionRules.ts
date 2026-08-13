@@ -153,8 +153,28 @@ export const SECTION_RULES: SectionRule[] = [
     id: 'related.entityRefs',
     section: 'related',
     groups: [/related content/],
-    labels: [/^related /, /^conditions?$/, /^profiles?$/, /^treatments?$/, /^specialt/],
-    names: [/related_/, /field_conditions/, /field_profiles/, /field_treatments/, /field_specialties/],
+    /**
+     * The entity types differ BY SITE, which is why this list is broad rather than a
+     * fixed set of four.
+     *
+     * columbiadoctors.org has Conditions, Profiles/Providers, Treatments and
+     * Specialties; cuimc.columbia.edu has a single "Related Services". Matching the
+     * "Related …" prefix plus the bare entity nouns covers both without either site's
+     * field list being hardcoded.
+     *
+     * "Providers" and "Profiles" are the same concept named differently depending on
+     * who you ask, so both are here.
+     */
+    labels: [
+      /^related /,
+      /^conditions?$/, /^profiles?$/, /^providers?$/, /^treatments?$/,
+      /^specialt/, /^services?$/,
+    ],
+    names: [
+      /related_/,
+      /field_conditions/, /field_profiles/, /field_providers/,
+      /field_treatments/, /field_specialties/, /field_services/,
+    ],
   },
   {
     id: 'related.references',
