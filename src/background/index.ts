@@ -68,6 +68,12 @@ async function fetchSource(url: string): Promise<FetchSourceResponse> {
   }
 }
 
+export interface RichEditorLifecycleRequest {
+  type: 'richEditorLifecycle';
+  elementId: string;
+  op: 'detach' | 'attach' | 'sync';
+}
+
 export interface SyncRichEditorRequest {
   type: 'syncRichEditor';
   elementId: string;
@@ -121,8 +127,136 @@ async function syncRichEditor(tabId: number, elementId: string, value: string): 
   }
 }
 
+/**
+ * Detaches or re-attaches Drupal's own rich text editor around a DOM move.
+ *
+ * Needed because the two-pane editor relocates the real editor into its layout so the
+ * user gets the site's ACTUAL toolbar. A rich editor cannot simply be reparented:
+ * CKEditor 4 and TinyMCE both build their editing area as an <iframe>, and moving an
+ * iframe in the DOM forces the browser to reload it — which blanks the editing surface
+ * and leaves the instance pointing at a document that no longer exists.
+ *
+ * So the move is bracketed: 'detach' writes the editor's data back to the textarea and
+ * destroys the instance, then the content script moves the plain textarea, then 'attach'
+ * re-initialises in the new location.
+ *
+ * Re-initialising goes through Drupal.attachBehaviors rather than CKEDITOR.replace,
+ * deliberately: attachBehaviors re-runs whatever editor module the site actually
+ * configured, with that site's toolbar, buttons, format list and media integration.
+ * Calling CKEDITOR.replace ourselves would produce a DEFAULT toolbar — visibly not the
+ * buttons the user had before, which is the whole complaint this fixes. It is also
+ * editor-agnostic: CKEditor, TinyMCE or BUEditor all re-attach the same way.
+ */
+async function richEditorLifecycle(
+  tabId: number,
+  elementId: string,
+  op: 'detach' | 'attach' | 'sync'
+): Promise<{ ok: boolean; editor?: string }> {
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      args: [elementId, op],
+      func: (id: string, operation: string) => {
+        const w = window as unknown as {
+          CKEDITOR?: {
+            instances?: Record<string, {
+              updateElement(): void;
+              destroy(noUpdate?: boolean): void;
+            }>;
+            replace?: (el: HTMLElement | string) => unknown;
+          };
+          tinyMCE?: {
+            get(id: string): { triggerSave(): void; remove(): void } | null;
+            EditorManager?: unknown;
+          };
+          Drupal?: { attachBehaviors?: (context?: Element) => void };
+          jQuery?: unknown;
+        };
+
+        /**
+         * 'sync' pushes every editor's content into its textarea.
+         *
+         * A rich editor holds its content in its own object and only writes it back on
+         * submit. Real saves are fine (the submit button is clicked, so that handler
+         * runs), but the local autosave reads the textarea directly — so without this it
+         * would draft an EMPTY body while the user was typing into a full one.
+         */
+        if (operation === 'sync') {
+          let synced = 0;
+          const instances = w.CKEDITOR?.instances ?? {};
+          for (const key of Object.keys(instances)) {
+            try { instances[key].updateElement(); synced++; } catch { /* skip one bad instance */ }
+          }
+          const tinyAll = (w as unknown as { tinymce?: { editors?: { triggerSave(): void }[] } }).tinymce;
+          for (const ed of tinyAll?.editors ?? []) {
+            try { ed.triggerSave(); synced++; } catch { /* as above */ }
+          }
+          return synced > 0 ? 'synced' : 'none';
+        }
+
+        const textarea = document.getElementById(id) as HTMLTextAreaElement | null;
+        if (!textarea) return 'no-element';
+
+        if (operation === 'detach') {
+          const ck = w.CKEDITOR?.instances?.[id];
+          if (ck) {
+            // updateElement first: destroy(true) skips the write-back, and without it
+            // everything already typed is lost.
+            try { ck.updateElement(); } catch { /* keep going; destroy matters more */ }
+            ck.destroy(true);
+            return 'ckeditor';
+          }
+          const tiny = w.tinyMCE?.get(id);
+          if (tiny) {
+            try { tiny.triggerSave(); } catch { /* as above */ }
+            tiny.remove();
+            return 'tinymce';
+          }
+          return 'none';
+        }
+
+        // attach
+        const wrapper = textarea.closest('.text-format-wrapper')
+          ?? textarea.closest('.form-item')
+          ?? textarea.parentElement;
+
+        // Drupal marks processed elements so behaviors do not double-attach. The move
+        // carried those markers along, so they have to be cleared or attachBehaviors
+        // will skip the very element we want re-initialised.
+        (wrapper ?? textarea).querySelectorAll?.('.ckeditor-processed, .wysiwyg-processed')
+          .forEach(el => el.classList.remove('ckeditor-processed', 'wysiwyg-processed'));
+        textarea.classList.remove('ckeditor-processed', 'wysiwyg-processed');
+
+        if (typeof w.Drupal?.attachBehaviors === 'function') {
+          try {
+            w.Drupal.attachBehaviors((wrapper ?? textarea) as Element);
+          } catch {
+            return 'attach-threw';
+          }
+          // Did anything actually take? A silent no-op would leave a bare textarea
+          // looking exactly like the bug being fixed, so it is reported.
+          const attached = !!w.CKEDITOR?.instances?.[id] || !!w.tinyMCE?.get(id);
+          return attached ? 'attached' : 'behaviors-ran-no-editor';
+        }
+
+        return 'no-drupal';
+      },
+    });
+
+    const outcome = String(result?.result ?? 'unknown');
+    return {
+      ok: outcome !== 'attach-threw' && outcome !== 'no-element' && outcome !== 'unknown',
+      editor: outcome,
+    };
+  } catch (err) {
+    console.warn('[D7 Studio] Rich editor ' + op + ' failed', err);
+    return { ok: false, editor: 'error' };
+  }
+}
+
 chrome.runtime.onMessage.addListener((
-  message: FetchSourceRequest | SyncRichEditorRequest,
+  message: FetchSourceRequest | SyncRichEditorRequest | RichEditorLifecycleRequest,
   sender,
   sendResponse
 ) => {
@@ -140,6 +274,16 @@ chrome.runtime.onMessage.addListener((
     }
     void syncRichEditor(tabId, message.elementId, message.value)
       .then(ok => sendResponse({ ok }));
+    return true;
+  }
+
+  if (message?.type === 'richEditorLifecycle') {
+    const tabId = sender.tab?.id;
+    if (tabId === undefined) {
+      sendResponse({ ok: false, error: 'No tab to inject into.' });
+      return false;
+    }
+    void richEditorLifecycle(tabId, message.elementId, message.op).then(sendResponse);
     return true;
   }
 

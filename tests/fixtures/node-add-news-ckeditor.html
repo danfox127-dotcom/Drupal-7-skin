@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<!--
+  A News form whose Body field has a rich text editor attached, for testing that the
+  overlay relocates Drupal's REAL editor rather than drawing a picture of a toolbar.
+
+  The CKEDITOR stub below is deliberately faithful on the points that matter:
+
+   * the editing surface is an <iframe>, because that is what makes reparenting
+     destructive — moving an iframe in the DOM forces a reload, so any approach that
+     just moves the editor loses the content and the instance;
+   * content lives in the instance, NOT the textarea, and reaches the textarea only via
+     updateElement() — which is what makes a naive draft read record an empty body;
+   * Drupal.attachBehaviors is what re-creates it, honouring the site's own button list,
+     so the rebuilt toolbar is the site's toolbar and not a default one.
+-->
+<html>
+<head><title>Create News</title></head>
+<body class="logged-in">
+<div id="toolbar"><a href="/user/1">testuser</a></div>
+<form action="/node/add/news" method="post" id="news-node-form" accept-charset="UTF-8">
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Overview</span></legend>
+    <div class="form-item form-type-textfield">
+      <label for="edit-title">Title <span class="form-required">*</span></label>
+      <input type="text" id="edit-title" name="title_field[und][0][value]" class="form-text required" required="required" />
+    </div>
+  </fieldset>
+
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Body</span></legend>
+    <div class="form-item form-type-textarea text-format-wrapper">
+      <label for="edit-body-value">Body <span class="form-required">*</span></label>
+      <div class="form-textarea-wrapper resizable">
+        <textarea id="edit-body-value" name="body[und][0][value]" class="form-textarea required">Original body text.</textarea>
+      </div>
+      <div class="filter-wrapper">
+        <div class="form-item form-type-select">
+          <label for="edit-body-format">Text format</label>
+          <select id="edit-body-format" name="body[und][0][format]">
+            <option value="filtered_html" selected="selected">Filtered HTML</option>
+            <option value="full_html">Full HTML</option>
+          </select>
+        </div>
+        <div class="filter-guidelines">
+          <p>Allowed HTML tags: &lt;a&gt; &lt;em&gt; &lt;strong&gt; &lt;h2&gt; &lt;ul&gt; &lt;li&gt;</p>
+        </div>
+      </div>
+    </div>
+  </fieldset>
+
+  <input type="submit" id="edit-submit" name="op" value="Save" />
+</form>
+
+<script>
+// ---- Minimal but behaviourally honest CKEditor 4 stub ----------------------
+window.CKEDITOR = {
+  instances: {},
+  // The site's configured buttons. A reimplemented toolbar could not know these.
+  config: { toolbar: ['Bold', 'Italic', 'Link', 'Format', 'BulletedList', 'CU Media'] },
+
+  replace: function (idOrEl) {
+    var textarea = typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
+    if (!textarea) return null;
+    var id = textarea.id;
+
+    var container = document.createElement('div');
+    container.className = 'cke cke_editor_' + id;
+
+    var top = document.createElement('div');
+    top.className = 'cke_top';
+    CKEDITOR.config.toolbar.forEach(function (name) {
+      var b = document.createElement('a');
+      b.className = 'cke_button cke_button__' + name.toLowerCase().replace(/\s+/g, '');
+      b.setAttribute('role', 'button');
+      b.setAttribute('title', name);
+      b.textContent = name;
+      top.appendChild(b);
+    });
+    container.appendChild(top);
+
+    // An iframe, as the real thing uses. This is the hazard being guarded against.
+    var frame = document.createElement('iframe');
+    frame.className = 'cke_wysiwyg_frame';
+    frame.setAttribute('src', 'about:blank');
+    container.appendChild(frame);
+
+    textarea.style.display = 'none';
+    textarea.parentNode.insertBefore(container, textarea);
+
+    var data = textarea.value;
+    var instance = {
+      _data: data,
+      _container: container,
+      _textarea: textarea,
+      getData: function () { return this._data; },
+      setData: function (v) { this._data = v; },
+      updateElement: function () { this._textarea.value = this._data; },
+      destroy: function (noUpdate) {
+        if (!noUpdate) this.updateElement();
+        this._container.parentNode && this._container.parentNode.removeChild(this._container);
+        this._textarea.style.display = '';
+        delete window.CKEDITOR.instances[id];
+      }
+    };
+    window.CKEDITOR.instances[id] = instance;
+    return instance;
+  }
+};
+
+// ---- Drupal's behavior layer ----------------------------------------------
+window.Drupal = window.Drupal || {};
+Drupal.settings = Drupal.settings || {};
+Drupal.behaviors = Drupal.behaviors || {};
+
+Drupal.behaviors.ckeditorStub = {
+  attach: function (context) {
+    var root = context || document;
+    var areas = (root.querySelectorAll ? root.querySelectorAll('textarea.form-textarea') : []);
+    Array.prototype.forEach.call(areas, function (ta) {
+      if (!ta.id) return;
+      if (ta.classList.contains('ckeditor-processed')) return;
+      if (window.CKEDITOR.instances[ta.id]) return;
+      ta.classList.add('ckeditor-processed');
+      window.CKEDITOR.replace(ta);
+    });
+  }
+};
+
+Drupal.attachBehaviors = function (context) {
+  for (var k in Drupal.behaviors) {
+    if (Drupal.behaviors[k] && typeof Drupal.behaviors[k].attach === 'function') {
+      Drupal.behaviors[k].attach(context || document);
+    }
+  }
+};
+
+// Sync on submit, exactly as the real module does — this is why real saves work.
+document.getElementById('news-node-form').addEventListener('submit', function (e) {
+  e.preventDefault();
+  for (var k in window.CKEDITOR.instances) window.CKEDITOR.instances[k].updateElement();
+  document.body.setAttribute('data-submitted', 'true');
+});
+
+Drupal.attachBehaviors(document);
+</script>
+</body>
+</html>

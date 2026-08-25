@@ -3,7 +3,7 @@ import { ChevronUp, ChevronDown, AlertCircle } from 'lucide-react';
 import {
   FormSchema, FieldDescriptor, SectionId, populatedSections,
 } from '../../lib/formSchema';
-import { readAll, writeAll, submitForm } from '../../lib/fieldBinding';
+import { readAll, writeAll, submitForm, syncRichEditorsToDom } from '../../lib/fieldBinding';
 import {
   Draft, ConflictState, draftKey, readChangedStamp, loadDraft, saveDraft,
   clearDraft, assessDraft, formatAge,
@@ -195,9 +195,34 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
   }, [key, baseChanged]);
 
   // --- Autosave, local only ---------------------------------------------
+  /**
+   * Last persisted snapshot, so the beat can detect changes made in a NATIVE widget.
+   *
+   * `dirtyRef` only trips when one of this overlay's own React controls fires onChange.
+   * Drupal's relocated editor is not one of those, so typing a whole body produced no
+   * dirty flag and the draft was never written. Comparing snapshots catches edits from
+   * either side; null means "no baseline yet", which avoids writing a phantom draft
+   * identical to the form as loaded.
+   */
+  const lastSnapshot = useRef<string | null>(null);
+
   const persist = useCallback(async () => {
+    // Rich editors keep their content to themselves until submit; make the DOM current
+    // before reading it, or the draft records an empty body.
+    await syncRichEditorsToDom();
+
+    const values = readAll(schema.fields);
+    const snapshot = JSON.stringify(values);
+
+    if (lastSnapshot.current === null) {
+      lastSnapshot.current = snapshot;
+      return;
+    }
+    if (snapshot === lastSnapshot.current) return;
+    lastSnapshot.current = snapshot;
+
     const draft: Draft = {
-      values: readAll(schema.fields),
+      values,
       savedAt: Date.now(),
       baseChanged,
       contentType: schema.contentType,
@@ -216,10 +241,10 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
     // on the same beat, but only when something actually changed.
     const id = window.setInterval(() => {
       setNow(Date.now());
-      if (dirtyRef.current) {
-        dirtyRef.current = false;
-        void persist();
-      }
+      // Unconditional now: persist() is a no-op when nothing changed, and gating on
+      // dirtyRef alone missed every edit made in a relocated native editor.
+      dirtyRef.current = false;
+      void persist();
     }, 5000);
     return () => window.clearInterval(id);
   }, [persist]);

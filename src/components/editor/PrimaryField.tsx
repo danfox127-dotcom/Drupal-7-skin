@@ -2,6 +2,8 @@ import React, { useState, useCallback } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { FieldDescriptor } from '../../lib/formSchema';
 import { readValue, writeValue } from '../../lib/fieldBinding';
+import { SlottedFieldsContext } from './FieldControl';
+import { slotNameFor } from '../../content/inject';
 
 /**
  * The left column's writing surface.
@@ -33,6 +35,14 @@ interface Props {
 const SUMMARY_LIMIT = 380;
 
 export const PrimaryField = ({ field, role, error, onChange }: Props) => {
+  /**
+   * Whether the native widget was relocated here. Read from context for the same reason
+   * FieldControl does: a missed prop renders a control that looks fine and silently
+   * cannot save, because the real widget is left unslotted and therefore unrendered.
+   */
+  const relocated = React.useContext(SlottedFieldsContext);
+  const slotted = relocated.has(field.machineName);
+
   const [value, setValue] = useState<string>(() => String(readValue(field)));
 
   const commit = useCallback((next: string) => {
@@ -111,7 +121,7 @@ export const PrimaryField = ({ field, role, error, onChange }: Props) => {
     );
   }
 
-  // Body: a toolbar strip over a tall serif editing surface.
+  // Body: Drupal's own editor when it has one, otherwise a plain writing surface.
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-baseline gap-2">
@@ -119,29 +129,40 @@ export const PrimaryField = ({ field, role, error, onChange }: Props) => {
         {required}
       </div>
 
-      {/* Presentational strip matching the design. The real formatting controls stay
-          in Drupal's editor; claiming otherwise with live-looking buttons would be
-          worse than showing the surface plainly. */}
-      <div className="flex items-center gap-0 bg-legacy-100 border border-rule border-b-0 px-1">
-        {['B', 'I', 'Link', 'H2', 'H3', 'List', 'Table', 'Image'].map(tool => (
-          <span
-            key={tool}
-            aria-hidden="true"
-            // Min-width rather than a fixed 26px: "Table" and "Image" overflowed a
-            // fixed cell and collided with their neighbours.
-            className="min-w-6.5 h-6.5 px-1.5 flex items-center justify-center text-help text-ink-placeholder"
-          >
-            {tool}
-          </span>
-        ))}
-      </div>
+      {/*
+        Drupal's OWN editor, projected in through a slot.
 
-      <textarea
-        value={value}
-        onChange={e => commit(e.target.value)}
-        aria-label={field.label}
-        className="w-full min-h-[300px] -mt-1.5 px-4 py-3 bg-white border border-rule-control font-serif text-body-surface text-ink"
-      />
+        This used to be a row of grey aria-hidden spans reading "B I Link H2 H3 List
+        Table Image" over a plain textarea. None of it worked — it was a picture of a
+        toolbar, so the body had no formatting controls at all.
+
+        A rebuilt toolbar would not have fixed it: the real one carries this site's
+        configured buttons, its text-format list, and the media browser wired into the
+        editor. Slotting the real thing is the only way the buttons are the same buttons,
+        and it keeps working when the site's editor configuration changes.
+      */}
+      {slotted ? (
+        <div className="d7-slot-host bg-white">
+          <slot name={slotNameFor(field.machineName)} />
+        </div>
+      ) : (
+        <>
+          <textarea
+            value={value}
+            onChange={e => commit(e.target.value)}
+            aria-label={field.label}
+            className="w-full min-h-[300px] px-4 py-3 bg-white border border-rule-control font-serif text-body-surface text-ink"
+          />
+          {/*
+            No fake toolbar here either. Drupal has no rich editor attached to this
+            field, so plain text IS what it accepts, and drawing buttons would promise
+            formatting that would be stripped on save.
+          */}
+          <p className="text-help text-ink-help">
+            This field has no rich text editor in Drupal, so it takes plain text.
+          </p>
+        </>
+      )}
 
       {error && (
         <p className="flex items-start gap-1.5 text-help text-burnt font-semibold">

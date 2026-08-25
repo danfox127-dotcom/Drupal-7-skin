@@ -29,6 +29,7 @@ const FIXTURES = path.join(__dirname, 'fixtures');
 const ROUTES: [RegExp, string][] = [
   [/\/admin\/structure\/menu\/manage\/main-menu/, 'menu-manage.html'],
   [/\/admin\/content/, 'admin/content.html'],
+  [/\/node\/add\/news-ckeditor/, 'node-add-news-ckeditor.html'],
   [/\/node\/add\/news/, 'node-add-news-live.html'],
   [/\/node\/add\/page-bigmenu/, 'node-add-page-bigmenu.html'],
   [/\/node\/add\/page/, 'node-add-page.html'],
@@ -60,8 +61,19 @@ export const test = base.extend<{
       throw new Error('dist/ is missing or unbuilt — run `npm run build` before the extension tests.');
     }
 
+    /**
+     * Headless by default.
+     *
+     * This used to say "Extensions only work in headful mode", which was true of Chrome's
+     * OLD headless but not of --headless=new (Chrome 112+), which loads unpacked
+     * extensions normally. It matters because the context fixture is per-test: headful, a
+     * fifty-test file opens fifty windows one after another and steals focus each time,
+     * which is unusable while anyone is working on the machine.
+     *
+     * Set D7_HEADFUL=1 to watch a run.
+     */
     const context = await chromium.launchPersistentContext('', {
-      headless: false, // Extensions only work in headful mode
+      headless: !process.env.D7_HEADFUL,
       // Falls back to Playwright's managed browser when unset. See playwright.config.ts.
       executablePath: process.env.CHROME_PATH || undefined,
       args: [
@@ -686,5 +698,129 @@ test.describe('D7 Studio: safe defaults', () => {
     await page.reload();
     await expect(page.locator('#edit-title-field')).toBeVisible();
     await expect.poll(() => logs.some(l => l.includes('content type: news'))).toBe(true);
+  });
+});
+
+test.describe('Feature 5: the body keeps Drupal\'s real rich text editor', () => {
+  /**
+   * The body used to render a plain textarea beneath a row of grey aria-hidden spans
+   * reading "B I Link H2 H3 List Table Image". None of them did anything, so the field
+   * had no formatting controls at all.
+   *
+   * These assert the real editor is moved into the overlay and rebuilt there, rather
+   * than a toolbar being reimplemented — the site's own button list is the point, and a
+   * reimplementation could never know it.
+   */
+  const openBody = async (page: import('@playwright/test').Page) => {
+    await page.goto(`${HOST}/node/add/news-ckeditor`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+    // The rebuild is bracketed by two async hops through the service worker.
+    await page.waitForFunction(
+      () => !!document.querySelector('.cke'),
+      undefined,
+      { timeout: 15000 }
+    );
+  };
+
+  test('the editor is rebuilt inside the overlay, carrying the site\'s own buttons', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await openBody(page);
+
+    const state = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      const cke = document.querySelector('.cke') as HTMLElement;
+      const buttons = Array.from(cke.querySelectorAll('.cke_button')).map(b => b.textContent);
+      return {
+        // Inside the overlay host, not left behind in the hidden form content.
+        insideOverlay: !!cke.closest('.d7-proxy-ui-form-host'),
+        // And still inside the form, or it would not be submitted.
+        insideForm: !!cke.closest('form'),
+        slot: cke.closest('[slot]')?.getAttribute('slot') ?? null,
+        buttons,
+        instances: Object.keys((window as any).CKEDITOR.instances),
+        hostHasSlotted: host.querySelectorAll('[slot]').length,
+      };
+    });
+
+    expect(state.insideOverlay).toBe(true);
+    expect(state.insideForm).toBe(true);
+    expect(state.slot).toBeTruthy();
+    // The site's configured buttons, not a default set we invented.
+    expect(state.buttons).toEqual(['Bold', 'Italic', 'Link', 'Format', 'BulletedList', 'CU Media']);
+    expect(state.instances).toEqual(['edit-body-value']);
+  });
+
+  test('the projecting slot exists, so the editor is actually rendered', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await openBody(page);
+
+    // An unslotted light-DOM child of a shadow host is not rendered AT ALL, so a
+    // relocated editor with no matching slot would be invisible while still submitting.
+    const rendered = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      const sr = host.shadowRoot!;
+      const slotNames = new Set(
+        Array.from(sr.querySelectorAll('slot')).map(s => s.getAttribute('name'))
+      );
+      const relocated = Array.from(host.children)
+        .map(c => c.getAttribute('slot'))
+        .filter(Boolean) as string[];
+      const cke = document.querySelector('.cke') as HTMLElement;
+      return {
+        orphans: relocated.filter(n => !slotNames.has(n)),
+        editorHasSize: cke.getBoundingClientRect().height > 0,
+      };
+    });
+
+    expect(rendered.orphans).toEqual([]);
+    expect(rendered.editorHasSize).toBe(true);
+  });
+
+  test('content survives the move, which a bare reparent would have destroyed', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await openBody(page);
+
+    // The editing surface is an iframe; moving one reloads it. Detaching before the move
+    // and rebuilding after is what keeps the text.
+    const data = await page.evaluate(() =>
+      (window as any).CKEDITOR.instances['edit-body-value'].getData());
+    expect(data).toContain('Original body text.');
+  });
+
+  test('no fake toolbar is drawn anywhere in the overlay', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await openBody(page);
+
+    // The old mock strip rendered these as aria-hidden spans. Nothing in the shadow tree
+    // should claim to be a formatting control that isn't one.
+    const fakes = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return Array.from(sr.querySelectorAll('[aria-hidden="true"]'))
+        .map(el => (el.textContent || '').trim())
+        .filter(t => ['B', 'I', 'Link', 'H2', 'H3', 'List', 'Table', 'Image'].includes(t));
+    });
+    expect(fakes).toEqual([]);
+  });
+
+  test('the local draft records what was typed into the editor, not the stale textarea', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await openBody(page);
+
+    // A rich editor holds content in its own object until submit. Typing here mimics
+    // that: the textarea still says "Original body text." afterwards.
+    await page.evaluate(() =>
+      (window as any).CKEDITOR.instances['edit-body-value'].setData('<p>Typed into the editor.</p>'));
+
+    const stale = await page.evaluate(() =>
+      (document.getElementById('edit-body-value') as HTMLTextAreaElement).value);
+    expect(stale).toContain('Original body text.');
+
+    // The autosave beat is 5s, and it syncs the editors before reading.
+    await page.waitForFunction(
+      () => (document.getElementById('edit-body-value') as HTMLTextAreaElement)
+        .value.includes('Typed into the editor.'),
+      undefined,
+      { timeout: 20000 }
+    );
   });
 });

@@ -10,6 +10,7 @@ import {
   findContentTable, parseContentList, currentUsername, diagnoseContentList, totalRowsInView,
 } from '../lib/parseContentList';
 import { discoverSchema, explainSchema, isNodeFormPath } from '../lib/formSchema';
+import { hasRichEditor } from '../lib/fieldBinding';
 import { getPendingImport } from '../lib/import/pending';
 import { maybeShowImportReview } from './importFlow';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
@@ -148,6 +149,26 @@ const registerCommandPalette = () => {
  * looking current. A timestamp makes stale entries obvious at a glance instead of needing
  * the message text compared against the source.
  */
+/**
+ * Asks the service worker to tear down or rebuild a rich editor.
+ *
+ * Routed through the worker because only it can call chrome.scripting with
+ * `world: 'MAIN'`, and only the page's own world can reach the editor instance. A
+ * content script sees the textarea but not CKEDITOR.
+ */
+async function sendRichEditorLifecycle(
+  elementId: string,
+  op: 'detach' | 'attach'
+): Promise<{ ok: boolean; editor?: string }> {
+  try {
+    const res = await chrome.runtime.sendMessage({ type: 'richEditorLifecycle', elementId, op });
+    return res ?? { ok: false, editor: 'no-response' };
+  } catch {
+    // An invalidated extension context (reloaded mid-session) cannot be recovered here.
+    return { ok: false, editor: 'context-invalidated' };
+  }
+}
+
 const logStamp = () => {
   const now = new Date();
   const time = now.toTimeString().slice(0, 8);
@@ -214,15 +235,56 @@ const init = async () => {
        * Related Content, where an editor is matching against real node titles.
        */
       const RELOCATE_KINDS = new Set(['file', 'paragraphs', 'autocomplete']);
+
+      /**
+       * A rich text field is relocated too, but ONLY when Drupal really has an editor on
+       * it — and it has to be destroyed before the move and rebuilt after.
+       *
+       * The body previously rendered a plain textarea under a row of grey, aria-hidden
+       * spans reading "B I Link H2 H3 List Table Image". That strip was decoration: no
+       * button did anything, so the body had no formatting controls at all. Reimplementing
+       * a toolbar would not fix it either, because it could not match this site's
+       * configured button set, its format list, or the media browser wired into the
+       * editor. Moving the real editor is the only version of "the same buttons".
+       *
+       * `hasRichEditor` is checked rather than the field KIND, because walkForm classifies
+       * anything inside a `.text-format-wrapper` as wysiwyg — including a plain textarea
+       * that merely has a format selector under it. Relocating one of those would drop the
+       * designed writing surface and gain nothing.
+       */
+      const richFields = schema.fields.filter(
+        field => field.kind === 'wysiwyg' && hasRichEditor(field) && field.elements[0]?.id
+      );
+
+      // Detach BEFORE the host is built, so the editors are already torn down by the time
+      // anything is moved. An iframe-based editing area does not survive reparenting.
+      const detached = new Set<string>();
+      for (const field of richFields) {
+        const id = field.elements[0].id;
+        const res = await sendRichEditorLifecycle(id, 'detach');
+        if (res.ok && res.editor !== 'none') detached.add(field.machineName);
+        else if (!res.ok) {
+          console.warn(
+            `${logStamp()} Could not detach the rich editor on "${field.label}" `
+            + `(${res.editor}); leaving it in Drupal's form rather than moving it.`
+          );
+        }
+      }
+
       const mount = injectInsideForm(schema.form, null);
 
       const slotted = new Set<string>();
       for (const field of schema.fields) {
-        if (!RELOCATE_KINDS.has(field.kind)) continue;
+        const isRich = detached.has(field.machineName);
+        if (!isRich && !RELOCATE_KINDS.has(field.kind)) continue;
         const element = field.elements[0];
         if (!element) continue;
         if (relocateWidget(mount.container, element, field.machineName, field.baseName)) {
           slotted.add(field.machineName);
+        } else if (isRich) {
+          // The move failed, so put the editor back rather than leaving it destroyed.
+          void sendRichEditorLifecycle(element.id, 'attach');
+          detached.delete(field.machineName);
         }
       }
 
@@ -231,6 +293,30 @@ const init = async () => {
           <NodeEditor schema={schema} slottedFields={slotted} />
         </React.StrictMode>
       );
+
+      /**
+       * Rebuild the editors now that React has rendered the slots that project them.
+       *
+       * Order matters: re-attaching while the textarea is still unslotted means the
+       * editor builds itself inside an element the browser is not rendering, and CKEditor
+       * measures a zero-height container and comes up collapsed.
+       */
+      if (detached.size) {
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+        for (const field of schema.fields) {
+          if (!detached.has(field.machineName)) continue;
+          const res = await sendRichEditorLifecycle(field.elements[0].id, 'attach');
+          if (!res.ok || res.editor === 'behaviors-ran-no-editor') {
+            console.error(
+              `${logStamp()} The rich editor on "${field.label}" did not come back after `
+              + `being moved (${res.editor}). The field is still editable as plain text and `
+              + 'still saves, but its formatting toolbar is missing. Turn off the Two-Pane '
+              + 'Node Editor in the extension popup to get Drupal\'s own editor back.'
+            );
+          }
+        }
+      }
 
       /**
        * Verifies every relocated widget can actually be seen.
