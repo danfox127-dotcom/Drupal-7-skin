@@ -1,6 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import stylesheet from '../styles/main.css?inline';
+import { baseNameOf } from '../lib/formSchema/walkForm';
 
 /**
  * One parsed stylesheet shared by every shadow root via `adoptedStyleSheets`.
@@ -186,13 +187,35 @@ function widgetWrapperFor(element: HTMLElement, baseName: string): HTMLElement |
   let best = (element.closest<HTMLElement>('.form-item') ?? element.parentElement) as HTMLElement | null;
   if (!best) return null;
 
+  /**
+   * Whether a control belongs to this field.
+   *
+   * A plain prefix test is not enough, and getting it wrong is what made a chosen image
+   * never appear. The Media module names its launcher `media[field_image_teaser_und_0]`
+   * while its siblings — the hidden fid, the preview, the Remove button — are named
+   * `field_image_teaser[und][0][fid]`. Since baseName is `field_image_teaser`, the
+   * launcher's own name does not start with it, so the climb broke at the very first
+   * step and relocated only the innermost .form-item.
+   *
+   * Everything else stayed behind, INCLUDING Drupal's AJAX wrapper. So when Media
+   * answered a selection by replacing that wrapper with the thumbnail markup, the
+   * replacement landed in the part of the form we had hidden: the file attached and saved
+   * correctly, and the editor simply never showed it as selected.
+   *
+   * Normalising through baseNameOf makes `media[x_und_0]` and `x[und][0][fid]` both
+   * resolve to `x`, so they are recognised as the same field — while a neighbouring
+   * field still resolves differently and stops the climb.
+   */
+  const belongsToField = (name: string) =>
+    name.startsWith(baseName) || baseNameOf(name) === baseName;
+
   let node = best.parentElement;
   while (node && node.tagName !== 'FORM' && !node.classList.contains('d7-proxy-ui-form-host')) {
     const names = Array.from(node.querySelectorAll<HTMLElement>('input, select, textarea'))
       .map(el => (el as HTMLInputElement).name)
       .filter(Boolean);
 
-    if (names.length === 0 || !names.every(name => name.startsWith(baseName))) break;
+    if (names.length === 0 || !names.every(belongsToField)) break;
 
     best = node;
     node = node.parentElement;
@@ -211,13 +234,27 @@ export function relocateWidget(
   if (!wrapper || wrapper === host || host.contains(wrapper)) return null;
 
   const slot = slotNameFor(machineName);
-  wrapper.setAttribute('slot', slot);
 
   // Undo the blanket hide applied to the form's children if this wrapper happened to be
-  // one of them, then reparent it.
+  // one of them.
   wrapper.style.display = '';
   delete wrapper.dataset.d7Hidden;
-  host.appendChild(wrapper);
+
+  /**
+   * The slot attribute goes on a carrier WE own, not on Drupal's element.
+   *
+   * Drupal's AJAX commonly answers an interaction by replacing the widget wrapper
+   * outright (`replaceWith` on its ajax-wrapper id). A slot attribute set on that element
+   * goes with it, and the fresh markup — the thumbnail, the Remove button — arrives with
+   * no slot, which means the browser does not render it at all: an unslotted light-DOM
+   * child of a shadow host is invisible. Owning the carrier keeps the projection stable
+   * across as many AJAX round trips as the widget cares to make.
+   */
+  const carrier = document.createElement('div');
+  carrier.setAttribute('slot', slot);
+  carrier.className = 'd7-relocated-widget';
+  carrier.appendChild(wrapper);
+  host.appendChild(carrier);
 
   return slot;
 }

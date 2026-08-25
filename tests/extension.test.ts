@@ -30,6 +30,7 @@ const ROUTES: [RegExp, string][] = [
   [/\/admin\/structure\/menu\/manage\/main-menu/, 'menu-manage.html'],
   [/\/admin\/content/, 'admin/content.html'],
   [/\/node\/add\/news-ckeditor/, 'node-add-news-ckeditor.html'],
+  [/\/node\/add\/news-media/, 'node-add-news-media.html'],
   [/\/node\/add\/news/, 'node-add-news-live.html'],
   [/\/node\/add\/page-bigmenu/, 'node-add-page-bigmenu.html'],
   [/\/node\/add\/page/, 'node-add-page.html'],
@@ -822,5 +823,114 @@ test.describe('Feature 5: the body keeps Drupal\'s real rich text editor', () =>
       undefined,
       { timeout: 20000 }
     );
+  });
+});
+
+test.describe('Feature 5: a chosen image shows as selected', () => {
+  /**
+   * The reported symptom: uploading put the file in the library and it attached on save,
+   * but the editor never showed it as selected.
+   *
+   * Cause was the wrapper climb. Media names its launcher media[field_image_teaser_und_0]
+   * and its siblings field_image_teaser[und][0][fid]; a prefix test against baseName
+   * `field_image_teaser` rejected the launcher's own name, so only the innermost
+   * .form-item moved and Drupal's ajax wrapper stayed in the hidden form. The thumbnail
+   * was then rendered into the hidden region — correct data, invisible UI.
+   */
+  const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/add/news-media`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+  };
+
+  test('the whole widget moves, including the ajax wrapper and the hidden fid', async ({ page, settings }) => {
+    await open(page, settings);
+
+    const state = await page.evaluate(() => {
+      const wrapper = document.getElementById('edit-field-image-teaser-und-0-ajax-wrapper')!;
+      const fid = document.querySelector('input[name="field_image_teaser[und][0][fid]"]')!;
+      return {
+        wrapperInOverlay: !!wrapper.closest('.d7-proxy-ui-form-host'),
+        fidInOverlay: !!fid.closest('.d7-proxy-ui-form-host'),
+        // Still inside the form, or nothing would submit.
+        fidInForm: !!fid.closest('form'),
+        // Not stranded in the region we hid.
+        fidHidden: !!fid.closest('[data-d7-hidden]'),
+      };
+    });
+
+    expect(state).toEqual({
+      wrapperInOverlay: true, fidInOverlay: true, fidInForm: true, fidHidden: false,
+    });
+  });
+
+  test('the neighbouring image field is not swallowed by the climb', async ({ page, settings }) => {
+    await open(page, settings);
+
+    // Each field needs its own carrier, or one slot would try to project both.
+    const slots = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      return Array.from(host.children)
+        .map(c => c.getAttribute('slot'))
+        .filter(Boolean);
+    });
+
+    expect(slots).toContain('field-media-field-image-teaser-und-0-');
+    expect(slots).toContain('field-media-field-image-hero-und-0-');
+  });
+
+  test('after selection the thumbnail is visible in the overlay, not in the hidden form', async ({ page, settings }) => {
+    await open(page, settings);
+
+    const result = await page.evaluate(() =>
+      (window as any).simulateMediaSelect('teaser', '9911', 'campus-quad.jpg'));
+    expect(result).toBe('replaced');
+
+    // Multimedia is one of the collapsible rail sections, and a collapsed section renders
+    // no <slot> — so nothing projected into it has a box. Expand before measuring.
+    await page.evaluate(async () => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
+      await new Promise(r => setTimeout(r, 300));
+    });
+
+    const shown = await page.evaluate(() => {
+      const preview = document.querySelector('.preview-teaser') as HTMLElement | null;
+      if (!preview) return { found: false };
+      const carrier = preview.closest('[slot]');
+      return {
+        found: true,
+        inOverlay: !!preview.closest('.d7-proxy-ui-form-host'),
+        // The carrier survived Drupal replacing its own wrapper, so this is still projected.
+        stillSlotted: !!carrier,
+        inHiddenRegion: !!preview.closest('[data-d7-hidden]'),
+        rendered: preview.getBoundingClientRect().height > 0,
+        filename: preview.querySelector('.filename')?.textContent,
+      };
+    });
+
+    expect(shown.found).toBe(true);
+    expect(shown.inOverlay).toBe(true);
+    expect(shown.stillSlotted).toBe(true);
+    expect(shown.inHiddenRegion).toBe(false);
+    expect(shown.rendered).toBe(true);
+    expect(shown.filename).toBe('campus-quad.jpg');
+  });
+
+  test('the fid from the selection is what the form would submit', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.evaluate(() => (window as any).simulateMediaSelect('teaser', '9911', 'campus-quad.jpg'));
+
+    const submitted = await page.evaluate(() => {
+      const form = document.querySelector('form') as HTMLFormElement;
+      const data = new FormData(form);
+      return {
+        fid: data.get('field_image_teaser[und][0][fid]'),
+        // A duplicate empty copy left behind would override this on the server.
+        copies: form.querySelectorAll('input[name="field_image_teaser[und][0][fid]"]').length,
+      };
+    });
+
+    expect(submitted).toEqual({ fid: '9911', copies: 1 });
   });
 });
