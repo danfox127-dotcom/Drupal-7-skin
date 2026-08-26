@@ -34,6 +34,7 @@ const ROUTES: [RegExp, string][] = [
   [/\/node\/add\/news/, 'node-add-news-live.html'],
   [/\/node\/add\/page-bigmenu/, 'node-add-page-bigmenu.html'],
   [/\/node\/add\/page/, 'node-add-page.html'],
+  [/\/node\/18948\/edit/, 'node-edit-media-populated.html'],
   [/\/node\/\d+\/edit/, 'node-edit.html'],
 ];
 
@@ -932,5 +933,106 @@ test.describe('Feature 5: a chosen image shows as selected', () => {
     });
 
     expect(submitted).toEqual({ fid: '9911', copies: 1 });
+  });
+});
+
+test.describe('Feature 5: an existing article can still change its image', () => {
+  /**
+   * Reported from columbiadoctors.org/node/18948/edit: no option to change the image.
+   *
+   * The Multimedia section was absent from the rail entirely. A populated Media widget
+   * has no visible control — the file is a hidden fid, and Remove/Edit are submit
+   * buttons — and the walker drops hidden and submit inputs as structural. With nothing
+   * left, the field did not exist, so the section that would have held it was never
+   * rendered and there was no route to the image at all.
+   */
+  const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false, debugSchema: true });
+    await page.goto(`${HOST}/node/18948/edit`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+    await page.evaluate(async () => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
+      await new Promise(r => setTimeout(r, 300));
+    });
+  };
+
+  test('the Multimedia section appears in the rail', async ({ page, settings }) => {
+    await open(page, settings);
+    const railText = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return (sr.textContent || '').replace(/\s+/g, ' ');
+    });
+    expect(railText).toContain('Multimedia');
+  });
+
+  test('both attached images are found, with their real labels', async ({ page, settings }) => {
+    await open(page, settings);
+    // Drupal's OWN label is what shows, and it lives in the light DOM being projected —
+    // the overlay suppresses its own label for relocated widgets rather than printing it
+    // twice. So shadowRoot.textContent is the wrong place to look; the host's children
+    // are the right one.
+    const labels = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      const visible = Array.from(host.querySelectorAll('label'))
+        .filter(l => (l as HTMLElement).getBoundingClientRect().height > 0)
+        .map(l => (l.textContent || '').trim());
+      return {
+        teaser: visible.includes('Teaser Image'),
+        hero: visible.includes('Hero Image'),
+        // And exactly once each, not doubled by our own label.
+        teaserCount: visible.filter(t => t === 'Teaser Image').length,
+      };
+    });
+    expect(labels).toEqual({ teaser: true, hero: true, teaserCount: 1 });
+  });
+
+  test('Drupal\'s own Remove and Edit buttons are reachable, which is how you change it', async ({ page, settings }) => {
+    await open(page, settings);
+
+    const controls = await page.evaluate(() => {
+      const remove = document.querySelector('input[name="field_image_teaser_und_0_remove_button"]') as HTMLElement | null;
+      const edit = document.querySelector('input[name="field_image_teaser_und_0_edit_button"]') as HTMLElement | null;
+      const thumb = document.querySelector('.preview-teaser') as HTMLElement | null;
+      return {
+        removeInOverlay: !!remove?.closest('.d7-proxy-ui-form-host'),
+        removeVisible: !!remove && remove.getBoundingClientRect().height > 0,
+        editInOverlay: !!edit?.closest('.d7-proxy-ui-form-host'),
+        thumbVisible: !!thumb && thumb.getBoundingClientRect().height > 0,
+        filename: thumb?.querySelector('.filename')?.textContent,
+      };
+    });
+
+    expect(controls.removeInOverlay).toBe(true);
+    expect(controls.removeVisible).toBe(true);
+    expect(controls.editInOverlay).toBe(true);
+    expect(controls.thumbVisible).toBe(true);
+    expect(controls.filename).toBe('puberty-study-teaser.jpg');
+  });
+
+  test('the existing fid is preserved, so saving does not detach the image', async ({ page, settings }) => {
+    await open(page, settings);
+
+    // The failure mode to guard against: surfacing the field but losing its value, which
+    // would silently strip the image from a published article on save.
+    const submitted = await page.evaluate(() => {
+      const data = new FormData(document.querySelector('form') as HTMLFormElement);
+      return {
+        teaser: data.get('field_image_teaser[und][0][fid]'),
+        hero: data.get('field_image_hero[und][0][fid]'),
+      };
+    });
+    expect(submitted).toEqual({ teaser: '44120', hero: '44121' });
+  });
+
+  test('the form-level hidden inputs are still not mistaken for fields', async ({ page, settings }) => {
+    await open(page, settings);
+    const railText = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return (sr.textContent || '').replace(/\s+/g, ' ');
+    });
+    // Recovering hidden fids must not also surface form_build_id and friends.
+    expect(railText).not.toContain('form_build_id');
+    expect(railText).not.toContain('form_token');
   });
 });

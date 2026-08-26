@@ -109,6 +109,7 @@ function classify(controls: HTMLElement[], wrapper: Element): FieldKind {
      * over a media reference and invite someone to type into it.
      */
     if (/^media\[/.test(input.name ?? '')
+      || /\[fid\]$/.test(input.name ?? '')
       || wrapper.querySelector('.media-widget, .launcher, a.button-yellow')) {
       return 'file';
     }
@@ -270,6 +271,23 @@ function collectFieldGroups(form: HTMLFormElement): Map<string, HTMLElement[]> {
 
   const groups = new Map<string, HTMLElement[]>();
 
+  /**
+   * Already-populated file and media widgets, which the filter above legitimately drops.
+   *
+   * On an ADD form the Media widget has a visible text input, so it is found normally. On
+   * an EDIT form where an image is already attached, Drupal renders the preview plus a
+   * HIDDEN fid and Remove/Edit SUBMIT buttons — and hidden and submit are both excluded
+   * as structural. So no control survived, the field did not exist as far as the walker
+   * was concerned, and the whole Multimedia section vanished from the rail: on
+   * columbiadoctors.org/node/18948/edit there was no way to change or remove the image.
+   *
+   * The fid input is the reliable marker. Relocating the widget then hands over Drupal's
+   * own preview, Remove and Edit controls, which is what should be used to change it.
+   */
+  const populatedFileWidgets = Array.from(
+    form.querySelectorAll<HTMLInputElement>('input[type="hidden"]')
+  ).filter(input => /\[fid\]$/.test(input.name ?? '') && input.name !== '');
+
   for (const control of controls) {
     const name = (control as HTMLInputElement).name || control.id;
     if (!name) continue;
@@ -288,6 +306,16 @@ function collectFieldGroups(form: HTMLFormElement): Map<string, HTMLElement[]> {
     const existing = groups.get(key);
     if (existing) existing.push(control);
     else groups.set(key, [control]);
+  }
+
+  // Only when the field is not already represented by a visible control, so an add form
+  // (text input + its own hidden fid) does not produce the field twice.
+  const covered = new Set([...groups.keys()].map(baseNameOf));
+  for (const fid of populatedFileWidgets) {
+    const base = baseNameOf(fid.name);
+    if (covered.has(base)) continue;
+    covered.add(base);
+    groups.set(fid.name, [fid]);
   }
 
   return groups;

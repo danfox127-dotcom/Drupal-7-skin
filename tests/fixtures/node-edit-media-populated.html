@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<!--
+  An EXISTING article's edit form, with images already attached.
+
+  This is the shape that made the Multimedia section disappear. A populated Media widget
+  has NO visible control: the file is represented by a hidden fid, and the only
+  interactive controls are Remove/Edit submit buttons. The walker excludes hidden and
+  submit inputs as structural, so nothing survived and the field ceased to exist — which
+  removed the only route to changing the image.
+
+  Modelled on columbiadoctors.org/node/18948/edit.
+-->
+<html>
+<head><title>Edit News</title></head>
+<body class="logged-in">
+<div id="toolbar"><a href="/user/1">df2832</a></div>
+<form action="/node/18948/edit" method="post" id="news-node-form" accept-charset="UTF-8">
+  <input type="hidden" name="form_build_id" value="form-abc123" />
+  <input type="hidden" name="form_token" value="tok123" />
+  <input type="hidden" name="form_id" value="news_node_form" />
+  <input type="hidden" name="changed" value="1756200000" />
+
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Overview</span></legend>
+    <div class="form-item form-type-textfield">
+      <label for="edit-title">Title <span class="form-required">*</span></label>
+      <input type="text" id="edit-title" name="title_field[und][0][value]" class="form-text required" required="required" value="Why Are Girls Starting Puberty Earlier?" />
+    </div>
+  </fieldset>
+
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Multimedia</span></legend>
+
+    <div class="field-widget-media-generic" id="edit-field-image-teaser-und-0-ajax-wrapper">
+      <label>Teaser Image</label>
+      <div class="media-thumbnail preview-teaser">
+        <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAAAAAAALAAAAAABAAEAAAIBRAA7" width="60" height="40" alt="" />
+        <span class="filename">puberty-study-teaser.jpg</span>
+      </div>
+      <input type="hidden" name="field_image_teaser[und][0][fid]" value="44120" />
+      <input type="submit" name="field_image_teaser_und_0_remove_button" value="Remove" class="form-submit" />
+      <input type="submit" name="field_image_teaser_und_0_edit_button" value="Edit" class="form-submit" />
+    </div>
+
+    <div class="field-widget-media-generic" id="edit-field-image-hero-und-0-ajax-wrapper">
+      <label>Hero Image</label>
+      <div class="media-thumbnail preview-hero">
+        <img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAAAAAAALAAAAAABAAEAAAIBRAA7" width="60" height="40" alt="" />
+        <span class="filename">puberty-study-hero.jpg</span>
+      </div>
+      <input type="hidden" name="field_image_hero[und][0][fid]" value="44121" />
+      <input type="submit" name="field_image_hero_und_0_remove_button" value="Remove" class="form-submit" />
+    </div>
+  </fieldset>
+
+  <input type="submit" id="edit-submit" name="op" value="Save" />
+</form>
+</body>
+</html>
