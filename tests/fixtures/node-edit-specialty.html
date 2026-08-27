@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<!--
+  A Specialty edit form, from columbiadoctors.org/node/17176/edit.
+
+  Two things this shape exposes:
+   * TWO fields labelled "Summary". Matching primary roles on label alone gave both the
+     summary treatment, so the editor showed two boxes each claiming to be the meta
+     description with its own character budget.
+   * metatag fields, to prove the SEO section still forms on a content type other than
+     News — the rail is built from whatever fields exist, not from a per-type list.
+-->
+<html>
+<head><title>Edit Specialty</title></head>
+<body class="logged-in">
+<div id="toolbar"><a href="/user/1">df2832</a></div>
+<form action="/node/17176/edit" method="post" id="specialty-node-form" accept-charset="UTF-8">
+  <input type="hidden" name="form_build_id" value="form-xyz" />
+  <input type="hidden" name="form_id" value="specialty_node_form" />
+
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Overview</span></legend>
+    <div class="form-item form-type-textfield">
+      <label for="edit-title">Title <span class="form-required">*</span></label>
+      <input type="text" id="edit-title" name="title_field[und][0][value]" class="form-text required" required="required" value="Substance Use Disorders" />
+    </div>
+    <div class="form-item form-type-textfield">
+      <label for="edit-subtitle">Subtitle</label>
+      <input type="text" id="edit-subtitle" name="field_subtitle[und][0][value]" class="form-text" value="Smithers Center offers comprehensive care" />
+    </div>
+    <div class="form-item form-type-textarea">
+      <label for="edit-summary">Summary <span class="form-required">*</span></label>
+      <textarea id="edit-summary" name="field_summary[und][0][value]" class="form-textarea required" required="required">Smithers Center for Substance Use Disorders offers care for adults 18+.</textarea>
+    </div>
+    <div class="form-item form-type-textarea">
+      <label for="edit-summary-alt">Summary</label>
+      <textarea id="edit-summary-alt" name="field_specialty_summary[und][0][value]" class="form-textarea"></textarea>
+    </div>
+  </fieldset>
+
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Multimedia</span></legend>
+    <div class="field-widget-media-generic" id="edit-field-image-featured-und-0-ajax-wrapper">
+      <label>Featured Image</label>
+      <input type="text" id="edit-image-featured" name="media[field_image_featured_und_0]" class="form-text" />
+      <a class="button-yellow launcher" href="#">Browse</a>
+    </div>
+  </fieldset>
+
+  <fieldset class="vertical-tabs-pane" id="edit-metatags">
+    <legend><span class="fieldset-legend">Meta tags</span></legend>
+    <div class="form-item form-type-textfield">
+      <label for="edit-metatags-title">Page title</label>
+      <input type="text" id="edit-metatags-title" name="metatags[und][title][value]" class="form-text" />
+    </div>
+    <div class="form-item form-type-textarea">
+      <label for="edit-metatags-description">Description</label>
+      <textarea id="edit-metatags-description" name="metatags[und][description][value]" class="form-textarea"></textarea>
+    </div>
+  </fieldset>
+
+  <fieldset class="vertical-tabs-pane" id="edit-path">
+    <legend><span class="fieldset-legend">URL path settings</span></legend>
+    <div class="form-item form-type-textfield">
+      <label for="edit-path-alias">URL alias</label>
+      <input type="text" id="edit-path-alias" name="path[alias]" class="form-text" value="specialties/substance-use-disorders" />
+    </div>
+  </fieldset>
+
+  <input type="submit" id="edit-submit" name="op" value="Save" />
+</form>
+</body>
+</html>

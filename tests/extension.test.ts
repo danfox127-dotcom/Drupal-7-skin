@@ -35,6 +35,7 @@ const ROUTES: [RegExp, string][] = [
   [/\/node\/add\/page-bigmenu/, 'node-add-page-bigmenu.html'],
   [/\/node\/add\/page/, 'node-add-page.html'],
   [/\/node\/18948\/edit/, 'node-edit-media-populated.html'],
+  [/\/node\/17176\/edit/, 'node-edit-specialty.html'],
   [/\/node\/\d+\/edit/, 'node-edit.html'],
 ];
 
@@ -1034,5 +1035,62 @@ test.describe('Feature 5: an existing article can still change its image', () =>
     // Recovering hidden fids must not also surface form_build_id and friends.
     expect(railText).not.toContain('form_build_id');
     expect(railText).not.toContain('form_token');
+  });
+});
+
+test.describe('Feature 5: a content type other than News', () => {
+  /**
+   * Specialty, from columbiadoctors.org/node/17176/edit. The rail is assembled from
+   * whichever fields a form actually has, so nothing should be News-specific — these
+   * guard that, and cover the duplicate "Summary" this content type revealed.
+   */
+  const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/17176/edit`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+  };
+
+  test('only one Summary claims to be the meta description', async ({ page, settings }) => {
+    await open(page, settings);
+    const claims = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const text = (sr.textContent || '');
+      return (text.match(/Doubles as the meta description/g) ?? []).length;
+    });
+    expect(claims).toBe(1);
+  });
+
+  test('the second Summary is still present and editable, just not as the summary', async ({ page, settings }) => {
+    await open(page, settings);
+    // Dropping it would be worse than mislabelling it: the field would be unreachable.
+    const second = await page.evaluate(() => {
+      const el = document.querySelector('textarea[name="field_specialty_summary[und][0][value]"]') as HTMLTextAreaElement | null;
+      return { present: !!el, disabled: el?.disabled ?? null };
+    });
+    expect(second).toEqual({ present: true, disabled: false });
+  });
+
+  test('the SEO section forms on this content type too', async ({ page, settings }) => {
+    await open(page, settings);
+    const rail = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return (sr.textContent || '').replace(/\s+/g, ' ');
+    });
+    expect(rail).toContain('URL, SEO & Sitemap');
+  });
+
+  test('the metatag and path fields are reachable once that section is open', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.evaluate(async () => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
+      await new Promise(r => setTimeout(r, 300));
+    });
+    const seo = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const t = (sr.textContent || '').replace(/\s+/g, ' ');
+      return { pageTitle: t.includes('Page title'), alias: t.includes('URL alias') };
+    });
+    expect(seo).toEqual({ pageTitle: true, alias: true });
   });
 });

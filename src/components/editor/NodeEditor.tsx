@@ -287,6 +287,19 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
   const left = fieldsBySection.get('primary') ?? [];
   const typeFields = fieldsBySection.get('typeFields') ?? [];
 
+  /**
+   * Hands out each primary role once, in document order, so the first field labelled
+   * "Summary" is the summary and any later one falls through to a normal control.
+   * Rebuilt per render deliberately: it must not carry state between renders.
+   */
+  const claimedRoles = new Set<string>();
+  const claimPrimaryRole = (field: FieldDescriptor) => {
+    const role = primaryRole(field);
+    if (!role || claimedRoles.has(role)) return null;
+    claimedRoles.add(role);
+    return role;
+  };
+
   return (
     <SlottedFieldsContext.Provider value={slottedFields ?? EMPTY_SLOTTED}>
     <div className="bg-canvas font-sans">
@@ -404,7 +417,17 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
             title — the bar is position:sticky, so it does not reserve space. */}
         <div className="flex flex-col gap-6.5 px-11 pt-15 pb-15 border-r border-rule bg-white">
           {left.map(field => {
-            const role = primaryRole(field);
+            /**
+             * A primary role is claimed at most once.
+             *
+             * The roles are matched on label alone, and a Specialty form carries TWO
+             * fields labelled "Summary". Both were given the summary treatment, so the
+             * editor showed two boxes each captioned "Doubles as the meta description"
+             * with their own 380-character budget — and only one field can be the meta
+             * description. The second now renders as an ordinary labelled field, which
+             * is accurate about what it is.
+             */
+            const role = claimPrimaryRole(field);
             return role ? (
               <PrimaryField
                 key={field.machineName}
