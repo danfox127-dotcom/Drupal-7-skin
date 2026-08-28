@@ -27,6 +27,24 @@
       <label for="edit-subtitle">Subtitle</label>
       <input type="text" id="edit-subtitle" name="field_subtitle[und][0][value]" class="form-text" value="Smithers Center offers comprehensive care" />
     </div>
+  </fieldset>
+
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Body</span></legend>
+    <div class="form-item form-type-textarea text-format-wrapper">
+      <div class="form-item form-type-textarea">
+        <label for="edit-body-summary">Summary</label>
+        <textarea id="edit-body-summary" name="body[und][0][summary]" class="form-textarea">Existing teaser summary.</textarea>
+      </div>
+      <div class="form-item form-type-textarea">
+        <label for="edit-body-value">Body</label>
+        <textarea id="edit-body-value" name="body[und][0][value]" class="form-textarea text-full">Existing body copy.</textarea>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Overview 2</span></legend>
     <div class="form-item form-type-textarea">
       <label for="edit-summary">Summary <span class="form-required">*</span></label>
       <textarea id="edit-summary" name="field_summary[und][0][value]" class="form-textarea required" required="required">Smithers Center for Substance Use Disorders offers care for adults 18+.</textarea>
@@ -68,5 +86,70 @@
 
   <input type="submit" id="edit-submit" name="op" value="Save" />
 </form>
+<script>
+window.CKEDITOR = {
+  instances: {},
+  config: { toolbar: ['Bold', 'Italic', 'Link'] },
+  replace: function (idOrEl) {
+    var ta = typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
+    if (!ta) return null;
+    var id = ta.id;
+    var container = document.createElement('div');
+    container.className = 'cke cke_editor_' + id;
+    var top = document.createElement('div');
+    top.className = 'cke_top';
+    CKEDITOR.config.toolbar.forEach(function (n) {
+      var b = document.createElement('a');
+      b.className = 'cke_button';
+      b.setAttribute('role', 'button');
+      b.textContent = n;
+      top.appendChild(b);
+    });
+    container.appendChild(top);
+    var frame = document.createElement('iframe');
+    frame.className = 'cke_wysiwyg_frame';
+    frame.setAttribute('src', 'about:blank');
+    container.appendChild(frame);
+    ta.style.display = 'none';
+    ta.parentNode.insertBefore(container, ta);
+    var inst = {
+      _data: ta.value, _c: container, _t: ta,
+      getData: function () { return this._data; },
+      setData: function (v) { this._data = v; },
+      updateElement: function () { this._t.value = this._data; },
+      destroy: function (noUpdate) {
+        if (!noUpdate) this.updateElement();
+        if (this._c.parentNode) this._c.parentNode.removeChild(this._c);
+        this._t.style.display = '';
+        delete window.CKEDITOR.instances[id];
+      }
+    };
+    window.CKEDITOR.instances[id] = inst;
+    return inst;
+  }
+};
+window.Drupal = window.Drupal || {};
+Drupal.behaviors = Drupal.behaviors || {};
+Drupal.behaviors.ckeditorStub = {
+  attach: function (context) {
+    var root = context || document;
+    var areas = root.querySelectorAll ? root.querySelectorAll('#edit-body-value, #edit-body-summary') : [];
+    Array.prototype.forEach.call(areas, function (ta) {
+      if (ta.classList.contains('ckeditor-processed')) return;
+      if (window.CKEDITOR.instances[ta.id]) return;
+      ta.classList.add('ckeditor-processed');
+      window.CKEDITOR.replace(ta);
+    });
+  }
+};
+Drupal.attachBehaviors = function (context) {
+  for (var k in Drupal.behaviors) {
+    if (Drupal.behaviors[k] && typeof Drupal.behaviors[k].attach === 'function') {
+      Drupal.behaviors[k].attach(context || document);
+    }
+  }
+};
+Drupal.attachBehaviors(document);
+</script>
 </body>
 </html>

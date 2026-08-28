@@ -1094,3 +1094,80 @@ test.describe('Feature 5: a content type other than News', () => {
     expect(seo).toEqual({ pageTitle: true, alias: true });
   });
 });
+
+test.describe('Feature 5: a relocated Summary is not left invisible', () => {
+  /**
+   * Regression for the orphan the diagnostic reported on
+   * columbiadoctors.org/node/17176/edit:
+   *
+   *   1 relocated widget(s) have no matching slot and are therefore INVISIBLE, while
+   *   still being submitted with the form: field-body-und--0--summary-
+   *
+   * Drupal's core "Edit summary" has a rich editor attached there, so it was relocated —
+   * but PrimaryField only rendered a <slot> in its body branch. A field with the summary
+   * role got a hand-built textarea and no slot, so the real widget was not rendered at
+   * all while continuing to submit.
+   */
+  const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    const errors: string[] = [];
+    page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false, debugSchema: true });
+    await page.goto(`${HOST}/node/17176/edit`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+    await page.waitForFunction(() => !!document.querySelector('.cke'), undefined, { timeout: 15000 });
+    return errors;
+  };
+
+  test('nothing is reported as invisible', async ({ page, settings }) => {
+    const errors = await open(page, settings);
+    await page.waitForTimeout(1200); // the orphan check runs a couple of frames after mount
+    expect(errors.filter(e => /INVISIBLE|no matching slot/i.test(e))).toEqual([]);
+  });
+
+  test('every relocated widget has a slot once sections are open', async ({ page, settings }) => {
+    await open(page, settings);
+    const audit = await page.evaluate(async () => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      const sr = host.shadowRoot!;
+      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
+      await new Promise(r => setTimeout(r, 400));
+      const rendered = new Set(Array.from(sr.querySelectorAll('slot')).map(s => s.getAttribute('name')));
+      const relocated = Array.from(host.children).map(c => c.getAttribute('slot')).filter(Boolean) as string[];
+      return { relocated: relocated.length, orphans: relocated.filter(n => !rendered.has(n)) };
+    });
+    expect(audit.orphans).toEqual([]);
+    expect(audit.relocated).toBeGreaterThan(0);
+  });
+
+  test('the summary editor is on screen, and its content survived', async ({ page, settings }) => {
+    await open(page, settings);
+    const state = await page.evaluate(() => {
+      const cke = document.querySelector('.cke_editor_edit-body-summary') as HTMLElement | null;
+      return {
+        present: !!cke,
+        inOverlay: !!cke?.closest('.d7-proxy-ui-form-host'),
+        visible: !!cke && cke.getBoundingClientRect().height > 0,
+        data: (window as any).CKEDITOR.instances['edit-body-summary']?.getData(),
+      };
+    });
+    expect(state.present).toBe(true);
+    expect(state.inOverlay).toBe(true);
+    expect(state.visible).toBe(true);
+    expect(state.data).toContain('Existing teaser summary.');
+  });
+
+  test('a relocated field does not show its label twice', async ({ page, settings }) => {
+    await open(page, settings);
+    // Drupal's own <label> comes along with the widget, so the overlay must not add one.
+    const counts = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      const sr = host.shadowRoot!;
+      const ours = (sr.textContent || '').match(/BODY/g)?.length ?? 0;
+      const drupals = Array.from(host.querySelectorAll('label'))
+        .filter(l => (l.textContent || '').trim() === 'Body').length;
+      return { ours, drupals };
+    });
+    expect(counts.drupals).toBe(1);
+    expect(counts.ours).toBe(0);
+  });
+});

@@ -57,6 +57,47 @@ export const PrimaryField = ({ field, role, error, onChange }: Props) => {
     <span className="text-help font-semibold text-burnt">Required</span>
   );
 
+  /**
+   * Any relocated field renders through its slot, whatever its role.
+   *
+   * Only the body branch did this, so a relocated Summary — Drupal's core "Edit summary"
+   * has a rich editor attached on Specialty — produced no <slot>, and an unslotted
+   * light-DOM child of a shadow host is not rendered at all. The real widget went
+   * invisible while still submitting, which is the same silent failure the orphan check
+   * was added to catch. It caught it: "field-body-und--0--summary-".
+   *
+   * No eyebrow label here, for the reason FieldControl leaves one out too: the relocated
+   * wrapper brings Drupal's own <label> with it, so ours renders the field name twice.
+   */
+  if (slotted) {
+    return (
+      <div className="flex flex-col gap-1.5">
+        <div className="d7-slot-host bg-white">
+          <slot name={slotNameFor(field.machineName)} />
+        </div>
+
+        {role === 'summary' && (
+          /*
+           * The caption stays, the live counter cannot: Drupal's editor holds the value
+           * in its own object, so any number here would be stale the moment it was typed.
+           * Better to state the limit than to display a count that is quietly wrong.
+           */
+          <p className="text-help text-ink-help">
+            Doubles as the meta description, limit {SUMMARY_LIMIT} characters. Drupal's own
+            editor owns this field, so it is not counted here as you type.
+          </p>
+        )}
+
+        {error && (
+          <p className="flex items-start gap-1.5 text-help text-burnt font-semibold">
+            <AlertCircle size={12} className="mt-0.5 shrink-0" />
+            {error}
+          </p>
+        )}
+      </div>
+    );
+  }
+
   if (role === 'title') {
     return (
       <div className="flex flex-col gap-1">
@@ -130,39 +171,23 @@ export const PrimaryField = ({ field, role, error, onChange }: Props) => {
       </div>
 
       {/*
-        Drupal's OWN editor, projected in through a slot.
+        Reached only when Drupal has NO rich editor on this field — a relocated one is
+        handled by the slotted branch above.
 
-        This used to be a row of grey aria-hidden spans reading "B I Link H2 H3 List
-        Table Image" over a plain textarea. None of it worked — it was a picture of a
-        toolbar, so the body had no formatting controls at all.
-
-        A rebuilt toolbar would not have fixed it: the real one carries this site's
-        configured buttons, its text-format list, and the media browser wired into the
-        editor. Slotting the real thing is the only way the buttons are the same buttons,
-        and it keeps working when the site's editor configuration changes.
+        There is deliberately no toolbar drawn here. This used to render a row of grey
+        aria-hidden spans reading "B I Link H2 H3 List Table Image", none of which did
+        anything; and where Drupal accepts only plain text, buttons would promise
+        formatting that gets stripped on save.
       */}
-      {slotted ? (
-        <div className="d7-slot-host bg-white">
-          <slot name={slotNameFor(field.machineName)} />
-        </div>
-      ) : (
-        <>
-          <textarea
-            value={value}
-            onChange={e => commit(e.target.value)}
-            aria-label={field.label}
-            className="w-full min-h-[300px] px-4 py-3 bg-white border border-rule-control font-serif text-body-surface text-ink"
-          />
-          {/*
-            No fake toolbar here either. Drupal has no rich editor attached to this
-            field, so plain text IS what it accepts, and drawing buttons would promise
-            formatting that would be stripped on save.
-          */}
-          <p className="text-help text-ink-help">
-            This field has no rich text editor in Drupal, so it takes plain text.
-          </p>
-        </>
-      )}
+      <textarea
+        value={value}
+        onChange={e => commit(e.target.value)}
+        aria-label={field.label}
+        className="w-full min-h-[300px] px-4 py-3 bg-white border border-rule-control font-serif text-body-surface text-ink"
+      />
+      <p className="text-help text-ink-help">
+        This field has no rich text editor in Drupal, so it takes plain text.
+      </p>
 
       {error && (
         <p className="flex items-start gap-1.5 text-help text-burnt font-semibold">
