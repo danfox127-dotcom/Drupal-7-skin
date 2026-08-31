@@ -1151,18 +1151,22 @@ test.describe('Feature 5: a content type other than News', () => {
   });
 });
 
-test.describe('Feature 5: a relocated Summary is not left invisible', () => {
+test.describe('Feature 5: the body owns its editor and its summary', () => {
   /**
-   * Regression for the orphan the diagnostic reported on
-   * columbiadoctors.org/node/17176/edit:
+   * Reported from columbiadoctors.org/node/17176/edit: the body showed raw HTML source in
+   * a plain box labelled "Body (Edit summary)", with an extra "Summary" field beside the
+   * two real ones.
    *
-   *   1 relocated widget(s) have no matching slot and are therefore INVISIBLE, while
-   *   still being submitted with the form: field-body-und--0--summary-
+   * All of it came from core's text_textarea_with_summary, which this fixture had been
+   * modelling wrongly. It is ONE widget of three controls that all collapse to the base
+   * name `body` — value, Edit-summary textarea, text-format select — with the summary
+   * nested inside the value's form-item and an "(Edit summary)" toggle appended to the
+   * value's own label. Read as peers, that produced three separate fields and a label of
+   * "Body (Edit summary)"; and because hasRichEditor searched the shared wrapper, all
+   * three claimed the body's editor.
    *
-   * Drupal's core "Edit summary" has a rich editor attached there, so it was relocated —
-   * but PrimaryField only rendered a <slot> in its body branch. A field with the summary
-   * role got a hand-built textarea and no slot, so the real widget was not rendered at
-   * all while continuing to submit.
+   * The body is the field with the editor. The summary is a plain teaser that doubles as
+   * the meta description and must NOT get one.
    */
   const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
     const errors: string[] = [];
@@ -1194,21 +1198,95 @@ test.describe('Feature 5: a relocated Summary is not left invisible', () => {
     expect(audit.relocated).toBeGreaterThan(0);
   });
 
-  test('the summary editor is on screen, and its content survived', async ({ page, settings }) => {
+  test('the body editor is on screen, and its content survived', async ({ page, settings }) => {
     await open(page, settings);
     const state = await page.evaluate(() => {
-      const cke = document.querySelector('.cke_editor_edit-body-summary') as HTMLElement | null;
+      const cke = document.querySelector('.cke_editor_edit-body-und-0-value') as HTMLElement | null;
       return {
         present: !!cke,
         inOverlay: !!cke?.closest('.d7-proxy-ui-form-host'),
         visible: !!cke && cke.getBoundingClientRect().height > 0,
-        data: (window as any).CKEDITOR.instances['edit-body-summary']?.getData(),
+        toolbar: cke?.querySelectorAll('.cke_button').length ?? 0,
+        data: (window as any).CKEDITOR.instances['edit-body-und-0-value']?.getData(),
       };
     });
     expect(state.present).toBe(true);
     expect(state.inOverlay).toBe(true);
     expect(state.visible).toBe(true);
-    expect(state.data).toContain('Existing teaser summary.');
+    // The site's own buttons, not a reimplementation of them.
+    expect(state.toolbar).toBeGreaterThan(0);
+    expect(state.data).toContain('Our Mission');
+  });
+
+  test('the body is not rendered as a plain textarea of HTML source', async ({ page, settings }) => {
+    await open(page, settings);
+    // What was actually reported: tags visible in a box with no toolbar. The native
+    // textarea still exists and still submits, but it must not be the visible control.
+    const source = await page.evaluate(() => {
+      const ta = document.getElementById('edit-body-und-0-value') as HTMLTextAreaElement;
+      return { exists: !!ta, visible: ta.getBoundingClientRect().height > 0 };
+    });
+    expect(source).toEqual({ exists: true, visible: false });
+  });
+
+  test('the Edit-summary textarea travels with the body, not as its own field', async ({ page, settings }) => {
+    await open(page, settings);
+    const summary = await page.evaluate(() => {
+      const ta = document.getElementById('edit-body-und-0-summary') as HTMLTextAreaElement;
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      const sr = host.shadowRoot!;
+      return {
+        // Still on the form, so it still submits.
+        // This fixture's form is id="specialty-node-form" — it has no .node-form class,
+        // which is exactly why findNodeForm() also matches on the id suffix.
+        submits: new FormData(document.querySelector('form[id$="-node-form"]') as HTMLFormElement)
+          .get('body[und][0][summary]'),
+        // Moved into the overlay as part of the body widget...
+        inOverlay: !!ta.closest('.d7-proxy-ui-form-host'),
+        // ...not stranded in the hidden region, and not given a box of its own.
+        inHiddenRegion: !!ta.closest('[data-d7-hidden]'),
+        ownControl: sr.querySelectorAll('textarea[data-machine-name*="[summary]"]').length,
+        // Drupal's own toggle came with it.
+        toggle: !!host.querySelector('.link-edit-summary'),
+      };
+    });
+    expect(summary.submits).toBe('Existing teaser summary.');
+    expect(summary.inOverlay).toBe(true);
+    expect(summary.inHiddenRegion).toBe(false);
+    expect(summary.ownControl).toBe(0);
+    expect(summary.toggle).toBe(true);
+  });
+
+  test('the summary that is the meta description gets no editor', async ({ page, settings }) => {
+    await open(page, settings);
+    const summaries = await page.evaluate(() => ({
+      // field_summary is the required teaser and the default meta description. A rich
+      // editor on it would be wrong: it is plain text with a character budget.
+      metaDescription: !!document.querySelector('.cke_editor_edit-summary'),
+      second: !!document.querySelector('.cke_editor_edit-summary-alt'),
+      instances: Object.keys((window as any).CKEDITOR.instances).sort(),
+    }));
+    expect(summaries.metaDescription).toBe(false);
+    expect(summaries.second).toBe(false);
+    expect(summaries.instances).toEqual(['edit-body-und-0-value']);
+  });
+
+  test('the body label does not absorb the Edit summary link', async ({ page, settings }) => {
+    await open(page, settings);
+    // "Body (Edit summary)" is what the live form showed. The parenthetical is a control.
+    const labels = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      const sr = host.shadowRoot!;
+      return {
+        ourLabels: Array.from(sr.querySelectorAll('label, p, span'))
+          .map(el => (el.textContent || '').trim())
+          .filter(t => /^body \(edit summary\)$/i.test(t)).length,
+        // Drupal's own label keeps its link, because that link still works.
+        drupalToggle: !!host.querySelector('label .link-edit-summary'),
+      };
+    });
+    expect(labels.ourLabels).toBe(0);
+    expect(labels.drupalToggle).toBe(true);
   });
 
   test('a relocated field does not show its label twice', async ({ page, settings }) => {
@@ -1218,8 +1296,9 @@ test.describe('Feature 5: a relocated Summary is not left invisible', () => {
       const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
       const sr = host.shadowRoot!;
       const ours = (sr.textContent || '').match(/BODY/g)?.length ?? 0;
+      // Drupal's label is "Body (Edit summary)" in the DOM — the toggle is part of it.
       const drupals = Array.from(host.querySelectorAll('label'))
-        .filter(l => (l.textContent || '').trim() === 'Body').length;
+        .filter(l => /^Body\b/.test((l.textContent || '').trim())).length;
       return { ours, drupals };
     });
     expect(counts.drupals).toBe(1);

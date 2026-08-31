@@ -25,7 +25,7 @@ interface Props {
 /**
  * Indent per level, in px.
  *
- * Smaller than the menu manager's 26px because the rail is only 392px wide and real
+ * Smaller than the menu manager's 26px because the rail is only 451px wide and real
  * menus run deep — the live main menu nests Specialties › Cardiology & Cardiac Surgery ›
  * Our Services › Active BP Monitoring › Video Tutorial, which is five levels before you
  * reach a leaf.

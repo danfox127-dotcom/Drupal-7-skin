@@ -1,3 +1,4 @@
+import { hasRichEditorOn } from './richEditorPresence';
 import { FieldDescriptor } from './formSchema';
 
 /**
@@ -69,12 +70,7 @@ export async function syncRichEditorsToDom(): Promise<void> {
 
 /** True when a rich editor is attached to this field. */
 export function hasRichEditor(field: FieldDescriptor): boolean {
-  const el = field.elements[0];
-  if (!el) return false;
-  return Boolean(
-    el.closest('.text-format-wrapper')?.querySelector('.cke, .ckeditor')
-    || el.closest('.form-item')?.querySelector('.cke, .ckeditor')
-  );
+  return hasRichEditorOn(field.elements[0]);
 }
 
 /** Current value of a field, read from its native control(s). */

@@ -31,14 +31,41 @@
 
   <fieldset class="field-group-tab">
     <legend><span class="fieldset-legend">Body</span></legend>
-    <div class="form-item form-type-textarea text-format-wrapper">
-      <div class="form-item form-type-textarea">
-        <label for="edit-body-summary">Summary</label>
-        <textarea id="edit-body-summary" name="body[und][0][summary]" class="form-textarea">Existing teaser summary.</textarea>
-      </div>
-      <div class="form-item form-type-textarea">
-        <label for="edit-body-value">Body</label>
-        <textarea id="edit-body-value" name="body[und][0][value]" class="form-textarea text-full">Existing body copy.</textarea>
+    <!--
+      Drupal core's REAL text_textarea_with_summary markup, which the earlier version of
+      this fixture did not model and so hid three bugs at once:
+
+        1. The summary form-item is nested INSIDE the value's form-item, not a sibling of
+           it, and the value's own label carries an appended "(Edit summary)" link. Read
+           naively, the body's label comes out as "Body (Edit summary)".
+        2. Both textareas plus the format select share one .text-format-wrapper, and all
+           three names collapse to the base name `body` — so a wrapper climb that stops
+           when it meets a foreign field walks right past the wrapper.
+        3. CKEditor attaches to the VALUE only. The summary is a plain textarea by design;
+           it is the trimmed teaser, and on this site it doubles as the meta description.
+    -->
+    <div class="field-type-text-with-summary field-name-body">
+      <div class="form-item form-type-textarea form-item-body-und-0-value text-format-wrapper">
+        <div class="form-item form-type-textarea form-item-body-und-0-summary js-hide" style="display: none;">
+          <label for="edit-body-und-0-summary">Summary</label>
+          <div class="form-textarea-wrapper resizable-textarea">
+            <textarea id="edit-body-und-0-summary" name="body[und][0][summary]" class="text-summary form-textarea">Existing teaser summary.</textarea>
+          </div>
+          <div class="description">Leave blank to use trimmed value of full text as the summary.</div>
+        </div>
+        <label for="edit-body-und-0-value">Body <span class="field-edit-link">(<a class="link-edit-summary" href="#">Edit summary</a>)</span></label>
+        <div class="form-textarea-wrapper resizable-textarea">
+          <textarea id="edit-body-und-0-value" name="body[und][0][value]" class="text-full form-textarea">&lt;aside class="ck-callout"&gt;&lt;h2&gt;Our Mission&lt;/h2&gt;&lt;/aside&gt;&lt;p&gt;Existing body copy.&lt;/p&gt;</textarea>
+        </div>
+        <fieldset class="filter-wrapper form-wrapper">
+          <div class="form-item form-type-select">
+            <label for="edit-body-und-0-format">Text format</label>
+            <select id="edit-body-und-0-format" name="body[und][0][format]">
+              <option value="filtered_html" selected="selected">Filtered HTML</option>
+              <option value="full_html">Full HTML</option>
+            </select>
+          </div>
+        </fieldset>
       </div>
     </div>
   </fieldset>
@@ -153,7 +180,7 @@ Drupal.behaviors = Drupal.behaviors || {};
 Drupal.behaviors.ckeditorStub = {
   attach: function (context) {
     var root = context || document;
-    var areas = root.querySelectorAll ? root.querySelectorAll('#edit-body-value, #edit-body-summary') : [];
+    var areas = root.querySelectorAll ? root.querySelectorAll('#edit-body-und-0-value') : [];
     Array.prototype.forEach.call(areas, function (ta) {
       if (ta.classList.contains('ckeditor-processed')) return;
       if (window.CKEDITOR.instances[ta.id]) return;

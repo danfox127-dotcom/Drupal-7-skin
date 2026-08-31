@@ -609,7 +609,10 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
       )}
 
       {/* Two-pane body */}
-      <div className="grid items-start" style={{ gridTemplateColumns: '1fr 392px' }}>
+      {/* 451px, up from 392px. The rail holds Drupal's own relocated widgets — an
+          autocomplete row, a media browser launcher, a parent picker with indented
+          hierarchy — none of which were designed for a narrow column. */}
+      <div className="grid items-start" style={{ gridTemplateColumns: '1fr 451px' }}>
         {/* pt-15 clears the sticky action bar, which would otherwise overlap the
             title — the bar is position:sticky, so it does not reserve space. */}
         <div className="flex flex-col gap-6.5 px-11 pt-15 pb-15 border-r border-rule bg-white">
