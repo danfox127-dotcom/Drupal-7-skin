@@ -2,6 +2,7 @@ import {
   FieldDescriptor, FieldKind, FieldOption, FormSchema, VerticalTab,
 } from './types';
 import { assignSection, isAdvancedField } from './sectionRules';
+import { hasRichEditorOn } from '../richEditorPresence';
 
 /**
  * Reads a rendered Drupal 7 node form into a normalized schema.
@@ -21,7 +22,16 @@ function cleanLabel(label: Element | null): string {
   const clone = label.cloneNode(true) as HTMLElement;
   // Drupal renders <span class="form-required">*</span> inside the label.
   clone.querySelectorAll('.form-required, .field-required, .marker').forEach(el => el.remove());
-  return text(clone).replace(/\s*[:*]\s*$/, '').trim();
+  /**
+   * Core's text_textarea_with_summary appends its toggle INTO the value's label:
+   *
+   *   <label>Body <span class="field-edit-link">(<a>Edit summary</a>)</span></label>
+   *
+   * Read whole, that field is called "Body (Edit summary)" — which is what the live
+   * Specialty form showed. It is a control, not part of the name.
+   */
+  clone.querySelectorAll('.field-edit-link, .link-edit-summary').forEach(el => el.remove());
+  return text(clone).replace(/\s*\(\s*\)\s*$/, '').replace(/\s*[:*]\s*$/, '').trim();
 }
 
 /**
@@ -431,7 +441,64 @@ export function walkForm(form: HTMLFormElement): FieldDescriptor[] {
     });
   }
 
-  return fields;
+  return foldTextWidgetParts(fields);
+}
+
+/**
+ * Folds a rich text widget's sub-controls into it instead of listing them as peers.
+ *
+ * Core's text_textarea_with_summary is ONE widget whose controls all collapse to the base
+ * name `body`: the value, an Edit-summary textarea, and the text-format select. How they
+ * are laid out differs by site, and that difference decides everything:
+ *
+ *   - columbiadoctors.org Specialty nests the summary INSIDE the value's
+ *     `.text-format-wrapper`. That whole wrapper is what gets relocated into the overlay,
+ *     so the summary comes along whether or not anyone asked. Listing it as its own field
+ *     too gives it a second control over the same textarea — which is how the live form
+ *     grew a third box labelled "Summary" beside the two real ones, and how an earlier
+ *     build left the widget relocated with no slot to render in.
+ *
+ *   - cuimc News puts the summary OUTSIDE that wrapper, as a sibling. Nothing relocates
+ *     it, so it needs its own control, and dropping it would remove the only summary the
+ *     form has.
+ *
+ * So the test is containment, not the presence of an editor: fold exactly the sub-controls
+ * that live inside the wrapper which travels with the value. Anything outside it stays.
+ */
+function foldTextWidgetParts(fields: FieldDescriptor[]): FieldDescriptor[] {
+  const carriers = fields
+    .filter(f => /\[value\]$/.test(f.machineName)
+      && f.kind === 'wysiwyg'
+      && hasRichEditorOn(f.elements[0]))
+    .map(f => ({ baseName: f.baseName, carrier: relocationCarrier(f.elements[0]) }))
+    .filter((c): c is { baseName: string; carrier: HTMLElement } => c.carrier !== null);
+
+  if (carriers.length === 0) return fields;
+
+  return fields.filter(field => {
+    if (!/\[(summary|format)\]$/.test(field.machineName)) return true;
+    const element = field.elements[0];
+    if (!element) return true;
+    return !carriers.some(c => c.baseName === field.baseName && c.carrier.contains(element));
+  });
+}
+
+/**
+ * The wrapper that moves with a rich text field.
+ *
+ * The outermost `.text-format-wrapper` when there is one — that is the element Drupal
+ * builds around the value, its format selector and, on some sites, its summary. Falls back
+ * to the nearest `.form-item`.
+ */
+function relocationCarrier(el: HTMLElement | undefined): HTMLElement | null {
+  if (!el) return null;
+  let carrier: HTMLElement | null = null;
+  let node: HTMLElement | null = el.parentElement;
+  while (node && node.tagName !== 'FORM') {
+    if (node.classList.contains('text-format-wrapper')) carrier = node;
+    node = node.parentElement;
+  }
+  return carrier ?? (el.closest('.form-item') as HTMLElement | null);
 }
 
 /** Full discovery: find the form, walk it, read its tabs. */
