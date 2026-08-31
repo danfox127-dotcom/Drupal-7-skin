@@ -3,6 +3,7 @@ import { AlertCircle } from 'lucide-react';
 import { FieldDescriptor } from '../../lib/formSchema';
 import { readValue, writeValue, FieldValue } from '../../lib/fieldBinding';
 import { slotNameFor } from '../../content/inject';
+import { displayLabelFor, wasRelabelled } from '../../lib/formSchema/displayLabels';
 
 /**
  * Renders one discovered field and writes changes straight to its native control.
@@ -47,10 +48,16 @@ interface Props {
 
 /** Label plus the word "Required" in burnt orange, never a bare asterisk. */
 export function FieldLabel({ field, htmlFor }: { field: FieldDescriptor; htmlFor?: string }) {
+  const shown = displayLabelFor(field);
   return (
     <div className="flex items-baseline gap-2">
-      <label htmlFor={htmlFor} className="text-eyebrow font-semibold uppercase text-ink-secondary">
-        {field.label}
+      <label
+        htmlFor={htmlFor}
+        className="text-eyebrow font-semibold uppercase text-ink-secondary"
+        /* So a relabelled field can still be matched to the Drupal form it came from. */
+        title={wasRelabelled(field) ? `Drupal calls this "${field.label}"` : undefined}
+      >
+        {shown}
       </label>
       {field.required && (
         <span className="text-help font-semibold text-burnt">Required</span>

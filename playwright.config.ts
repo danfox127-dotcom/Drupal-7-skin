@@ -37,6 +37,16 @@ export default defineConfig({
     {
       name: 'chromium',
       testIgnore: /extension\.test\.ts$/,
+      /**
+       * Parallel by FILE, not by test.
+       *
+       * With fullyParallel: true, tests inside one file are spread across workers, and
+       * these drive real browser pages — a full run intermittently failed a couple of
+       * them ("submits even with an empty required field on a hidden form", "returns null
+       * rather than guessing"), all passing serially. Files still run concurrently, so
+       * the suite stays quick.
+       */
+      fullyParallel: false,
       use: { ...devices['Desktop Chrome'] },
     },
     {

@@ -24,6 +24,13 @@ export interface SectionRule {
   labels?: (string | RegExp)[];
   /** Matched against the lowercased base machine name. */
   names?: (string | RegExp)[];
+  /**
+   * Matched against the FULL machine name, not the collapsed base name.
+   *
+   * Needed because every metatag shares the base name `metatags`, so base-name rules
+   * cannot tell the meta description apart from the Twitter card title.
+   */
+  machineNames?: (string | RegExp)[];
   /** Matched against the lowercased enclosing fieldset/tab legend. */
   groups?: (string | RegExp)[];
 }
@@ -60,6 +67,22 @@ export const SECTION_RULES: SectionRule[] = [
    * The same reasoning covers `path`, `xmlsitemap`, `revision` and `log`: their labels
    * are generic, their names are not.
    */
+  /**
+   * The two fields a reader actually sees before deciding whether to click: the search
+   * result title and the description under it.
+   *
+   * They were inside "URL, SEO & Sitemap" among ten fields, collapsed by default, so the
+   * description was — accurately — described as utterly buried. Everything else about
+   * metatags, paths and sitemaps stays there; only these two come forward.
+   */
+  {
+    id: 'search.byMachineName',
+    section: 'search',
+    machineNames: [
+      /^metatags\[[^\]]*\]\[title\]/,
+      /^metatags\[[^\]]*\]\[description\]/,
+    ],
+  },
   {
     id: 'seo.byName',
     section: 'seo',
@@ -297,7 +320,27 @@ const ADVANCED_NAME_PATTERNS: RegExp[] = [
  * Deliberately label-driven like the section rules, since these come from contributed
  * modules whose machine names vary between sites.
  */
-export function isAdvancedField(input: { label: string; baseName: string }): boolean {
+/**
+ * Fields that must never be treated as advanced, whatever their label says.
+ *
+ * The meta description's Drupal label is exactly "Description", which the pattern
+ * /^description$/ above was matching — that pattern is there for the menu link's
+ * description attribute. So the one sentence that appears under every Google result was
+ * hidden TWICE: inside a collapsed section, and then behind a "rarely-used fields"
+ * disclosure. It was reported, correctly, as utterly buried.
+ */
+const NEVER_ADVANCED: RegExp[] = [
+  /^metatags\[[^\]]*\]\[(title|description)\]/,
+];
+
+export function isAdvancedField(input: {
+  label: string;
+  baseName: string;
+  machineName?: string;
+}): boolean {
+  const machineName = (input.machineName ?? '').trim().toLowerCase();
+  if (machineName && NEVER_ADVANCED.some(p => p.test(machineName))) return false;
+
   const label = input.label.trim().toLowerCase();
   const name = input.baseName.trim().toLowerCase();
   return ADVANCED_LABEL_PATTERNS.some(p => p.test(label))
@@ -311,14 +354,22 @@ export function isAdvancedField(input: { label: string; baseName: string }): boo
 export function assignSection(input: {
   label: string;
   baseName: string;
+  /** Full machine name, for rules that must distinguish siblings sharing a base name. */
+  machineName?: string;
   /** Ancestor fieldset/tab legends, nearest first. */
   groupPath: string[];
 }): { section: SectionId; matchedBy: string } {
   const label = input.label.trim().toLowerCase();
   const name = input.baseName.trim().toLowerCase();
   const groups = input.groupPath.map(g => g.trim().toLowerCase()).filter(Boolean);
+  const machineName = (input.machineName ?? '').trim().toLowerCase();
 
   for (const rule of SECTION_RULES) {
+    // Checked before labels: a rule this specific is stating a fact about the field,
+    // whereas a label like "Title" is shared by five unrelated ones.
+    if (machineName && matches(machineName, rule.machineNames)) {
+      return { section: rule.section, matchedBy: `${rule.id}:machineName` };
+    }
     if (matches(label, rule.labels)) {
       return { section: rule.section, matchedBy: `${rule.id}:label` };
     }

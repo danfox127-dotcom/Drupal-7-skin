@@ -38,6 +38,7 @@ const SECTION_META: Record<SectionId, { title: string; replaced?: string }> = {
   multimedia: { title: 'Multimedia', replaced: 'the Multimedia tab' },
   menu: { title: 'Menu Placement', replaced: 'the Menu settings vertical tab' },
   display: { title: 'Display Template', replaced: 'a select buried in a vertical tab' },
+  search: { title: 'Search & Social Preview', replaced: 'two fields buried in the Meta tags tab' },
   seo: { title: 'URL, SEO & Sitemap', replaced: 'the Meta tags, URL path and XML sitemap tabs' },
   groups: { title: 'Groups', replaced: 'the Groups tab' },
   revision: { title: 'Revision', replaced: 'the Revision information tab' },
@@ -46,8 +47,19 @@ const SECTION_META: Record<SectionId, { title: string; replaced?: string }> = {
 
 /** Sections that live in the right rail, in the handoff's order. */
 const RAIL_ORDER: SectionId[] = [
-  'topics', 'related', 'multimedia', 'menu', 'display', 'seo', 'groups', 'revision', 'other',
+  // 'search' leads, and opens by default: the meta description was previously ten fields
+  // deep inside a collapsed URL/SEO/Sitemap block, which is no place for the sentence
+  // that appears under every Google result.
+  'search', 'topics', 'related', 'multimedia', 'menu', 'display', 'seo', 'groups', 'revision', 'other',
 ];
+
+/**
+ * Sections that start expanded.
+ *
+ * Everything else stays collapsed by request — those sections are rarely touched — but a
+ * field is only prominent if it is actually on screen when the page loads.
+ */
+const OPEN_BY_DEFAULT: SectionId[] = ['search'];
 
 const SECTION_STATE_KEY = 'railSections';
 
@@ -126,7 +138,9 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
   const key = useMemo(() => draftKey(window.location), []);
   const baseChanged = useMemo(() => readChangedStamp(schema.form), [schema.form]);
 
-  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [open, setOpen] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(OPEN_BY_DEFAULT.map(section => [section, true]))
+  );
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [conflict, setConflict] = useState<ConflictState>({ kind: 'none' });

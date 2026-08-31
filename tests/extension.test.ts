@@ -1089,9 +1089,14 @@ test.describe('Feature 5: a content type other than News', () => {
     const seo = await page.evaluate(() => {
       const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
       const t = (sr.textContent || '').replace(/\s+/g, ' ');
-      return { pageTitle: t.includes('Page title'), alias: t.includes('URL alias') };
+      return {
+        // Drupal's "Page title" IS metatags[…][title], which now leads the rail in the
+        // Search section under a label saying what it actually controls.
+        searchTitle: t.includes('Search result title'),
+        alias: t.includes('URL alias'),
+      };
     });
-    expect(seo).toEqual({ pageTitle: true, alias: true });
+    expect(seo).toEqual({ searchTitle: true, alias: true });
   });
 });
 
@@ -1169,5 +1174,118 @@ test.describe('Feature 5: a relocated Summary is not left invisible', () => {
     });
     expect(counts.drupals).toBe(1);
     expect(counts.ours).toBe(0);
+  });
+});
+
+test.describe('Feature 5: the description is findable and the Titles are distinguishable', () => {
+  /**
+   * Reported: "description utterly buried, plus multiple different title fields".
+   *
+   * Both are real. The meta description sat ten fields deep in a collapsed
+   * "URL, SEO & Sitemap" block, and a Specialty form carries six fields that render as
+   * some form of "Title" — three of them literally the word "Title". Drupal's labels are
+   * only unambiguous inside the tabs the overlay removes, so the overlay has to put that
+   * context back.
+   */
+  const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/17176/edit`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+  };
+
+  const railText = (page: import('@playwright/test').Page) => page.evaluate(() => {
+    const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+    return (sr.textContent || '').replace(/\s+/g, ' ');
+  });
+
+  test('Search & Social Preview leads the rail and is open without being clicked', async ({ page, settings }) => {
+    await open(page, settings);
+
+    const state = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const toggles = Array.from(sr.querySelectorAll('button[aria-expanded]'));
+      const first = toggles[0];
+      return {
+        firstSection: (first?.textContent || '').replace(/\s+/g, ' ').slice(0, 30),
+        firstExpanded: first?.getAttribute('aria-expanded'),
+      };
+    });
+
+    expect(state.firstSection).toContain('Search & Social Preview');
+    // Prominence means visible on load, not one click away.
+    expect(state.firstExpanded).toBe('true');
+  });
+
+  test('the description is reachable without opening anything', async ({ page, settings }) => {
+    await open(page, settings);
+    const text = await railText(page);
+    expect(text).toContain('Search result description');
+  });
+
+  test('the description control is genuinely on screen', async ({ page, settings }) => {
+    await open(page, settings);
+    const box = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const label = Array.from(sr.querySelectorAll('label'))
+        .find(l => (l.textContent || '').includes('Search result description'));
+      const el = label?.parentElement?.parentElement?.querySelector('textarea, input');
+      return el ? (el as HTMLElement).getBoundingClientRect().height > 0 : false;
+    });
+    expect(box).toBe(true);
+  });
+
+  test('no two fields in the rail read the same bare "Title"', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.evaluate(async () => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
+      sr.querySelectorAll<HTMLElement>('button').forEach(b => {
+        if (/rarely-used/i.test(b.textContent || '')) b.click();
+      });
+      await new Promise(r => setTimeout(r, 400));
+    });
+
+    const bare = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return Array.from(sr.querySelectorAll('label'))
+        .map(l => (l.textContent || '').trim().toLowerCase())
+        .filter(t => t === 'title').length;
+    });
+
+    // Drupal's own "Title" labels on the metatag and menu-attribute fields are replaced
+    // with what each one actually controls.
+    expect(bare).toBe(0);
+  });
+
+  test('each title-ish field says which title it is', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.evaluate(async () => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
+      sr.querySelectorAll<HTMLElement>('button').forEach(b => {
+        if (/rarely-used/i.test(b.textContent || '')) b.click();
+      });
+      await new Promise(r => setTimeout(r, 400));
+    });
+    const text = await railText(page);
+
+    expect(text).toContain('Search result title');
+    expect(text).toContain('Share title (Facebook, LinkedIn)');
+    expect(text).toContain('Share title (Twitter/X)');
+    expect(text).toContain('Link tooltip');
+    // The menu link's own title is already unambiguous, so it keeps Drupal's wording.
+    expect(text).toContain('Menu link title');
+  });
+
+  test('a relabelled field still says what Drupal calls it', async ({ page, settings }) => {
+    await open(page, settings);
+    // Renaming without a trace would strand anyone cross-referencing the Drupal form.
+    const tip = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const label = Array.from(sr.querySelectorAll('label'))
+        .find(l => (l.textContent || '').includes('Search result description'));
+      return label?.getAttribute('title');
+    });
+    expect(tip).toBe('Drupal calls this "Description"');
   });
 });

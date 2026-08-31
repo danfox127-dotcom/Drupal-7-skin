@@ -398,7 +398,7 @@ export function walkForm(form: HTMLFormElement): FieldDescriptor[] {
     // "Customize display" > "Display mode" must still be recognized as belonging to
     // the display tab; matching only the nearest legend missed it.
     const groupPath = groupPathOf(wrapper, form);
-    const { section, matchedBy } = assignSection({ label, baseName, groupPath });
+    const { section, matchedBy } = assignSection({ label, baseName, machineName, groupPath });
 
     // Multi-value means Drupal rendered an "Add another item" button for THIS
     // field's widget. Scoping to the field's own widget wrapper matters: looking at
@@ -427,7 +427,7 @@ export function walkForm(form: HTMLFormElement): FieldDescriptor[] {
       elements: controls,
       options: readOptions(controls, kindProbe, labelHost),
       multiValue,
-      advanced: isAdvancedField({ label: label || baseName, baseName }),
+      advanced: isAdvancedField({ label: label || baseName, baseName, machineName }),
     });
   }
 
