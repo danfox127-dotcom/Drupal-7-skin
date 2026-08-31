@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { ChevronUp, ChevronDown, AlertCircle } from 'lucide-react';
 import {
-  FormSchema, FieldDescriptor, SectionId, populatedSections,
+  FormSchema, FieldDescriptor, SectionId,
 } from '../../lib/formSchema';
 import { readAll, writeAll, submitForm, syncRichEditorsToDom } from '../../lib/fieldBinding';
 import {
@@ -34,7 +34,7 @@ const SECTION_META: Record<SectionId, { title: string; replaced?: string }> = {
   primary: { title: 'Content' },
   typeFields: { title: 'Details' },
   topics: { title: 'Topics & Tags', replaced: 'the checkbox list and the separate Primary Topic select' },
-  related: { title: 'Related Content', replaced: 'the Related Content tab, where each field needed an exact title' },
+  related: { title: 'Related Content', replaced: 'the Related Content and Groups tabs, where each field needed an exact title' },
   multimedia: { title: 'Multimedia', replaced: 'the Multimedia tab' },
   menu: { title: 'Menu Placement', replaced: 'the Menu settings vertical tab' },
   display: { title: 'Display Template', replaced: 'a select buried in a vertical tab' },
@@ -45,13 +45,47 @@ const SECTION_META: Record<SectionId, { title: string; replaced?: string }> = {
   other: { title: 'Other Fields' },
 };
 
-/** Sections that live in the right rail, in the handoff's order. */
-const RAIL_ORDER: SectionId[] = [
-  // 'search' leads, and opens by default: the meta description was previously ten fields
-  // deep inside a collapsed URL/SEO/Sitemap block, which is no place for the sentence
-  // that appears under every Google result.
-  'search', 'topics', 'related', 'multimedia', 'menu', 'display', 'seo', 'groups', 'revision', 'other',
-];
+/**
+ * Sections rendered in the LEFT column, under the writing surface.
+ *
+ * Multimedia is here rather than in the rail because the teaser and hero images are part
+ * of the thing being written, not a setting about it — and because "I'm not seeing an
+ * option to change the image" was reported twice while it sat behind a rail toggle. A
+ * collapsed section renders no `<slot>`, so a relocated Media widget inside one is not
+ * merely small, it is absent from the page until clicked.
+ */
+const LEFT_ORDER: SectionId[] = ['multimedia'];
+
+/**
+ * Rail sections reached on most saves, listed openly.
+ *
+ * 'search' leads, and opens by default: the meta description was previously ten fields
+ * deep inside a collapsed URL/SEO/Sitemap block, which is no place for the sentence that
+ * appears under every Google result.
+ */
+const RAIL_PRIMARY: SectionId[] = ['search', 'topics', 'related'];
+
+/**
+ * Rail sections for the occasional save, behind one disclosure.
+ *
+ * Ten stacked headers make the rail a wall to be scanned every time, and the three that
+ * matter get no more weight than Revision. These five are grouped rather than removed —
+ * one extra click for menu placement or a URL alias, and anything holding a validation
+ * error forces the group open so a rejected save is never hidden.
+ */
+const RAIL_SECONDARY: SectionId[] = ['menu', 'display', 'seo', 'revision', 'other'];
+
+/**
+ * Sections folded into another section's panel instead of getting their own.
+ *
+ * Groups is one audience autocomplete plus a "Sitewide News" flag — both cross-references
+ * like everything else in Related Content, and not enough to earn a header of its own.
+ */
+const MERGED_INTO: Partial<Record<SectionId, SectionId>> = {
+  groups: 'related',
+};
+
+const panelOf = (section: SectionId): SectionId => MERGED_INTO[section] ?? section;
 
 /**
  * Sections that start expanded.
@@ -62,6 +96,9 @@ const RAIL_ORDER: SectionId[] = [
 const OPEN_BY_DEFAULT: SectionId[] = ['search'];
 
 const SECTION_STATE_KEY = 'railSections';
+
+/** Open/closed key for the secondary rail group. Not a SectionId, so it cannot collide. */
+const MORE_KEY = '__more';
 
 /**
  * A rail section's fields, with the rarely-used ones behind a disclosure.
@@ -158,10 +195,31 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
     return map;
   }, [schema.fields]);
 
-  const sections = useMemo(() => populatedSections(schema), [schema]);
-  const railSections = useMemo(
-    () => RAIL_ORDER.filter(s => sections.includes(s)),
-    [sections]
+  /**
+   * A panel's fields, its own plus any section folded into it.
+   *
+   * Folding at the presentation layer only: a Groups field is still `section: 'groups'` in
+   * the schema, so `matchedBy` and the debug dump keep telling the truth about which rule
+   * claimed it. Only where it is drawn changed.
+   */
+  const panelFields = useCallback((panel: SectionId): FieldDescriptor[] => {
+    const folded = (Object.keys(MERGED_INTO) as SectionId[])
+      .filter(from => MERGED_INTO[from] === panel)
+      .flatMap(from => fieldsBySection.get(from) ?? []);
+    return [...(fieldsBySection.get(panel) ?? []), ...folded];
+  }, [fieldsBySection]);
+
+  const leftSections = useMemo(
+    () => LEFT_ORDER.filter(s => (fieldsBySection.get(s) ?? []).length > 0),
+    [fieldsBySection]
+  );
+  const primaryPanels = useMemo(
+    () => RAIL_PRIMARY.filter(s => panelFields(s).length > 0),
+    [panelFields]
+  );
+  const secondaryPanels = useMemo(
+    () => RAIL_SECONDARY.filter(s => panelFields(s).length > 0),
+    [panelFields]
   );
 
   // --- Validation errors from the previous submit -------------------------
@@ -174,7 +232,9 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
     // save would otherwise point at something invisible.
     setOpen(prev => {
       const next = { ...prev };
-      found.sections.forEach(section => { next[section] = true; });
+      // Through panelOf, or an error on a Groups field would open a panel that no longer
+      // exists while Related Content — where the field is actually drawn — stayed shut.
+      found.sections.forEach(section => { next[panelOf(section)] = true; });
       return next;
     });
   }, [schema.fields]);
@@ -313,6 +373,124 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
     claimedRoles.add(role);
     return role;
   };
+
+  /** One collapsible rail panel: header, count, and its fields when open. */
+  const renderPanel = (section: SectionId) => {
+    const fields = panelFields(section);
+    const meta = SECTION_META[section];
+    const isOpen = Boolean(open[section]);
+    const sectionHasError = errors?.fieldErrors.some(e => panelOf(e.field.section) === section);
+
+    return (
+      <div key={section} data-rail-panel={section} className="border-b border-rule-hair">
+        <button
+          type="button"
+          onClick={() => toggleSection(section)}
+          aria-expanded={isOpen}
+          className="w-full flex items-center gap-2 px-4.5 py-3 text-left hover:bg-legacy-200 transition-colors duration-200 ease-studio"
+        >
+          <span className="flex-1 min-w-0">
+            <span className="block text-section font-semibold text-ink">
+              {meta.title}
+              {sectionHasError && (
+                <span className="ml-2 text-help font-semibold text-burnt">needs attention</span>
+              )}
+            </span>
+            <span className="block text-help text-ink-help">
+              {(() => {
+                const advanced = fields.filter(f => f.advanced).length;
+                const shown = fields.length - advanced;
+                return advanced
+                  ? `${shown} field${shown === 1 ? '' : 's'} · ${advanced} rarely used`
+                  : `${fields.length} field${fields.length === 1 ? '' : 's'}`;
+              })()}
+              {meta.replaced ? ` · replaced ${meta.replaced}` : ''}
+            </span>
+          </span>
+          {isOpen
+            ? <ChevronUp size={14} className="text-ink-muted shrink-0" />
+            : <ChevronDown size={14} className="text-ink-muted shrink-0" />}
+        </button>
+
+        {isOpen && (
+          <div className="px-4.5 pb-4">
+            {section === 'topics' && fields.some(f => f.kind === 'checkboxGroup')
+              ? (() => {
+                  const topics = fields.find(f => f.kind === 'checkboxGroup')!;
+                  const primary = fields.find(f => f.kind === 'select');
+                  const others = fields.filter(f => f !== topics && f !== primary);
+                  return <TopicsSection topics={topics} primary={primary} others={others} errorFor={errorFor} />;
+                })()
+              : section === 'menu'
+                ? (() => {
+                    const parent = fields.find(f => /parent/i.test(f.label));
+                    const others = fields.filter(f => f !== parent);
+                    return <MenuSection parent={parent} others={others} errorFor={errorFor} />;
+                  })()
+                : section === 'related'
+                  ? renderRelated()
+                  : (
+                    <SectionFields
+                      fields={fields}
+                      section={section}
+                      errorFor={errorFor}
+                      slottedFields={slottedFields}
+                      onChange={handleFieldChange}
+                    />
+                  )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  /**
+   * Related Content, with the folded-in Groups fields captioned under it.
+   *
+   * Captioned rather than silently mixed in: an Organic Groups audience is a different
+   * kind of thing from "Related Treatments", and an editor who was told to "set the
+   * group" needs to recognise it.
+   */
+  const renderRelated = () => {
+    const own = fieldsBySection.get('related') ?? [];
+    const groups = fieldsBySection.get('groups') ?? [];
+
+    return (
+      <div className="flex flex-col gap-3">
+        {own.length > 0 && (
+          <SectionFields
+            fields={own}
+            section="related"
+            errorFor={errorFor}
+            slottedFields={slottedFields}
+            onChange={handleFieldChange}
+          />
+        )}
+        {groups.length > 0 && (
+          <div
+            data-panel-subgroup="groups"
+            className={`flex flex-col gap-2 ${own.length > 0 ? 'pt-3 border-t border-rule-hair' : ''}`}
+          >
+            <p className="text-eyebrow font-semibold uppercase text-ink-secondary">
+              {SECTION_META.groups.title}
+            </p>
+            <SectionFields
+              fields={groups}
+              section="groups"
+              errorFor={errorFor}
+              slottedFields={slottedFields}
+              onChange={handleFieldChange}
+            />
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const moreHasError = errors?.fieldErrors.some(
+    e => secondaryPanels.includes(panelOf(e.field.section))
+  );
+  const moreOpen = Boolean(open[MORE_KEY]) || Boolean(moreHasError);
 
   return (
     <SlottedFieldsContext.Provider value={slottedFields ?? EMPTY_SLOTTED}>
@@ -462,6 +640,35 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
               ))}
             </div>
           )}
+
+          {/* Multimedia and anything else that is part of the content, not a setting.
+              Always expanded — a Media widget projected into a collapsed section is not
+              rendered at all, which is how the image went missing twice. */}
+          {leftSections.map(section => {
+            const fields = fieldsBySection.get(section) ?? [];
+            const meta = SECTION_META[section];
+            return (
+              <section key={section} data-left-section={section} className="pt-6.5 border-t border-rule">
+                <p className="text-eyebrow-wide font-semibold uppercase text-ink-secondary">
+                  {meta.title}
+                </p>
+                {meta.replaced && (
+                  <p className="text-help text-ink-help mt-0.5">
+                    Replaced {meta.replaced}.
+                  </p>
+                )}
+                <div className="mt-3">
+                  <SectionFields
+                    fields={fields}
+                    section={section}
+                    errorFor={errorFor}
+                    slottedFields={slottedFields}
+                    onChange={handleFieldChange}
+                  />
+                </div>
+              </section>
+            );
+          })}
         </div>
 
         {/* Right rail */}
@@ -475,72 +682,39 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
             </p>
           </div>
 
-          {railSections.map(section => {
-            const fields = fieldsBySection.get(section) ?? [];
-            const meta = SECTION_META[section];
-            const isOpen = Boolean(open[section]);
-            const sectionHasError = errors?.fieldErrors.some(e => e.field.section === section);
+          {primaryPanels.map(renderPanel)}
 
-            return (
-              <div key={section} className="border-b border-rule-hair">
-                <button
-                  type="button"
-                  onClick={() => toggleSection(section)}
-                  aria-expanded={isOpen}
-                  className="w-full flex items-center gap-2 px-4.5 py-3 text-left hover:bg-legacy-200 transition-colors duration-200 ease-studio"
-                >
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-section font-semibold text-ink">
-                      {meta.title}
-                      {sectionHasError && (
-                        <span className="ml-2 text-help font-semibold text-burnt">needs attention</span>
-                      )}
-                    </span>
-                    <span className="block text-help text-ink-help">
-                      {(() => {
-                        const advanced = fields.filter(f => f.advanced).length;
-                        const shown = fields.length - advanced;
-                        return advanced
-                          ? `${shown} field${shown === 1 ? '' : 's'} · ${advanced} rarely used`
-                          : `${fields.length} field${fields.length === 1 ? '' : 's'}`;
-                      })()}
-                      {meta.replaced ? ` · replaced ${meta.replaced}` : ''}
-                    </span>
+          {secondaryPanels.length > 0 && (
+            <div className="border-b border-rule-hair">
+              <button
+                type="button"
+                onClick={() => toggleSection(MORE_KEY)}
+                aria-expanded={moreOpen}
+                className="w-full flex items-center gap-2 px-4.5 py-3 text-left hover:bg-legacy-200 transition-colors duration-200 ease-studio"
+              >
+                <span className="flex-1 min-w-0">
+                  <span className="block text-section font-semibold text-ink">
+                    Settings used occasionally
+                    {moreHasError && (
+                      <span className="ml-2 text-help font-semibold text-burnt">needs attention</span>
+                    )}
                   </span>
-                  {isOpen
-                    ? <ChevronUp size={14} className="text-ink-muted shrink-0" />
-                    : <ChevronDown size={14} className="text-ink-muted shrink-0" />}
-                </button>
+                  <span className="block text-help text-ink-help">
+                    {secondaryPanels.map(s => SECTION_META[s].title).join(' · ')}
+                  </span>
+                </span>
+                {moreOpen
+                  ? <ChevronUp size={14} className="text-ink-muted shrink-0" />
+                  : <ChevronDown size={14} className="text-ink-muted shrink-0" />}
+              </button>
 
-                {isOpen && (
-                  <div className="px-4.5 pb-4">
-                    {section === 'topics' && fields.some(f => f.kind === 'checkboxGroup')
-                      ? (() => {
-                          const topics = fields.find(f => f.kind === 'checkboxGroup')!;
-                          const primary = fields.find(f => f.kind === 'select');
-                          const others = fields.filter(f => f !== topics && f !== primary);
-                          return <TopicsSection topics={topics} primary={primary} others={others} errorFor={errorFor} />;
-                        })()
-                      : section === 'menu'
-                        ? (() => {
-                            const parent = fields.find(f => /parent/i.test(f.label));
-                            const others = fields.filter(f => f !== parent);
-                            return <MenuSection parent={parent} others={others} errorFor={errorFor} />;
-                          })()
-                        : (
-                          <SectionFields
-                            fields={fields}
-                            section={section}
-                            errorFor={errorFor}
-                            slottedFields={slottedFields}
-                            onChange={handleFieldChange}
-                          />
-                        )}
-                  </div>
-                )}
-              </div>
-            );
-          })}
+              {moreOpen && (
+                <div data-rail-more className="border-t border-rule-hair">
+                  {secondaryPanels.map(renderPanel)}
+                </div>
+              )}
+            </div>
+          )}
 
           <p className="px-4.5 py-3 text-help text-ink-help">
             Autosave is local to this extension. “Save draft to Drupal” writes a real revision.

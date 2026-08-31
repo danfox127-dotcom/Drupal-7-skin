@@ -314,7 +314,7 @@ test.describe('validation error mapping', () => {
 
   test('opens rail sections for errors on hidden fields', async ({ page }) => {
     await open(page, 'node-add-news.html');
-    // A field in the Groups rail section, invisible in the overlay until opened.
+    // A Groups field — drawn under Related Content, and invisible until that opens.
     await page.addScriptTag({ content: withErrors(['Your Groups field is required.'], ['edit-og-your-groups']) });
     const sections = await page.evaluate(() => {
       const api = (window as any).Editor;

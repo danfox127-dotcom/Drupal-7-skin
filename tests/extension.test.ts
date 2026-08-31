@@ -77,6 +77,18 @@ export const test = base.extend<{
      */
     const context = await chromium.launchPersistentContext('', {
       headless: !process.env.D7_HEADFUL,
+      /**
+       * Full Chromium, not the headless shell.
+       *
+       * Playwright's default headless browser is `chrome-headless-shell`, a stripped
+       * binary with NO extension support: it launches, serves pages, and silently ignores
+       * `--load-extension`, so every test fails on a missing overlay with nothing in the
+       * output to say why. `channel: 'chromium'` selects the full build, whose
+       * --headless=new does load unpacked extensions.
+       *
+       * Skipped when CHROME_PATH is set, since channel and executablePath conflict.
+       */
+      ...(process.env.CHROME_PATH ? {} : { channel: 'chromium' as const }),
       // Falls back to Playwright's managed browser when unset. See playwright.config.ts.
       executablePath: process.env.CHROME_PATH || undefined,
       args: [
@@ -123,6 +135,48 @@ export const test = base.extend<{
 
 /** The shadow-root host every injected component lives in. */
 const UI = '.d7-proxy-ui-container';
+
+/**
+ * Opens a rail section by panel id, revealing the secondary group first if needed.
+ *
+ * The rail lists Search, Topics and Related openly; Menu Placement, Display Template,
+ * URL/SEO, Revision and Other sit behind one "Settings used occasionally" disclosure. A
+ * test that clicks straight through to a section must not care which tier it is in, or
+ * moving a section between tiers breaks a dozen unrelated tests.
+ *
+ * Keyed on `data-rail-panel`, NOT on header text. The group's own header lists the titles
+ * it holds — "Menu Placement \u00b7 Display Template \u00b7 \u2026" \u2014 so `hasText: 'Menu Placement'`
+ * matched the GROUP button, clicked that, and left the section itself shut. Every menu
+ * test then failed looking for a parent picker that was one more click away.
+ */
+const openRailSection = async (page: Page, panel: string) => {
+  const header = page.locator(`${UI} aside [data-rail-panel="${panel}"] > button[aria-expanded]`);
+  if (await header.count() === 0) {
+    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Settings used occasionally' }).click();
+    await expect(header).toHaveCount(1);
+  }
+  if (await header.getAttribute('aria-expanded') === 'false') await header.click();
+};
+
+/**
+ * Expands everything collapsed in the overlay, nested groups included.
+ *
+ * One pass is not enough: opening the secondary group renders section headers that were
+ * not in the DOM when the pass started, so a single querySelectorAll misses them. Loops
+ * until a pass finds nothing left to open.
+ */
+const expandAll = async (page: Page) => {
+  await page.evaluate(async () => {
+    const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+    for (let pass = 0; pass < 4; pass++) {
+      const shut = Array.from(sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]'));
+      if (shut.length === 0) break;
+      shut.forEach(b => b.click());
+      await new Promise(r => setTimeout(r, 150));
+    }
+    await new Promise(r => setTimeout(r, 250));
+  });
+};
 
 test.describe('D7 Studio: injected on node edit forms', () => {
   test('Feature 1: Taxonomy Combobox is injected and syncs to the native select', async ({ page }) => {
@@ -308,7 +362,9 @@ test.describe('D7 Studio: relocated native widgets', () => {
     await settingsFor(page);
     await page.goto(`${HOST}/node/add/news`);
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
-    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Multimedia' }).click();
+    // Multimedia sits in the left column now, expanded, so there is nothing to click —
+    // but wait for it, because its slots are what these tests inspect.
+    await expect(page.locator(`${UI} [data-left-section="multimedia"]`)).toBeVisible();
   };
 
   let settingsFor: (page: import('@playwright/test').Page) => Promise<void>;
@@ -374,14 +430,17 @@ test.describe('D7 Studio: relocated native widgets', () => {
     expect(value).toBe('12345');
   });
 
-  test('the widget renders inside the rail column, not beside it', async ({ page }) => {
+  test('the widget renders inside its column, not overflowing beside it', async ({ page }) => {
     await inRail(page);
+    // Measured against the Multimedia block, which is in the writing column now. A
+    // projected widget wider than its host reads as a broken layout even though the
+    // slotting worked, so the bound is worth keeping wherever the section lives.
     const fits = await page.evaluate(() => {
       const host = document.querySelector('.d7-proxy-ui-form-host')!;
       const widget = [...host.children].find(c => c.getAttribute('slot')?.includes('teaser')) as HTMLElement;
-      const aside = host.shadowRoot!.querySelector('aside')!;
-      const w = widget.getBoundingClientRect(), a = aside.getBoundingClientRect();
-      return w.width > 0 && w.left >= a.left - 2 && w.right <= a.right + 2;
+      const block = host.shadowRoot!.querySelector('[data-left-section="multimedia"]')!;
+      const w = widget.getBoundingClientRect(), b = block.getBoundingClientRect();
+      return w.width > 0 && w.left >= b.left - 2 && w.right <= b.right + 2;
     });
     expect(fits).toBe(true);
   });
@@ -396,7 +455,7 @@ test.describe('D7 Studio: relocated native widgets', () => {
     await settingsFor(page);
     await page.goto(`${HOST}/node/add/news`);
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
-    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Related Content' }).click();
+    await openRailSection(page, 'related');
 
     const relocated = await page.evaluate(() => {
       const host = document.querySelector('.d7-proxy-ui-form-host')!;
@@ -418,7 +477,7 @@ test.describe('D7 Studio: relocated native widgets', () => {
     await settingsFor(page);
     await page.goto(`${HOST}/node/add/news`);
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
-    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Related Content' }).click();
+    await openRailSection(page, 'related');
 
     const input = page.locator('input[name="field_services[und][0][target_id]"]');
     // Real keystrokes: fill() dispatches only input/change, so it would not exercise the
@@ -478,7 +537,7 @@ test.describe('D7 Studio: menu parent depth', () => {
     await settings({ nodeEditor: true, combobox: false, htmlExport: false });
     await page.goto(`${HOST}/node/add/page`);
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
-    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Menu Placement' }).click();
+    await openRailSection(page, 'menu');
     await expect(page.locator(`${UI} input[placeholder="Filter parent items"]`)).toBeVisible();
   };
 
@@ -550,7 +609,7 @@ test.describe('D7 Studio: parent picker at real scale', () => {
     await settings({ nodeEditor: true, combobox: false, htmlExport: false });
     await page.goto(`${HOST}/node/add/page-bigmenu`);
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
-    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Menu Placement' }).click();
+    await openRailSection(page, 'menu');
     await expect(page.locator(`${UI} input[placeholder="Filter parent items"]`)).toBeVisible();
   };
 
@@ -599,7 +658,7 @@ test.describe('D7 Studio: parent picker at real scale', () => {
     await settings({ nodeEditor: true, combobox: false, htmlExport: false });
     await page.goto(`${HOST}/node/add/page`);
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
-    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Menu Placement' }).click();
+    await openRailSection(page, 'menu');
     expect(await rowCount(page)).toBeGreaterThan(0);
     await expect(page.locator(`${UI} aside >> text=/Type above to search/`)).toHaveCount(0);
   });
@@ -618,7 +677,7 @@ test.describe('D7 Studio: rarely-used fields collapse', () => {
     await settings({ nodeEditor: true, combobox: false, htmlExport: false });
     await page.goto(`${HOST}/node/add/page`);
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
-    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Menu Placement' }).click();
+    await openRailSection(page, 'menu');
     await expect(page.locator(`${UI} input[placeholder="Filter parent items"]`)).toBeVisible();
   };
 
@@ -648,7 +707,10 @@ test.describe('D7 Studio: rarely-used fields collapse', () => {
     await settings({ nodeEditor: true, combobox: false, htmlExport: false });
     await page.goto(`${HOST}/node/add/page`);
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
-    // Visible without opening the section, so nothing feels missing.
+    // Menu Placement is one of the occasional settings, so reveal that group — but not
+    // the section itself. The count belongs on the header, so nothing feels missing
+    // before it is opened.
+    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Settings used occasionally' }).click();
     await expect(page.locator(`${UI} aside >> text=/rarely used/`).first()).toBeVisible();
   });
 
@@ -888,13 +950,10 @@ test.describe('Feature 5: a chosen image shows as selected', () => {
       (window as any).simulateMediaSelect('teaser', '9911', 'campus-quad.jpg'));
     expect(result).toBe('replaced');
 
-    // Multimedia is one of the collapsible rail sections, and a collapsed section renders
-    // no <slot> — so nothing projected into it has a box. Expand before measuring.
-    await page.evaluate(async () => {
-      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
-      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
-      await new Promise(r => setTimeout(r, 300));
-    });
+    // A collapsed section renders no <slot>, so nothing projected into one has a box.
+    // Multimedia is expanded in the left column, but expand the rest anyway so this test
+    // measures the widget rather than the layout.
+    await expandAll(page);
 
     const shown = await page.evaluate(() => {
       const preview = document.querySelector('.preview-teaser') as HTMLElement | null;
@@ -951,20 +1010,17 @@ test.describe('Feature 5: an existing article can still change its image', () =>
     await settings({ nodeEditor: true, combobox: false, htmlExport: false, debugSchema: true });
     await page.goto(`${HOST}/node/18948/edit`);
     await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
-    await page.evaluate(async () => {
-      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
-      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
-      await new Promise(r => setTimeout(r, 300));
-    });
+    await expandAll(page);
   };
 
-  test('the Multimedia section appears in the rail', async ({ page, settings }) => {
+  test('the Multimedia section appears, in the writing column and already open', async ({ page, settings }) => {
     await open(page, settings);
-    const railText = await page.evaluate(() => {
-      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
-      return (sr.textContent || '').replace(/\s+/g, ' ');
-    });
-    expect(railText).toContain('Multimedia');
+    // In the left column with no toggle: the image is part of the article, and behind a
+    // rail toggle it was reported missing twice.
+    const block = page.locator(`${UI} [data-left-section="multimedia"]`);
+    await expect(block).toBeVisible();
+    await expect(block).toContainText('Multimedia');
+    await expect(page.locator(`${UI} aside`)).not.toContainText('Multimedia');
   });
 
   test('both attached images are found, with their real labels', async ({ page, settings }) => {
@@ -1081,11 +1137,7 @@ test.describe('Feature 5: a content type other than News', () => {
 
   test('the metatag and path fields are reachable once that section is open', async ({ page, settings }) => {
     await open(page, settings);
-    await page.evaluate(async () => {
-      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
-      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
-      await new Promise(r => setTimeout(r, 300));
-    });
+    await expandAll(page);
     const seo = await page.evaluate(() => {
       const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
       const t = (sr.textContent || '').replace(/\s+/g, ' ');
@@ -1131,11 +1183,10 @@ test.describe('Feature 5: a relocated Summary is not left invisible', () => {
 
   test('every relocated widget has a slot once sections are open', async ({ page, settings }) => {
     await open(page, settings);
-    const audit = await page.evaluate(async () => {
+    await expandAll(page);
+    const audit = await page.evaluate(() => {
       const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
       const sr = host.shadowRoot!;
-      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
-      await new Promise(r => setTimeout(r, 400));
       const rendered = new Set(Array.from(sr.querySelectorAll('slot')).map(s => s.getAttribute('name')));
       const relocated = Array.from(host.children).map(c => c.getAttribute('slot')).filter(Boolean) as string[];
       return { relocated: relocated.length, orphans: relocated.filter(n => !rendered.has(n)) };
@@ -1236,14 +1287,7 @@ test.describe('Feature 5: the description is findable and the Titles are disting
 
   test('no two fields in the rail read the same bare "Title"', async ({ page, settings }) => {
     await open(page, settings);
-    await page.evaluate(async () => {
-      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
-      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
-      sr.querySelectorAll<HTMLElement>('button').forEach(b => {
-        if (/rarely-used/i.test(b.textContent || '')) b.click();
-      });
-      await new Promise(r => setTimeout(r, 400));
-    });
+    await expandAll(page);
 
     const bare = await page.evaluate(() => {
       const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
@@ -1259,14 +1303,7 @@ test.describe('Feature 5: the description is findable and the Titles are disting
 
   test('each title-ish field says which title it is', async ({ page, settings }) => {
     await open(page, settings);
-    await page.evaluate(async () => {
-      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
-      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
-      sr.querySelectorAll<HTMLElement>('button').forEach(b => {
-        if (/rarely-used/i.test(b.textContent || '')) b.click();
-      });
-      await new Promise(r => setTimeout(r, 400));
-    });
+    await expandAll(page);
     const text = await railText(page);
 
     expect(text).toContain('Search result title');
@@ -1287,5 +1324,113 @@ test.describe('Feature 5: the description is findable and the Titles are disting
       return label?.getAttribute('title');
     });
     expect(tip).toBe('Drupal calls this "Description"');
+  });
+});
+
+test.describe('Feature 5: the rail is triaged, and the image is not in it', () => {
+  /**
+   * Ten stacked rail headers gave Revision the same weight as Topics, and put the teaser
+   * image — part of the article, not a setting about it — behind a toggle that renders no
+   * `<slot>` while shut. So the widget was not small, it was absent, and "I'm not seeing
+   * an option to change the image" was reported twice.
+   *
+   * Multimedia moved to the writing column, the five occasional sections went behind one
+   * disclosure, and Groups folded under Related Content.
+   */
+  const open = async (page: Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/add/news`);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+  };
+
+  test('the image widget has a box on load, with nothing clicked', async ({ page, settings }) => {
+    await open(page, settings);
+    // The whole point of the move. A projected widget in a collapsed section measures
+    // zero, so height is the assertion that would have caught the original report.
+    const box = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const block = sr.querySelector('[data-left-section="multimedia"]') as HTMLElement | null;
+      if (!block) return { found: false };
+      const slots = Array.from(block.querySelectorAll('slot'));
+      return {
+        found: true,
+        inAside: !!block.closest('aside'),
+        rendered: block.getBoundingClientRect().height > 0,
+        slots: slots.length,
+        projecting: slots.filter(s => (s as HTMLSlotElement).assignedNodes().length > 0).length,
+      };
+    });
+    expect(box.found).toBe(true);
+    expect(box.inAside).toBe(false);
+    expect(box.rendered).toBe(true);
+    expect(box.projecting).toBeGreaterThan(0);
+  });
+
+  test('the rail leads with the three sections used on most saves', async ({ page, settings }) => {
+    await open(page, settings);
+    const headers = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const aside = sr.querySelector('aside')!;
+      return Array.from(aside.querySelectorAll(':scope > div > button[aria-expanded]'))
+        .map(b => (b.querySelector('span > span') || b).textContent!.replace(/\s+/g, ' ').trim());
+    });
+    expect(headers).toEqual([
+      'Search & Social Preview',
+      'Topics & Tags',
+      'Related Content',
+      'Settings used occasionally',
+    ]);
+  });
+
+  test('the occasional settings are named on the collapsed header, then reachable', async ({ page, settings }) => {
+    await open(page, settings);
+    const more = page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Settings used occasionally' });
+
+    // Named while shut: a group whose contents are a mystery is worse than a long list.
+    await expect(more).toContainText('URL, SEO & Sitemap');
+    await expect(more).toContainText('Revision');
+    await expect(page.locator(`${UI} [data-rail-more]`)).toHaveCount(0);
+
+    await more.click();
+    const revealed = page.locator(`${UI} [data-rail-more]`);
+    await expect(revealed).toContainText('URL, SEO & Sitemap');
+    await expect(revealed).toContainText('Revision');
+  });
+
+  test('Groups is drawn under Related Content, not as a section of its own', async ({ page, settings }) => {
+    await open(page, settings);
+    await openRailSection(page, 'related');
+
+    // Asserted on the subgroup element, not on panel text: the Related Content header
+    // now reads "replaced the Related Content and Groups tabs", so a text match for
+    // "Groups" would pass whether or not a single Groups field was drawn.
+    const placement = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const subgroup = sr.querySelector('[data-panel-subgroup="groups"]');
+      return {
+        exists: !!subgroup,
+        insideRelated: subgroup?.closest('[data-rail-panel]')?.getAttribute('data-rail-panel') ?? null,
+        // Captioned, not silently mixed in with the entity references.
+        captioned: /groups/i.test(subgroup?.querySelector('p')?.textContent ?? ''),
+        controls: subgroup?.querySelectorAll('input, select, textarea, slot').length ?? 0,
+        ownPanel: !!sr.querySelector('[data-rail-panel="groups"]'),
+      };
+    });
+
+    expect(placement.exists).toBe(true);
+    expect(placement.insideRelated).toBe('related');
+    expect(placement.captioned).toBe(true);
+    expect(placement.controls).toBeGreaterThan(0);
+    expect(placement.ownPanel).toBe(false);
+  });
+
+  test('the Groups fields still write through to the native inputs', async ({ page, settings }) => {
+    await open(page, settings);
+    await openRailSection(page, 'related');
+    // Folding is a layout change only; what Drupal receives must be untouched.
+    const submitted = await page.evaluate(() =>
+      new FormData(document.querySelector('form.node-form') as HTMLFormElement)
+        .has('og_group_ref[und][0][default][0][target_id]'));
+    expect(submitted).toBe(true);
   });
 });

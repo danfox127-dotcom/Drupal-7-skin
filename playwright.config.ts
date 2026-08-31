@@ -16,6 +16,13 @@ export default defineConfig({
     //   CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npm test
     //
     // Left unset, Playwright uses its own managed browser as usual.
+    //
+    // NOT a workaround for the `extension` project. Stable Chrome — verified on 151 —
+    // ignores `--load-extension` in both headful and headless mode, and
+    // --disable-features=DisableLoadExtensionCommandLineSwitch does not bring it back. The
+    // browser launches, pages load, and the extension is simply absent, so every test
+    // fails on a missing overlay with nothing to explain it. That project needs
+    // Playwright's own Chromium; run `npx playwright install chromium` instead.
     ...(process.env.CHROME_PATH
       ? { launchOptions: { executablePath: process.env.CHROME_PATH } }
       : {}),
