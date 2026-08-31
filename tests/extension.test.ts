@@ -139,10 +139,11 @@ const UI = '.d7-proxy-ui-container';
 /**
  * Opens a rail section by panel id, revealing the secondary group first if needed.
  *
- * The rail lists Search, Topics and Related openly; Menu Placement, Display Template,
+ * The rail lists Search, Topics, Related and Menu Placement openly; Display Template,
  * URL/SEO, Revision and Other sit behind one "Settings used occasionally" disclosure. A
  * test that clicks straight through to a section must not care which tier it is in, or
- * moving a section between tiers breaks a dozen unrelated tests.
+ * moving a section between tiers breaks a dozen unrelated tests. Menu Placement has now
+ * moved tiers once without touching a single caller, which is the point.
  *
  * Keyed on `data-rail-panel`, NOT on header text. The group's own header lists the titles
  * it holds — "Menu Placement \u00b7 Display Template \u00b7 \u2026" \u2014 so `hasText: 'Menu Placement'`
@@ -707,10 +708,8 @@ test.describe('D7 Studio: rarely-used fields collapse', () => {
     await settings({ nodeEditor: true, combobox: false, htmlExport: false });
     await page.goto(`${HOST}/node/add/page`);
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
-    // Menu Placement is one of the occasional settings, so reveal that group — but not
-    // the section itself. The count belongs on the header, so nothing feels missing
-    // before it is opened.
-    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Settings used occasionally' }).click();
+    // Visible with nothing clicked: the count belongs on the section header, so nothing
+    // feels missing before it is opened.
     await expect(page.locator(`${UI} aside >> text=/rarely used/`).first()).toBeVisible();
   });
 
@@ -1366,20 +1365,36 @@ test.describe('Feature 5: the rail is triaged, and the image is not in it', () =
     expect(box.projecting).toBeGreaterThan(0);
   });
 
-  test('the rail leads with the three sections used on most saves', async ({ page, settings }) => {
+  /** The rail's top-level headers, in order, excluding those nested in the group. */
+  const topHeaders = (page: Page) => page.evaluate(() => {
+    const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+    const aside = sr.querySelector('aside')!;
+    return Array.from(aside.querySelectorAll(':scope > div > button[aria-expanded]'))
+      .map(b => (b.querySelector('span > span') || b).textContent!.replace(/\s+/g, ' ').trim());
+  });
+
+  test('the rail leads with the sections used on most saves', async ({ page, settings }) => {
     await open(page, settings);
-    const headers = await page.evaluate(() => {
-      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
-      const aside = sr.querySelector('aside')!;
-      return Array.from(aside.querySelectorAll(':scope > div > button[aria-expanded]'))
-        .map(b => (b.querySelector('span > span') || b).textContent!.replace(/\s+/g, ' ').trim());
-    });
-    expect(headers).toEqual([
+    // News carries no menu fields, so its rail is three sections plus the group.
+    expect(await topHeaders(page)).toEqual([
       'Search & Social Preview',
       'Topics & Tags',
       'Related Content',
       'Settings used occasionally',
     ]);
+  });
+
+  test('Menu Placement is listed openly, not inside the group', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    // The Page type is where menu placement is actually used, and the only fixture with
+    // menu fields — asserting this on News would prove nothing, since News has none.
+    await page.goto(`${HOST}/node/add/page`);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+
+    expect(await topHeaders(page)).toContain('Menu Placement');
+    // Its parent picker is the heaviest control in the rail; a disclosure in front of it
+    // costs more than it saves.
+    await expect(page.locator(`${UI} aside [data-rail-more] [data-rail-panel="menu"]`)).toHaveCount(0);
   });
 
   test('the occasional settings are named on the collapsed header, then reachable', async ({ page, settings }) => {

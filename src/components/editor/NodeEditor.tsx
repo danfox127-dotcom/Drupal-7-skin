@@ -63,17 +63,22 @@ const LEFT_ORDER: SectionId[] = ['multimedia'];
  * deep inside a collapsed URL/SEO/Sitemap block, which is no place for the sentence that
  * appears under every Google result.
  */
-const RAIL_PRIMARY: SectionId[] = ['search', 'topics', 'related'];
+const RAIL_PRIMARY: SectionId[] = ['search', 'topics', 'related', 'menu'];
 
 /**
  * Rail sections for the occasional save, behind one disclosure.
  *
- * Ten stacked headers make the rail a wall to be scanned every time, and the three that
- * matter get no more weight than Revision. These five are grouped rather than removed —
- * one extra click for menu placement or a URL alias, and anything holding a validation
+ * Ten stacked headers make the rail a wall to be scanned every time, and the ones that
+ * matter get no more weight than Revision. These four are grouped rather than removed —
+ * one extra click for a URL alias or a display template, and anything holding a validation
  * error forces the group open so a rejected save is never hidden.
+ *
+ * Menu Placement is deliberately NOT here. It is the section with the most machinery
+ * behind it — a filterable parent picker over a menu thousands of items deep — and on the
+ * Page type it is touched on most saves, so a disclosure in front of it costs more than it
+ * saves.
  */
-const RAIL_SECONDARY: SectionId[] = ['menu', 'display', 'seo', 'revision', 'other'];
+const RAIL_SECONDARY: SectionId[] = ['display', 'seo', 'revision', 'other'];
 
 /**
  * Sections folded into another section's panel instead of getting their own.
