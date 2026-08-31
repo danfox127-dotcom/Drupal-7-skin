@@ -271,8 +271,18 @@ test.describe('News form discovery', () => {
     await open(page, 'node-add-news.html');
     const schema = (await schemaOf(page, '/node/add/news'))!;
     const sectionOf = (base: string) => schema.fields.find(f => f.baseName === base)?.section;
+    const sectionOfName = (name: string) =>
+      schema.fields.find(f => f.machineName === name)?.section;
 
-    expect(sectionOf('metatags')).toBe('seo');
+    /**
+     * The metatags fall in two places on purpose. The search result title and description
+     * go to 'search', which leads the rail and opens by default; everything else about
+     * metatags stays in 'seo'. Asserting on baseName alone cannot tell them apart, since
+     * every metatag shares the base name `metatags`.
+     */
+    expect(sectionOfName('metatags[und][title][value]')).toBe('search');
+    expect(sectionOfName('metatags[und][description][value]')).toBe('search');
+    expect(sectionOfName('metatags[und][keywords][value]')).toBe('seo');
     expect(sectionOf('path')).toBe('seo');
     expect(sectionOf('xmlsitemap')).toBe('seo');
     expect(sectionOf('revision')).toBe('revision');
@@ -610,7 +620,12 @@ test.describe('live News form — regressions from the real site', () => {
     await open(page, 'node-add-news-live.html');
     const schema = (await live(page))!;
     const sectionOf = (base: string) => schema.fields.find(f => f.baseName === base)?.section;
-    expect(sectionOf('metatags')).toBe('seo');
+    const sectionOfName = (name: string) =>
+      schema.fields.find(f => f.machineName === name)?.section;
+    // The search-result title leads the rail; other metatags stay in seo. This fixture
+    // carries only title and twitter:title, which is enough to prove the split.
+    expect(sectionOfName('metatags[und][title][value]')).toBe('search');
+    expect(sectionOfName('metatags[und][twitter:title][value]')).toBe('seo');
     expect(sectionOf('path')).toBe('seo');
     expect(sectionOf('log')).toBe('revision');
     expect(sectionOf('shield')).toBe('display');

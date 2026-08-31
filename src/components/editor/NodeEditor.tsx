@@ -3,7 +3,7 @@ import { ChevronUp, ChevronDown, AlertCircle } from 'lucide-react';
 import {
   FormSchema, FieldDescriptor, SectionId, populatedSections,
 } from '../../lib/formSchema';
-import { readAll, writeAll, submitForm } from '../../lib/fieldBinding';
+import { readAll, writeAll, submitForm, syncRichEditorsToDom } from '../../lib/fieldBinding';
 import {
   Draft, ConflictState, draftKey, readChangedStamp, loadDraft, saveDraft,
   clearDraft, assessDraft, formatAge,
@@ -38,6 +38,7 @@ const SECTION_META: Record<SectionId, { title: string; replaced?: string }> = {
   multimedia: { title: 'Multimedia', replaced: 'the Multimedia tab' },
   menu: { title: 'Menu Placement', replaced: 'the Menu settings vertical tab' },
   display: { title: 'Display Template', replaced: 'a select buried in a vertical tab' },
+  search: { title: 'Search & Social Preview', replaced: 'two fields buried in the Meta tags tab' },
   seo: { title: 'URL, SEO & Sitemap', replaced: 'the Meta tags, URL path and XML sitemap tabs' },
   groups: { title: 'Groups', replaced: 'the Groups tab' },
   revision: { title: 'Revision', replaced: 'the Revision information tab' },
@@ -46,8 +47,19 @@ const SECTION_META: Record<SectionId, { title: string; replaced?: string }> = {
 
 /** Sections that live in the right rail, in the handoff's order. */
 const RAIL_ORDER: SectionId[] = [
-  'topics', 'related', 'multimedia', 'menu', 'display', 'seo', 'groups', 'revision', 'other',
+  // 'search' leads, and opens by default: the meta description was previously ten fields
+  // deep inside a collapsed URL/SEO/Sitemap block, which is no place for the sentence
+  // that appears under every Google result.
+  'search', 'topics', 'related', 'multimedia', 'menu', 'display', 'seo', 'groups', 'revision', 'other',
 ];
+
+/**
+ * Sections that start expanded.
+ *
+ * Everything else stays collapsed by request — those sections are rarely touched — but a
+ * field is only prominent if it is actually on screen when the page loads.
+ */
+const OPEN_BY_DEFAULT: SectionId[] = ['search'];
 
 const SECTION_STATE_KEY = 'railSections';
 
@@ -126,7 +138,9 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
   const key = useMemo(() => draftKey(window.location), []);
   const baseChanged = useMemo(() => readChangedStamp(schema.form), [schema.form]);
 
-  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [open, setOpen] = useState<Record<string, boolean>>(
+    () => Object.fromEntries(OPEN_BY_DEFAULT.map(section => [section, true]))
+  );
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [conflict, setConflict] = useState<ConflictState>({ kind: 'none' });
@@ -195,9 +209,34 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
   }, [key, baseChanged]);
 
   // --- Autosave, local only ---------------------------------------------
+  /**
+   * Last persisted snapshot, so the beat can detect changes made in a NATIVE widget.
+   *
+   * `dirtyRef` only trips when one of this overlay's own React controls fires onChange.
+   * Drupal's relocated editor is not one of those, so typing a whole body produced no
+   * dirty flag and the draft was never written. Comparing snapshots catches edits from
+   * either side; null means "no baseline yet", which avoids writing a phantom draft
+   * identical to the form as loaded.
+   */
+  const lastSnapshot = useRef<string | null>(null);
+
   const persist = useCallback(async () => {
+    // Rich editors keep their content to themselves until submit; make the DOM current
+    // before reading it, or the draft records an empty body.
+    await syncRichEditorsToDom();
+
+    const values = readAll(schema.fields);
+    const snapshot = JSON.stringify(values);
+
+    if (lastSnapshot.current === null) {
+      lastSnapshot.current = snapshot;
+      return;
+    }
+    if (snapshot === lastSnapshot.current) return;
+    lastSnapshot.current = snapshot;
+
     const draft: Draft = {
-      values: readAll(schema.fields),
+      values,
       savedAt: Date.now(),
       baseChanged,
       contentType: schema.contentType,
@@ -216,10 +255,10 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
     // on the same beat, but only when something actually changed.
     const id = window.setInterval(() => {
       setNow(Date.now());
-      if (dirtyRef.current) {
-        dirtyRef.current = false;
-        void persist();
-      }
+      // Unconditional now: persist() is a no-op when nothing changed, and gating on
+      // dirtyRef alone missed every edit made in a relocated native editor.
+      dirtyRef.current = false;
+      void persist();
     }, 5000);
     return () => window.clearInterval(id);
   }, [persist]);
@@ -261,6 +300,19 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
 
   const left = fieldsBySection.get('primary') ?? [];
   const typeFields = fieldsBySection.get('typeFields') ?? [];
+
+  /**
+   * Hands out each primary role once, in document order, so the first field labelled
+   * "Summary" is the summary and any later one falls through to a normal control.
+   * Rebuilt per render deliberately: it must not carry state between renders.
+   */
+  const claimedRoles = new Set<string>();
+  const claimPrimaryRole = (field: FieldDescriptor) => {
+    const role = primaryRole(field);
+    if (!role || claimedRoles.has(role)) return null;
+    claimedRoles.add(role);
+    return role;
+  };
 
   return (
     <SlottedFieldsContext.Provider value={slottedFields ?? EMPTY_SLOTTED}>
@@ -379,7 +431,17 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
             title — the bar is position:sticky, so it does not reserve space. */}
         <div className="flex flex-col gap-6.5 px-11 pt-15 pb-15 border-r border-rule bg-white">
           {left.map(field => {
-            const role = primaryRole(field);
+            /**
+             * A primary role is claimed at most once.
+             *
+             * The roles are matched on label alone, and a Specialty form carries TWO
+             * fields labelled "Summary". Both were given the summary treatment, so the
+             * editor showed two boxes each captioned "Doubles as the meta description"
+             * with their own 380-character budget — and only one field can be the meta
+             * description. The second now renders as an ordinary labelled field, which
+             * is accurate about what it is.
+             */
+            const role = claimPrimaryRole(field);
             return role ? (
               <PrimaryField
                 key={field.machineName}

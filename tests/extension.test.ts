@@ -29,9 +29,13 @@ const FIXTURES = path.join(__dirname, 'fixtures');
 const ROUTES: [RegExp, string][] = [
   [/\/admin\/structure\/menu\/manage\/main-menu/, 'menu-manage.html'],
   [/\/admin\/content/, 'admin/content.html'],
+  [/\/node\/add\/news-ckeditor/, 'node-add-news-ckeditor.html'],
+  [/\/node\/add\/news-media/, 'node-add-news-media.html'],
   [/\/node\/add\/news/, 'node-add-news-live.html'],
   [/\/node\/add\/page-bigmenu/, 'node-add-page-bigmenu.html'],
   [/\/node\/add\/page/, 'node-add-page.html'],
+  [/\/node\/18948\/edit/, 'node-edit-media-populated.html'],
+  [/\/node\/17176\/edit/, 'node-edit-specialty.html'],
   [/\/node\/\d+\/edit/, 'node-edit.html'],
 ];
 
@@ -60,8 +64,19 @@ export const test = base.extend<{
       throw new Error('dist/ is missing or unbuilt — run `npm run build` before the extension tests.');
     }
 
+    /**
+     * Headless by default.
+     *
+     * This used to say "Extensions only work in headful mode", which was true of Chrome's
+     * OLD headless but not of --headless=new (Chrome 112+), which loads unpacked
+     * extensions normally. It matters because the context fixture is per-test: headful, a
+     * fifty-test file opens fifty windows one after another and steals focus each time,
+     * which is unusable while anyone is working on the machine.
+     *
+     * Set D7_HEADFUL=1 to watch a run.
+     */
     const context = await chromium.launchPersistentContext('', {
-      headless: false, // Extensions only work in headful mode
+      headless: !process.env.D7_HEADFUL,
       // Falls back to Playwright's managed browser when unset. See playwright.config.ts.
       executablePath: process.env.CHROME_PATH || undefined,
       args: [
@@ -686,5 +701,591 @@ test.describe('D7 Studio: safe defaults', () => {
     await page.reload();
     await expect(page.locator('#edit-title-field')).toBeVisible();
     await expect.poll(() => logs.some(l => l.includes('content type: news'))).toBe(true);
+  });
+});
+
+test.describe('Feature 5: the body keeps Drupal\'s real rich text editor', () => {
+  /**
+   * The body used to render a plain textarea beneath a row of grey aria-hidden spans
+   * reading "B I Link H2 H3 List Table Image". None of them did anything, so the field
+   * had no formatting controls at all.
+   *
+   * These assert the real editor is moved into the overlay and rebuilt there, rather
+   * than a toolbar being reimplemented — the site's own button list is the point, and a
+   * reimplementation could never know it.
+   */
+  const openBody = async (page: import('@playwright/test').Page) => {
+    await page.goto(`${HOST}/node/add/news-ckeditor`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+    // The rebuild is bracketed by two async hops through the service worker.
+    await page.waitForFunction(
+      () => !!document.querySelector('.cke'),
+      undefined,
+      { timeout: 15000 }
+    );
+  };
+
+  test('the editor is rebuilt inside the overlay, carrying the site\'s own buttons', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await openBody(page);
+
+    const state = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      const cke = document.querySelector('.cke') as HTMLElement;
+      const buttons = Array.from(cke.querySelectorAll('.cke_button')).map(b => b.textContent);
+      return {
+        // Inside the overlay host, not left behind in the hidden form content.
+        insideOverlay: !!cke.closest('.d7-proxy-ui-form-host'),
+        // And still inside the form, or it would not be submitted.
+        insideForm: !!cke.closest('form'),
+        slot: cke.closest('[slot]')?.getAttribute('slot') ?? null,
+        buttons,
+        instances: Object.keys((window as any).CKEDITOR.instances),
+        hostHasSlotted: host.querySelectorAll('[slot]').length,
+      };
+    });
+
+    expect(state.insideOverlay).toBe(true);
+    expect(state.insideForm).toBe(true);
+    expect(state.slot).toBeTruthy();
+    // The site's configured buttons, not a default set we invented.
+    expect(state.buttons).toEqual(['Bold', 'Italic', 'Link', 'Format', 'BulletedList', 'CU Media']);
+    expect(state.instances).toEqual(['edit-body-value']);
+  });
+
+  test('the projecting slot exists, so the editor is actually rendered', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await openBody(page);
+
+    // An unslotted light-DOM child of a shadow host is not rendered AT ALL, so a
+    // relocated editor with no matching slot would be invisible while still submitting.
+    const rendered = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      const sr = host.shadowRoot!;
+      const slotNames = new Set(
+        Array.from(sr.querySelectorAll('slot')).map(s => s.getAttribute('name'))
+      );
+      const relocated = Array.from(host.children)
+        .map(c => c.getAttribute('slot'))
+        .filter(Boolean) as string[];
+      const cke = document.querySelector('.cke') as HTMLElement;
+      return {
+        orphans: relocated.filter(n => !slotNames.has(n)),
+        editorHasSize: cke.getBoundingClientRect().height > 0,
+      };
+    });
+
+    expect(rendered.orphans).toEqual([]);
+    expect(rendered.editorHasSize).toBe(true);
+  });
+
+  test('content survives the move, which a bare reparent would have destroyed', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await openBody(page);
+
+    // The editing surface is an iframe; moving one reloads it. Detaching before the move
+    // and rebuilding after is what keeps the text.
+    const data = await page.evaluate(() =>
+      (window as any).CKEDITOR.instances['edit-body-value'].getData());
+    expect(data).toContain('Original body text.');
+  });
+
+  test('no fake toolbar is drawn anywhere in the overlay', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await openBody(page);
+
+    // The old mock strip rendered these as aria-hidden spans. Nothing in the shadow tree
+    // should claim to be a formatting control that isn't one.
+    const fakes = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return Array.from(sr.querySelectorAll('[aria-hidden="true"]'))
+        .map(el => (el.textContent || '').trim())
+        .filter(t => ['B', 'I', 'Link', 'H2', 'H3', 'List', 'Table', 'Image'].includes(t));
+    });
+    expect(fakes).toEqual([]);
+  });
+
+  test('the local draft records what was typed into the editor, not the stale textarea', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await openBody(page);
+
+    // A rich editor holds content in its own object until submit. Typing here mimics
+    // that: the textarea still says "Original body text." afterwards.
+    await page.evaluate(() =>
+      (window as any).CKEDITOR.instances['edit-body-value'].setData('<p>Typed into the editor.</p>'));
+
+    const stale = await page.evaluate(() =>
+      (document.getElementById('edit-body-value') as HTMLTextAreaElement).value);
+    expect(stale).toContain('Original body text.');
+
+    // The autosave beat is 5s, and it syncs the editors before reading.
+    await page.waitForFunction(
+      () => (document.getElementById('edit-body-value') as HTMLTextAreaElement)
+        .value.includes('Typed into the editor.'),
+      undefined,
+      { timeout: 20000 }
+    );
+  });
+});
+
+test.describe('Feature 5: a chosen image shows as selected', () => {
+  /**
+   * The reported symptom: uploading put the file in the library and it attached on save,
+   * but the editor never showed it as selected.
+   *
+   * Cause was the wrapper climb. Media names its launcher media[field_image_teaser_und_0]
+   * and its siblings field_image_teaser[und][0][fid]; a prefix test against baseName
+   * `field_image_teaser` rejected the launcher's own name, so only the innermost
+   * .form-item moved and Drupal's ajax wrapper stayed in the hidden form. The thumbnail
+   * was then rendered into the hidden region — correct data, invisible UI.
+   */
+  const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/add/news-media`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+  };
+
+  test('the whole widget moves, including the ajax wrapper and the hidden fid', async ({ page, settings }) => {
+    await open(page, settings);
+
+    const state = await page.evaluate(() => {
+      const wrapper = document.getElementById('edit-field-image-teaser-und-0-ajax-wrapper')!;
+      const fid = document.querySelector('input[name="field_image_teaser[und][0][fid]"]')!;
+      return {
+        wrapperInOverlay: !!wrapper.closest('.d7-proxy-ui-form-host'),
+        fidInOverlay: !!fid.closest('.d7-proxy-ui-form-host'),
+        // Still inside the form, or nothing would submit.
+        fidInForm: !!fid.closest('form'),
+        // Not stranded in the region we hid.
+        fidHidden: !!fid.closest('[data-d7-hidden]'),
+      };
+    });
+
+    expect(state).toEqual({
+      wrapperInOverlay: true, fidInOverlay: true, fidInForm: true, fidHidden: false,
+    });
+  });
+
+  test('the neighbouring image field is not swallowed by the climb', async ({ page, settings }) => {
+    await open(page, settings);
+
+    // Each field needs its own carrier, or one slot would try to project both.
+    const slots = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      return Array.from(host.children)
+        .map(c => c.getAttribute('slot'))
+        .filter(Boolean);
+    });
+
+    expect(slots).toContain('field-media-field-image-teaser-und-0-');
+    expect(slots).toContain('field-media-field-image-hero-und-0-');
+  });
+
+  test('after selection the thumbnail is visible in the overlay, not in the hidden form', async ({ page, settings }) => {
+    await open(page, settings);
+
+    const result = await page.evaluate(() =>
+      (window as any).simulateMediaSelect('teaser', '9911', 'campus-quad.jpg'));
+    expect(result).toBe('replaced');
+
+    // Multimedia is one of the collapsible rail sections, and a collapsed section renders
+    // no <slot> — so nothing projected into it has a box. Expand before measuring.
+    await page.evaluate(async () => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
+      await new Promise(r => setTimeout(r, 300));
+    });
+
+    const shown = await page.evaluate(() => {
+      const preview = document.querySelector('.preview-teaser') as HTMLElement | null;
+      if (!preview) return { found: false };
+      const carrier = preview.closest('[slot]');
+      return {
+        found: true,
+        inOverlay: !!preview.closest('.d7-proxy-ui-form-host'),
+        // The carrier survived Drupal replacing its own wrapper, so this is still projected.
+        stillSlotted: !!carrier,
+        inHiddenRegion: !!preview.closest('[data-d7-hidden]'),
+        rendered: preview.getBoundingClientRect().height > 0,
+        filename: preview.querySelector('.filename')?.textContent,
+      };
+    });
+
+    expect(shown.found).toBe(true);
+    expect(shown.inOverlay).toBe(true);
+    expect(shown.stillSlotted).toBe(true);
+    expect(shown.inHiddenRegion).toBe(false);
+    expect(shown.rendered).toBe(true);
+    expect(shown.filename).toBe('campus-quad.jpg');
+  });
+
+  test('the fid from the selection is what the form would submit', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.evaluate(() => (window as any).simulateMediaSelect('teaser', '9911', 'campus-quad.jpg'));
+
+    const submitted = await page.evaluate(() => {
+      const form = document.querySelector('form') as HTMLFormElement;
+      const data = new FormData(form);
+      return {
+        fid: data.get('field_image_teaser[und][0][fid]'),
+        // A duplicate empty copy left behind would override this on the server.
+        copies: form.querySelectorAll('input[name="field_image_teaser[und][0][fid]"]').length,
+      };
+    });
+
+    expect(submitted).toEqual({ fid: '9911', copies: 1 });
+  });
+});
+
+test.describe('Feature 5: an existing article can still change its image', () => {
+  /**
+   * Reported from columbiadoctors.org/node/18948/edit: no option to change the image.
+   *
+   * The Multimedia section was absent from the rail entirely. A populated Media widget
+   * has no visible control — the file is a hidden fid, and Remove/Edit are submit
+   * buttons — and the walker drops hidden and submit inputs as structural. With nothing
+   * left, the field did not exist, so the section that would have held it was never
+   * rendered and there was no route to the image at all.
+   */
+  const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false, debugSchema: true });
+    await page.goto(`${HOST}/node/18948/edit`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+    await page.evaluate(async () => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
+      await new Promise(r => setTimeout(r, 300));
+    });
+  };
+
+  test('the Multimedia section appears in the rail', async ({ page, settings }) => {
+    await open(page, settings);
+    const railText = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return (sr.textContent || '').replace(/\s+/g, ' ');
+    });
+    expect(railText).toContain('Multimedia');
+  });
+
+  test('both attached images are found, with their real labels', async ({ page, settings }) => {
+    await open(page, settings);
+    // Drupal's OWN label is what shows, and it lives in the light DOM being projected —
+    // the overlay suppresses its own label for relocated widgets rather than printing it
+    // twice. So shadowRoot.textContent is the wrong place to look; the host's children
+    // are the right one.
+    const labels = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      const visible = Array.from(host.querySelectorAll('label'))
+        .filter(l => (l as HTMLElement).getBoundingClientRect().height > 0)
+        .map(l => (l.textContent || '').trim());
+      return {
+        teaser: visible.includes('Teaser Image'),
+        hero: visible.includes('Hero Image'),
+        // And exactly once each, not doubled by our own label.
+        teaserCount: visible.filter(t => t === 'Teaser Image').length,
+      };
+    });
+    expect(labels).toEqual({ teaser: true, hero: true, teaserCount: 1 });
+  });
+
+  test('Drupal\'s own Remove and Edit buttons are reachable, which is how you change it', async ({ page, settings }) => {
+    await open(page, settings);
+
+    const controls = await page.evaluate(() => {
+      const remove = document.querySelector('input[name="field_image_teaser_und_0_remove_button"]') as HTMLElement | null;
+      const edit = document.querySelector('input[name="field_image_teaser_und_0_edit_button"]') as HTMLElement | null;
+      const thumb = document.querySelector('.preview-teaser') as HTMLElement | null;
+      return {
+        removeInOverlay: !!remove?.closest('.d7-proxy-ui-form-host'),
+        removeVisible: !!remove && remove.getBoundingClientRect().height > 0,
+        editInOverlay: !!edit?.closest('.d7-proxy-ui-form-host'),
+        thumbVisible: !!thumb && thumb.getBoundingClientRect().height > 0,
+        filename: thumb?.querySelector('.filename')?.textContent,
+      };
+    });
+
+    expect(controls.removeInOverlay).toBe(true);
+    expect(controls.removeVisible).toBe(true);
+    expect(controls.editInOverlay).toBe(true);
+    expect(controls.thumbVisible).toBe(true);
+    expect(controls.filename).toBe('puberty-study-teaser.jpg');
+  });
+
+  test('the existing fid is preserved, so saving does not detach the image', async ({ page, settings }) => {
+    await open(page, settings);
+
+    // The failure mode to guard against: surfacing the field but losing its value, which
+    // would silently strip the image from a published article on save.
+    const submitted = await page.evaluate(() => {
+      const data = new FormData(document.querySelector('form') as HTMLFormElement);
+      return {
+        teaser: data.get('field_image_teaser[und][0][fid]'),
+        hero: data.get('field_image_hero[und][0][fid]'),
+      };
+    });
+    expect(submitted).toEqual({ teaser: '44120', hero: '44121' });
+  });
+
+  test('the form-level hidden inputs are still not mistaken for fields', async ({ page, settings }) => {
+    await open(page, settings);
+    const railText = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return (sr.textContent || '').replace(/\s+/g, ' ');
+    });
+    // Recovering hidden fids must not also surface form_build_id and friends.
+    expect(railText).not.toContain('form_build_id');
+    expect(railText).not.toContain('form_token');
+  });
+});
+
+test.describe('Feature 5: a content type other than News', () => {
+  /**
+   * Specialty, from columbiadoctors.org/node/17176/edit. The rail is assembled from
+   * whichever fields a form actually has, so nothing should be News-specific — these
+   * guard that, and cover the duplicate "Summary" this content type revealed.
+   */
+  const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/17176/edit`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+  };
+
+  test('only one Summary claims to be the meta description', async ({ page, settings }) => {
+    await open(page, settings);
+    const claims = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const text = (sr.textContent || '');
+      return (text.match(/Doubles as the meta description/g) ?? []).length;
+    });
+    expect(claims).toBe(1);
+  });
+
+  test('the second Summary is still present and editable, just not as the summary', async ({ page, settings }) => {
+    await open(page, settings);
+    // Dropping it would be worse than mislabelling it: the field would be unreachable.
+    const second = await page.evaluate(() => {
+      const el = document.querySelector('textarea[name="field_specialty_summary[und][0][value]"]') as HTMLTextAreaElement | null;
+      return { present: !!el, disabled: el?.disabled ?? null };
+    });
+    expect(second).toEqual({ present: true, disabled: false });
+  });
+
+  test('the SEO section forms on this content type too', async ({ page, settings }) => {
+    await open(page, settings);
+    const rail = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return (sr.textContent || '').replace(/\s+/g, ' ');
+    });
+    expect(rail).toContain('URL, SEO & Sitemap');
+  });
+
+  test('the metatag and path fields are reachable once that section is open', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.evaluate(async () => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
+      await new Promise(r => setTimeout(r, 300));
+    });
+    const seo = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const t = (sr.textContent || '').replace(/\s+/g, ' ');
+      return {
+        // Drupal's "Page title" IS metatags[…][title], which now leads the rail in the
+        // Search section under a label saying what it actually controls.
+        searchTitle: t.includes('Search result title'),
+        alias: t.includes('URL alias'),
+      };
+    });
+    expect(seo).toEqual({ searchTitle: true, alias: true });
+  });
+});
+
+test.describe('Feature 5: a relocated Summary is not left invisible', () => {
+  /**
+   * Regression for the orphan the diagnostic reported on
+   * columbiadoctors.org/node/17176/edit:
+   *
+   *   1 relocated widget(s) have no matching slot and are therefore INVISIBLE, while
+   *   still being submitted with the form: field-body-und--0--summary-
+   *
+   * Drupal's core "Edit summary" has a rich editor attached there, so it was relocated —
+   * but PrimaryField only rendered a <slot> in its body branch. A field with the summary
+   * role got a hand-built textarea and no slot, so the real widget was not rendered at
+   * all while continuing to submit.
+   */
+  const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    const errors: string[] = [];
+    page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false, debugSchema: true });
+    await page.goto(`${HOST}/node/17176/edit`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+    await page.waitForFunction(() => !!document.querySelector('.cke'), undefined, { timeout: 15000 });
+    return errors;
+  };
+
+  test('nothing is reported as invisible', async ({ page, settings }) => {
+    const errors = await open(page, settings);
+    await page.waitForTimeout(1200); // the orphan check runs a couple of frames after mount
+    expect(errors.filter(e => /INVISIBLE|no matching slot/i.test(e))).toEqual([]);
+  });
+
+  test('every relocated widget has a slot once sections are open', async ({ page, settings }) => {
+    await open(page, settings);
+    const audit = await page.evaluate(async () => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      const sr = host.shadowRoot!;
+      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
+      await new Promise(r => setTimeout(r, 400));
+      const rendered = new Set(Array.from(sr.querySelectorAll('slot')).map(s => s.getAttribute('name')));
+      const relocated = Array.from(host.children).map(c => c.getAttribute('slot')).filter(Boolean) as string[];
+      return { relocated: relocated.length, orphans: relocated.filter(n => !rendered.has(n)) };
+    });
+    expect(audit.orphans).toEqual([]);
+    expect(audit.relocated).toBeGreaterThan(0);
+  });
+
+  test('the summary editor is on screen, and its content survived', async ({ page, settings }) => {
+    await open(page, settings);
+    const state = await page.evaluate(() => {
+      const cke = document.querySelector('.cke_editor_edit-body-summary') as HTMLElement | null;
+      return {
+        present: !!cke,
+        inOverlay: !!cke?.closest('.d7-proxy-ui-form-host'),
+        visible: !!cke && cke.getBoundingClientRect().height > 0,
+        data: (window as any).CKEDITOR.instances['edit-body-summary']?.getData(),
+      };
+    });
+    expect(state.present).toBe(true);
+    expect(state.inOverlay).toBe(true);
+    expect(state.visible).toBe(true);
+    expect(state.data).toContain('Existing teaser summary.');
+  });
+
+  test('a relocated field does not show its label twice', async ({ page, settings }) => {
+    await open(page, settings);
+    // Drupal's own <label> comes along with the widget, so the overlay must not add one.
+    const counts = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      const sr = host.shadowRoot!;
+      const ours = (sr.textContent || '').match(/BODY/g)?.length ?? 0;
+      const drupals = Array.from(host.querySelectorAll('label'))
+        .filter(l => (l.textContent || '').trim() === 'Body').length;
+      return { ours, drupals };
+    });
+    expect(counts.drupals).toBe(1);
+    expect(counts.ours).toBe(0);
+  });
+});
+
+test.describe('Feature 5: the description is findable and the Titles are distinguishable', () => {
+  /**
+   * Reported: "description utterly buried, plus multiple different title fields".
+   *
+   * Both are real. The meta description sat ten fields deep in a collapsed
+   * "URL, SEO & Sitemap" block, and a Specialty form carries six fields that render as
+   * some form of "Title" — three of them literally the word "Title". Drupal's labels are
+   * only unambiguous inside the tabs the overlay removes, so the overlay has to put that
+   * context back.
+   */
+  const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/17176/edit`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+  };
+
+  const railText = (page: import('@playwright/test').Page) => page.evaluate(() => {
+    const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+    return (sr.textContent || '').replace(/\s+/g, ' ');
+  });
+
+  test('Search & Social Preview leads the rail and is open without being clicked', async ({ page, settings }) => {
+    await open(page, settings);
+
+    const state = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const toggles = Array.from(sr.querySelectorAll('button[aria-expanded]'));
+      const first = toggles[0];
+      return {
+        firstSection: (first?.textContent || '').replace(/\s+/g, ' ').slice(0, 30),
+        firstExpanded: first?.getAttribute('aria-expanded'),
+      };
+    });
+
+    expect(state.firstSection).toContain('Search & Social Preview');
+    // Prominence means visible on load, not one click away.
+    expect(state.firstExpanded).toBe('true');
+  });
+
+  test('the description is reachable without opening anything', async ({ page, settings }) => {
+    await open(page, settings);
+    const text = await railText(page);
+    expect(text).toContain('Search result description');
+  });
+
+  test('the description control is genuinely on screen', async ({ page, settings }) => {
+    await open(page, settings);
+    const box = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const label = Array.from(sr.querySelectorAll('label'))
+        .find(l => (l.textContent || '').includes('Search result description'));
+      const el = label?.parentElement?.parentElement?.querySelector('textarea, input');
+      return el ? (el as HTMLElement).getBoundingClientRect().height > 0 : false;
+    });
+    expect(box).toBe(true);
+  });
+
+  test('no two fields in the rail read the same bare "Title"', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.evaluate(async () => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
+      sr.querySelectorAll<HTMLElement>('button').forEach(b => {
+        if (/rarely-used/i.test(b.textContent || '')) b.click();
+      });
+      await new Promise(r => setTimeout(r, 400));
+    });
+
+    const bare = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return Array.from(sr.querySelectorAll('label'))
+        .map(l => (l.textContent || '').trim().toLowerCase())
+        .filter(t => t === 'title').length;
+    });
+
+    // Drupal's own "Title" labels on the metatag and menu-attribute fields are replaced
+    // with what each one actually controls.
+    expect(bare).toBe(0);
+  });
+
+  test('each title-ish field says which title it is', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.evaluate(async () => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(b => b.click());
+      sr.querySelectorAll<HTMLElement>('button').forEach(b => {
+        if (/rarely-used/i.test(b.textContent || '')) b.click();
+      });
+      await new Promise(r => setTimeout(r, 400));
+    });
+    const text = await railText(page);
+
+    expect(text).toContain('Search result title');
+    expect(text).toContain('Share title (Facebook, LinkedIn)');
+    expect(text).toContain('Share title (Twitter/X)');
+    expect(text).toContain('Link tooltip');
+    // The menu link's own title is already unambiguous, so it keeps Drupal's wording.
+    expect(text).toContain('Menu link title');
+  });
+
+  test('a relabelled field still says what Drupal calls it', async ({ page, settings }) => {
+    await open(page, settings);
+    // Renaming without a trace would strand anyone cross-referencing the Drupal form.
+    const tip = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const label = Array.from(sr.querySelectorAll('label'))
+        .find(l => (l.textContent || '').includes('Search result description'));
+      return label?.getAttribute('title');
+    });
+    expect(tip).toBe('Drupal calls this "Description"');
   });
 });

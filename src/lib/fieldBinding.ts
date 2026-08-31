@@ -50,6 +50,23 @@ function syncRichEditor(el: HTMLTextAreaElement, value: string): void {
   }
 }
 
+/**
+ * Pushes every rich editor's content into its underlying textarea.
+ *
+ * Call before reading values for anything that is not a form submit. On submit the
+ * editor's own handler does this, but a draft read straight from the DOM would otherwise
+ * capture whatever the textarea held before the user started typing.
+ */
+export async function syncRichEditorsToDom(): Promise<void> {
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'richEditorLifecycle', elementId: '*', op: 'sync',
+    });
+  } catch {
+    // No editor bridge available; the textareas are already authoritative.
+  }
+}
+
 /** True when a rich editor is attached to this field. */
 export function hasRichEditor(field: FieldDescriptor): boolean {
   const el = field.elements[0];

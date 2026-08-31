@@ -17,6 +17,7 @@ export type SectionId =
   | 'multimedia'
   | 'menu'
   | 'display'
+  | 'search'      // what Google and social shares display: meta title + description
   | 'seo'
   | 'groups'
   | 'revision'
@@ -105,7 +106,7 @@ export function fieldsIn(schema: FormSchema, section: SectionId): FieldDescripto
 /** Sections that actually have fields, so the rail renders nothing empty. */
 export function populatedSections(schema: FormSchema): SectionId[] {
   const order: SectionId[] = [
-    'primary', 'typeFields', 'topics', 'related', 'multimedia',
+    'primary', 'typeFields', 'search', 'topics', 'related', 'multimedia',
     'menu', 'display', 'seo', 'groups', 'revision', 'other',
   ];
   return order.filter(section => schema.fields.some(f => f.section === section));

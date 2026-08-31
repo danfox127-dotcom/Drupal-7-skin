@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<!--
+  A News form with Media module image widgets in the shape that actually broke.
+
+  What matters here, and what the simplified fixture missed:
+
+   * the launcher input is named media[field_image_teaser_und_0] while its siblings are
+     named field_image_teaser[und][0][fid] — two different name shapes for ONE field,
+     which is what defeated the "every control starts with baseName" climb;
+   * the hidden fid and the preview live OUTSIDE the innermost .form-item, inside an
+     ajax-wrapper div;
+   * Drupal answers a selection by REPLACING that ajax wrapper wholesale, which is why a
+     slot attribute set on it disappears along with it.
+
+  simulateMediaSelect() below does what Drupal's ajax command does: replaceWith on the
+  wrapper, then attachBehaviors on the new markup.
+-->
+<html>
+<head><title>Create News</title></head>
+<body class="logged-in">
+<div id="toolbar"><a href="/user/1">testuser</a></div>
+<form action="/node/add/news" method="post" id="news-node-form" accept-charset="UTF-8">
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Overview</span></legend>
+    <div class="form-item form-type-textfield">
+      <label for="edit-title">Title <span class="form-required">*</span></label>
+      <input type="text" id="edit-title" name="title_field[und][0][value]" class="form-text required" required="required" />
+    </div>
+  </fieldset>
+
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Multimedia</span></legend>
+
+    <div class="field-widget-media-generic" id="edit-field-image-teaser-und-0-ajax-wrapper">
+      <div class="form-item form-type-textfield media-widget">
+        <label for="edit-image-teaser">Teaser Image</label>
+        <input type="text" id="edit-image-teaser" name="media[field_image_teaser_und_0]" class="form-text" />
+        <a class="button-yellow launcher" href="#" data-field="teaser">Browse</a>
+      </div>
+      <input type="hidden" name="field_image_teaser[und][0][fid]" value="0" class="fid-teaser" />
+    </div>
+
+    <div class="field-widget-media-generic" id="edit-field-image-hero-und-0-ajax-wrapper">
+      <div class="form-item form-type-textfield media-widget">
+        <label for="edit-image-hero">Hero Image</label>
+        <input type="text" id="edit-image-hero" name="media[field_image_hero_und_0]" class="form-text" />
+        <a class="button-yellow launcher" href="#" data-field="hero">Browse</a>
+      </div>
+      <input type="hidden" name="field_image_hero[und][0][fid]" value="0" class="fid-hero" />
+    </div>
+  </fieldset>
+
+  <input type="submit" id="edit-submit" name="op" value="Save" />
+</form>
+
+<script>
+window.Drupal = window.Drupal || {};
+Drupal.behaviors = Drupal.behaviors || {};
+Drupal.attachBehaviors = function (context) {
+  for (var k in Drupal.behaviors) {
+    if (Drupal.behaviors[k] && typeof Drupal.behaviors[k].attach === 'function') {
+      Drupal.behaviors[k].attach(context || document);
+    }
+  }
+};
+
+/**
+ * Stands in for Drupal's ajax 'replaceWith' on the widget wrapper after a file is
+ * chosen in the media browser. The chosen file is already in the library at this point;
+ * this is the step that is supposed to show it as selected.
+ */
+window.simulateMediaSelect = function (field, fid, filename) {
+  var wrapperId = 'edit-field-image-' + field + '-und-0-ajax-wrapper';
+  var old = document.getElementById(wrapperId);
+  if (!old) return 'no-wrapper';
+
+  var replacement = document.createElement('div');
+  replacement.className = 'field-widget-media-generic';
+  replacement.id = wrapperId;
+  replacement.innerHTML =
+      '<div class="form-item form-type-textfield media-widget">'
+    +   '<label for="edit-image-' + field + '">'
+    +     (field === 'teaser' ? 'Teaser Image' : 'Hero Image')
+    +   '</label>'
+    +   '<div class="media-thumbnail preview-' + field + '">'
+    +     '<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAAAAAAALAAAAAABAAEAAAIBRAA7"'
+    +          ' width="60" height="40" alt="" />'
+    +     '<span class="filename">' + filename + '</span>'
+    +     '<a href="#" class="remove">Remove</a>'
+    +   '</div>'
+    +   '<input type="text" id="edit-image-' + field + '"'
+    +        ' name="media[field_image_' + field + '_und_0]" class="form-text"'
+    +        ' value="' + filename + '" />'
+    + '</div>'
+    + '<input type="hidden" name="field_image_' + field + '[und][0][fid]"'
+    +      ' value="' + fid + '" class="fid-' + field + '" />';
+
+  old.parentNode.replaceChild(replacement, old);
+  Drupal.attachBehaviors(replacement);
+  return 'replaced';
+};
+
+Drupal.attachBehaviors(document);
+</script>
+</body>
+</html>
