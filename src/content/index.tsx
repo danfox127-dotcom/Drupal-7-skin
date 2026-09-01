@@ -249,8 +249,12 @@ const init = async () => {
      * becoming a separate box, and whether the "no rich text editor in Drupal" note is
      * shown. Reading the form while CKEditor is still loading gets all three wrong
      * together, which is exactly what was reported.
+     *
+     * Skipped when nothing downstream consumes the schema, so a user who has the node
+     * editor switched off does not pay a wait that cannot change anything for them.
      */
-    const editorState = await waitForRichEditors();
+    const needsSchema = settings.nodeEditor || settings.debugSchema;
+    const editorState = needsSchema ? await waitForRichEditors() : 'not-needed';
     if (settings.debugSchema) {
       console.log(`${logStamp()} rich editors: ${editorState}`);
     }

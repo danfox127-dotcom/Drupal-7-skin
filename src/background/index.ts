@@ -201,10 +201,18 @@ async function richEditorLifecycle(
           const tiny = (w as unknown as { tinymce?: { editors?: { id: string }[] } }).tinymce;
 
           const ckIds = Object.keys(ck?.instances ?? {});
-          const ckReady = ckIds.filter(instanceId =>
-            document.getElementById(`cke_${instanceId}`)
-            || document.querySelector(`.cke_editor_${instanceId}`)
-          ).length;
+          const ckReady = ckIds.filter(instanceId => {
+            if (document.getElementById(`cke_${instanceId}`)) return true;
+            // An element id is not necessarily a valid CSS identifier — one starting with
+            // a digit makes this selector throw. An exception here would reject the whole
+            // executeScript, the probe would report no bridge, and the wait would silently
+            // switch itself off, which is the bug this op exists to prevent.
+            try {
+              return Boolean(document.querySelector(`.cke_editor_${instanceId}`));
+            } catch {
+              return false;
+            }
+          }).length;
           const tinyIds = (tiny?.editors ?? []).map(e => e.id);
 
           return JSON.stringify({
