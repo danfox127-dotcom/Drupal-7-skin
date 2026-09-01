@@ -31,7 +31,23 @@
 | `src/lib/import/extract.ts` (modify) | Rename `UNMAPPED`→`ALWAYS_UNMAPPED`; append `findInteractive()`; add two `BodyStats` counters. |
 | `tests/import-extract.spec.ts` (modify) | Add `sourceUrl` parameter to `run()`; add two fixtures; add five tests. |
 
-No existing test asserts on `unmapped`, `summary.*`, `bodyStats`, or uses `toEqual`, so adding fields and entries disturbs nothing already passing. Verified by grep before planning.
+**Correction (found during Task 1).** The claim originally here — that no existing test
+asserts on `unmapped` — was wrong, and wrong for an instructive reason: the file contained a
+raw NUL byte (a deliberate `'java<NUL>script:alert(1)'` security payload), which made grep
+treat it as binary and silently return no matches. The byte has since been re-encoded as
+`\u0000`.
+
+What is actually there:
+
+- `tests/import-extract.spec.ts:408` asserts
+  `expect(r.unmapped.map(u => u.label)).toEqual(['Topics', 'Related Content', 'Menu Placement', 'Groups'])`
+  against the default `SOURCE`. This is an **exact** match, so it already fails if any
+  finding is added to an ordinary article — a stricter guard than the
+  `toHaveLength(4)` test Task 2 planned to add. Task 2's duplicate is therefore dropped.
+- `tests/import-extract.spec.ts:418` asserts `summary.total === proposals.length + unmapped.length`,
+  which holds regardless.
+
+Both pass unchanged, because `SOURCE` has no form and no `<noscript>`.
 
 ---
 
@@ -362,13 +378,10 @@ test('a site search box is not interactive content', async ({ page }) => {
   const finding = r.unmapped.find(u => /interactive/i.test(u.label));
   expect(finding, 'a masthead search form must not be reported').toBeFalsy();
 });
-
-test('an ordinary article produces no finding', async ({ page }) => {
-  const r = await run(page);
-  expect(r.unmapped.find(u => /interactive/i.test(u.label))).toBeFalsy();
-  expect(r.unmapped).toHaveLength(4);
-});
 ```
+
+The "ordinary article produces no finding" case is already covered, exactly, by the existing
+test at line 408 (`toEqual` on all four labels against `SOURCE`). Do not duplicate it.
 
 - [ ] **Step 3: Run and confirm the first one fails**
 
@@ -376,7 +389,7 @@ Run: `npx playwright test tests/import-extract.spec.ts -g "site search box" --wo
 
 Expected: FAIL — `a masthead search form must not be reported`. Task 1's `isContentForm` accepts one control, and `input[type=text]` named `search_block_form` counts as one.
 
-(`an ordinary article produces no finding` should already pass — `SOURCE` has no form at all. Confirm that, since a failure there would mean Task 1 broke something.)
+Also confirm `lists Topics, Related Content, Menu Placement and Groups with reasons` (line 408) still passes — `SOURCE` has no form, so no finding should be appended. A failure there means Task 1 leaked a finding onto ordinary pages.
 
 - [ ] **Step 4: Raise the threshold to two controls**
 
