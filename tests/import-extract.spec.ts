@@ -136,6 +136,29 @@ const NOSCRIPT_ONLY = `<!DOCTYPE html>
 
 const EXPLORER_URL = 'https://columbiamedicine.org/divisions/gharavi/explorer.php';
 
+/**
+ * The eGFR page's intro, in document order, trimmed from the real source.
+ *
+ * A short aside comes FIRST and the real description comes fourth, so "first qualifying
+ * paragraph" picks the aside — which would have become this page's meta description and
+ * therefore its search snippet.
+ */
+const ASIDE_FIRST = `<!DOCTYPE html>
+<html><head><title>Gharavi Lab</title><meta name="description" content=""></head><body>
+  <div class="main nosidenav">
+    <h1 class="noline">Multi-ethnic eGFR Calculator</h1>
+    <p>If a version of this calculator that does not use Javascript would be useful to you, then please request it by emailing me at daf2139 /at/ columbia /dot/ edu.</p>
+    <p><em>Krzysztof Kiryluk, MD, MS and David A. Fasel</em></p>
+    <p>This calculator is used to estimate glomerular filtration rate (eGFR) using recent formulas for adults of various ethnicities and for children, and to determine the corresponding stage of chronic kidney disease.</p>
+    <p>Select the appropriate age group and enter values to estimate GFR in ml/min/1.73 m2:</p>
+    <form name="form" autocomplete="off">
+      <input type="text" id="txtAge" name="age" placeholder="18 - 100">
+      <input type="text" id="txtSC" name="sc" placeholder="0.1 - 20">
+    </form>
+    <p>The Cockcroft-Gault equation estimates creatinine clearance and is not adjusted for body surface area, which in clinical practice means the value it reports is not directly comparable with the other equations offered above, and should be interpreted with that difference in mind by anyone using it.</p>
+  </div>
+</body></html>`;
+
 test.beforeAll(async () => {
   const result = await esbuild.build({
     entryPoints: [path.join(__dirname, '../src/lib/import/extract.ts')],
@@ -234,7 +257,21 @@ test.describe('field proposals', () => {
     const keys = r.proposals.map(p => p.key);
     expect(keys).not.toContain('subtitle');
     expect(keys).not.toContain('byline');
-    expect(keys).not.toContain('summary');
+    /**
+     * Summary is deliberately NOT in that list any more.
+     *
+     * It used to be: with no meta description there was nothing to propose. The prose
+     * fallback changed that on purpose, because a required Summary left empty blocks the
+     * save on every content type on these sites, and the pages being migrated routinely
+     * ship an empty description tag.
+     *
+     * The honest cost, visible here: on a page whose whole content is one paragraph, the
+     * summary duplicates the body. That is acceptable for a medium-confidence starting
+     * point an editor can see and edit — and better than an empty required field — but it
+     * is a real consequence rather than a free win.
+     */
+    expect(keys).toContain('summary');
+    expect(r.proposals.find(p => p.key === 'summary')!.confidence).toBe('medium');
     expect(keys).not.toContain('date');
     expect(keys).toContain('body');
   });
@@ -584,5 +621,55 @@ test.describe('interactive content', () => {
     // And the calculator itself must not.
     expect(body.value).not.toContain('inputEGFR');
     expect(body.value).not.toContain('calc_progression.js');
+  });
+});
+
+test.describe('summary fallback', () => {
+  test('a page with no meta description gets its summary from the first paragraph', async ({ page }) => {
+    // Legacy pages routinely ship an empty description. Both Gharavi calculators do, so
+    // keying the Summary solely on that tag leaves a REQUIRED field empty on exactly the
+    // pages being migrated.
+    const r = await run(page, CALCULATOR, { tags: [], source: 'default' }, CALC_URL);
+    const summary = r.proposals.find(p => p.key === 'summary');
+
+    expect(summary, 'a required Summary must not be left with nothing to fill it').toBeTruthy();
+    expect(summary!.value).toContain('619 biopsy-diagnosed Chinese patients');
+    expect(summary!.confidence).toBe('medium');
+    expect(summary!.source).toContain('no meta description');
+    expect(summary!.accepted).toBe(true);
+  });
+
+  test('the byline paragraph is too short to be a summary', async ({ page }) => {
+    const r = await run(page, CALCULATOR, { tags: [], source: 'default' }, CALC_URL);
+    const summary = r.proposals.find(p => p.key === 'summary')!;
+    expect(summary.value).not.toContain('Krzysztof Kiryluk, MD, MS and David A. Fasel');
+  });
+
+  test('a real meta description still wins over the prose fallback', async ({ page }) => {
+    // The guard that keeps the fallback from hijacking pages that HAVE an author-written
+    // description. SOURCE carries one.
+    const r = await run(page);
+    const summary = r.proposals.find(p => p.key === 'summary')!;
+    expect(summary.confidence).toBe('high');
+    expect(summary.source).toContain('meta name="description"');
+    expect(summary.value).toContain('1,240 patients');
+  });
+  test('a leading aside does not beat the real description', async ({ page }) => {
+    const r = await run(page, ASIDE_FIRST, { tags: [], source: 'default' },
+      'https://columbiamedicine.org/divisions/gharavi/calculators/calc_egfr.php');
+    const summary = r.proposals.find(p => p.key === 'summary')!;
+
+    expect(summary.value).toContain('estimate glomerular filtration rate');
+    expect(summary.value).not.toContain('emailing me');
+  });
+
+  test('discussion below the widget is out of scope, however long', async ({ page }) => {
+    // The longest paragraph on the page sits after the form and describes one equation.
+    // Deliberately NOT class="legalText": that exclusion already existed, so leaving it on
+    // meant this test passed with the position rule removed and proved nothing.
+    const r = await run(page, ASIDE_FIRST, { tags: [], source: 'default' },
+      'https://columbiamedicine.org/divisions/gharavi/calculators/calc_egfr.php');
+    expect(r.proposals.find(p => p.key === 'summary')!.value)
+      .not.toContain('Cockcroft-Gault equation estimates');
   });
 });

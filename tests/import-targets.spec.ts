@@ -41,6 +41,41 @@ const AMBIGUOUS = `<!DOCTYPE html>
   </form>
 </body></html>`;
 
+/**
+ * A Page form as it really is on vagelos.columbia.edu — Summary is a required node field
+ * present on every content type, and the Metatags module adds a "Description" textarea
+ * whose default is the token [node:summary].
+ *
+ * The metatags block below is verbatim from the live form. It matters because filling the
+ * metatag field directly would be wrong: it derives from Summary, and overwriting the
+ * token breaks that link. The summary proposal must land on Summary and nowhere else.
+ */
+const PAGE_WITH_METATAGS = `<!DOCTYPE html>
+<html><body class="node-type-page">
+  <form id="page-node-form">
+    <div class="form-item form-type-textfield">
+      <label for="edit-title">Title <span class="form-required">*</span></label>
+      <input type="text" id="edit-title" name="title" value="" class="form-text required" required="required" />
+    </div>
+    <div class="form-item form-type-textfield">
+      <label for="edit-subtitle">Subtitle</label>
+      <input type="text" id="edit-subtitle" name="field_subtitle[und][0][value]" value="" class="form-text" />
+    </div>
+    <div class="form-item form-type-textarea">
+      <label for="edit-summary">Summary <span class="form-required">*</span></label>
+      <div class="form-textarea-wrapper resizable"><textarea id="edit-summary" name="field_summary[und][0][value]" class="form-textarea required" required="required" cols="60" rows="5"></textarea></div>
+      <div class="description">Enter a short plain text description about this page. This summary text will be used when the page is featured on the site. This summary is also used as the default text for the page's metadata description used by external search engines and some social media sites.</div>
+    </div>
+    <input type="hidden" name="metatags[und][title][default]" value="[node:title]" />
+    <div class="form-item form-type-textarea form-item-metatags-und-description-value">
+      <label for="edit-metatags-und-description-value">Description </label>
+     <div class="form-textarea-wrapper resizable"><textarea maxlength="380" class="maxlength form-textarea" id="edit-metatags-und-description-value" name="metatags[und][description][value]" cols="60" rows="2">[node:summary]</textarea></div>
+    <div class="description">A brief and concise summary of the page's content that is a maximum of 160 characters in length.</div>
+    </div>
+    <input type="hidden" name="metatags[und][description][default]" value="[node:summary]" />
+  </form>
+</body></html>`;
+
 let bundle: string;
 let specialty: string;
 
@@ -124,5 +159,20 @@ test.describe('where an approved proposal lands', () => {
 
     expect(t.baseName).toBe('field_real_summary');
     expect(t.required).toBe(true);
+  });
+  test('the summary lands on the required Summary field, not the metatag Description', async ({ page }) => {
+    const t = await target(page, PAGE_WITH_METATAGS, 'summary');
+    expect(t.error).toBeUndefined();
+    expect(t.baseName).toBe('field_summary');
+    expect(t.required).toBe(true);
+  });
+
+  test('nothing routes a proposal into the metatags Description field', async ({ page }) => {
+    // It defaults to [node:summary]. Writing a literal value there severs the token, so no
+    // proposal key may ever resolve to it.
+    for (const key of ['summary', 'title', 'subtitle', 'body', 'byline', 'date']) {
+      const t = await target(page, PAGE_WITH_METATAGS, key);
+      expect(t.baseName, `${key} must not target the metatag field`).not.toBe('metatags');
+    }
   });
 });
