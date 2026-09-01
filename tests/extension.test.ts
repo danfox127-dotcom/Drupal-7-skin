@@ -1732,15 +1732,29 @@ test.describe('Feature 3: collapsed subtrees are reached, or reported honestly',
     await expect(panel).toContainText('1 subtree not shown here');
     // The link is what makes it reachable at all.
     await expect(panel.locator('a')).toHaveAttribute(
-      'href', '/admin/structure/menu/manage/main-menu/parent/950'
+      'href', '/admin/structure/menu/manage/main-menu/bigmenu-customize/subform/950'
     );
   });
 
-  test('it says why, rather than looking like an omission', async ({ page, settings }) => {
+  test('a BigMenu AJAX subtree is not eagerly expanded', async ({ page, settings }) => {
+    /**
+     * columbiadoctors.org uses BigMenu, whose toggles are real URLs that expand inline
+     * through Drupal's ajax framework — so "has an href" does not mean "another page".
+     *
+     * They are still not clicked. BigMenu exists BECAUSE the menu is too large to render
+     * at once: one item there has 297 children and the menu runs past 3,000, so expanding
+     * every subtree would fire thousands of requests to rebuild the page BigMenu was
+     * installed to avoid. Being slower than Drupal is not a fix.
+     */
     await open(page, settings);
-    // A count with no reason reads as a bug. The reason is that saving cannot reach them.
+    const requests: string[] = [];
+    page.on('request', r => { if (/bigmenu-customize/.test(r.url())) requests.push(r.url()); });
+    await page.waitForTimeout(600);
+    expect(requests).toEqual([]);
+
+    // Offered as a link, with the reason stated.
     await expect(page.locator(`${UI} [data-unreachable-subtrees]`))
-      .toContainText('could not be saved');
+      .toContainText('too large to render');
   });
 
   test('a menu other than main-menu is handled too', async ({ page, settings }) => {

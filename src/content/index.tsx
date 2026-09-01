@@ -31,7 +31,12 @@ const parseDrupalSelect = (select: HTMLSelectElement) => {
 };
 
 /** A subtree Drupal collapsed that lives on a different page, so it is not loaded. */
-export interface RemoteSubtree { label: string; href: string }
+export interface RemoteSubtree {
+  label: string;
+  href: string;
+  /** True for a Drupal AJAX toggle, which expands in Drupal's own table rather than navigating. */
+  expandsInDrupal: boolean;
+}
 
 const SHOW_CHILDREN = /show children/i;
 
@@ -40,6 +45,23 @@ const isInPageToggle = (a: HTMLAnchorElement): boolean => {
   const href = (a.getAttribute('href') ?? '').trim();
   return href === '' || href === '#' || href.startsWith('#') || href.toLowerCase().startsWith('javascript:');
 };
+
+/**
+ * True for a Drupal AJAX link — a real URL that loads INTO this page.
+ *
+ * columbiadoctors.org uses the BigMenu module, whose toggles look like
+ * `/admin/structure/menu/manage/main-menu/bigmenu-customize/subform/7191` and expand
+ * inline through Drupal's ajax framework. So a real href does not mean "another page".
+ *
+ * These are deliberately NOT auto-clicked. BigMenu exists because the menu is too large
+ * to render at once — one item on that site has 297 children and the menu runs past 3,000
+ * — so eagerly expanding every subtree would fire thousands of AJAX requests at the server
+ * to rebuild the exact page BigMenu was installed to avoid. They are offered as links
+ * instead, which expand them in Drupal's own table.
+ */
+const isAjaxToggle = (a: HTMLAnchorElement): boolean =>
+  a.classList.contains('use-ajax')
+  || /\/bigmenu-customize\//.test(a.getAttribute('href') ?? '');
 
 /**
  * Reveals the subtrees Drupal collapsed behind "Show children (N)".
@@ -91,6 +113,7 @@ const expandCollapsedSubtrees = async (
         remote.set(href, {
           href,
           label: label || (toggle.textContent ?? '').trim(),
+          expandsInDrupal: isAjaxToggle(toggle),
         });
       }
     }

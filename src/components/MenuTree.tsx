@@ -30,7 +30,12 @@ export interface MenuItem {
 }
 
 /** A collapsed subtree that lives on another page, so its rows are not in this form. */
-export interface UnreachableSubtree { label: string; href: string }
+export interface UnreachableSubtree {
+  label: string;
+  href: string;
+  /** True when the link expands the subtree in Drupal's own table instead of navigating. */
+  expandsInDrupal?: boolean;
+}
 
 interface Props {
   items: MenuItem[];
@@ -335,9 +340,13 @@ export const MenuTree = ({ items: initialItems, onSave, unreachable = [] }: Prop
             {unreachable.length} subtree{unreachable.length === 1 ? '' : 's'} not shown here
           </p>
           <p className="text-help text-ink mt-0.5">
-            Drupal keeps {unreachable.length === 1 ? 'this one' : 'these'} on {unreachable.length === 1 ? 'its' : 'their'} own
-            page. Reordering here writes into this form, which those rows are not part of, so
-            they are linked rather than mixed in — a change made to them here could not be saved.
+            {unreachable.some(s => s.expandsInDrupal)
+              ? 'Drupal loads these on demand, because this menu is too large to render at '
+                + 'once. Expanding them all here would mean thousands of requests, so each is '
+                + 'linked instead — the link opens it in Drupal\u2019s own table.'
+              : 'Drupal keeps these on their own page. Reordering here writes into this form, '
+                + 'which those rows are not part of, so they are linked rather than mixed in — '
+                + 'a change made to them here could not be saved.'}
           </p>
           <ul className="mt-1.5 flex flex-col gap-0.5">
             {unreachable.map(subtree => (
