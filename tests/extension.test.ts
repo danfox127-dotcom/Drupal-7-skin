@@ -1677,6 +1677,49 @@ test.describe('Feature 3: collapsed subtrees are reached, or reported honestly',
     expect(before).not.toContain('Funding');
   });
 
+  test('rows show their real titles, not the drag handle', async ({ page, settings }) => {
+    /**
+     * What the live site actually showed: every row read "Untitled" pointing at "#".
+     *
+     * Core's tabledrag inserts `<a class="tabledrag-handle" href="#">` as the FIRST anchor
+     * in a row's first cell, and the parser used `td:nth-child(1) a` — so it took the drag
+     * handle, which has no text and no destination. BigMenu adds its "Show children (N)"
+     * toggle to the same cell, the other anchor not to pick.
+     *
+     * No fixture had a handle, so the entire suite agreed with the parser. They all have
+     * one now.
+     */
+    await open(page, settings);
+    const rows = await page.evaluate(() => {
+      const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
+      const root = el.shadowRoot ?? el;
+      return Array.from(root.querySelectorAll('[data-menu-row], li, div'))
+        .map(n => (n.textContent || '').trim())
+        .filter(t => /^Untitled/.test(t)).length;
+    });
+    expect(rows).toBe(0);
+
+    const text = await page.evaluate(() => {
+      const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
+      return ((el.shadowRoot ?? el).textContent || '');
+    });
+    expect(text).toContain('About Us');
+    expect(text).toContain('Research');
+  });
+
+  test('the subtree panel names the parent item, not the toggle', async ({ page, settings }) => {
+    await open(page, settings);
+    // Same root cause: the label came through the same broken selector, so the panel
+    // listed "Show children (10)" ten times instead of naming which subtrees they were.
+    const links = await page.evaluate(() => {
+      const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
+      const root = el.shadowRoot ?? el;
+      const panel = root.querySelector('[data-unreachable-subtrees]');
+      return Array.from(panel?.querySelectorAll('a') ?? []).map(a => (a.textContent || '').trim());
+    });
+    expect(links).toEqual(['Education']);
+  });
+
   test('an in-page subtree is expanded and its items appear in the tree', async ({ page, settings }) => {
     await open(page, settings);
     const text = await page.evaluate(() => {

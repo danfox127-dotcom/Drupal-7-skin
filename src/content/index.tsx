@@ -109,7 +109,7 @@ const expandCollapsedSubtrees = async (
       } else {
         const href = toggle.getAttribute('href') ?? '';
         const row = toggle.closest('tr');
-        const label = (row?.querySelector('td:nth-child(1) a')?.textContent ?? '').trim();
+        const label = row ? (menuLinkAnchor(row)?.textContent ?? '').trim() : '';
         remote.set(href, {
           href,
           label: label || (toggle.textContent ?? '').trim(),
@@ -124,6 +124,34 @@ const expandCollapsedSubtrees = async (
   return { expanded, remote: [...remote.values()] };
 };
 
+/**
+ * The anchor that IS the menu link, out of the several in a row's first cell.
+ *
+ * `td:nth-child(1) a` was wrong on every real Drupal page. Core's tabledrag inserts
+ * `<a class="tabledrag-handle" href="#">` as the FIRST anchor in that cell, so the parser
+ * took the drag handle: empty text and href="#", which surfaced as a menu of rows all
+ * reading "Untitled" pointing at "#". BigMenu then adds its "Show children (N)" toggle to
+ * the same cell, which is the other thing not to pick.
+ *
+ * No fixture had a drag handle, so the whole suite agreed with the parser.
+ */
+const menuLinkAnchor = (row: Element): HTMLAnchorElement | null => {
+  const cell = row.querySelector('td');
+  if (!cell) return null;
+
+  const anchors = Array.from(cell.querySelectorAll<HTMLAnchorElement>('a'));
+  return anchors.find(a => {
+    if (a.classList.contains('tabledrag-handle')) return false;
+    if (isAjaxToggle(a)) return false;
+    if (SHOW_CHILDREN.test(a.textContent ?? '')) return false;
+    if (/hide children/i.test(a.textContent ?? '')) return false;
+    const href = (a.getAttribute('href') ?? '').trim();
+    // A handle with no class still gives itself away: no destination and no text.
+    if ((href === '' || href === '#') && !(a.textContent ?? '').trim()) return false;
+    return true;
+  }) ?? null;
+};
+
 const parseDrupalMenuTable = (table: HTMLTableElement): MenuItem[] => {
   const items: MenuItem[] = [];
   const rows = table.querySelectorAll('tr.draggable');
@@ -131,7 +159,7 @@ const parseDrupalMenuTable = (table: HTMLTableElement): MenuItem[] => {
   rows.forEach((row, index) => {
     // Drupal renders top-level items with 1 .indentation div; subtract 1 so root = 0.
     const depth = Math.max(0, row.querySelectorAll('.indentation').length - 1);
-    const linkEl = row.querySelector('td:nth-child(1) a') as HTMLAnchorElement;
+    const linkEl = menuLinkAnchor(row);
     /**
      * textContent, NOT innerText.
      *
