@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { FieldDescriptor } from '../../lib/formSchema';
 import { readValue, writeValue } from '../../lib/fieldBinding';
+import { useNativeSync } from './useNativeSync';
 import { SlottedFieldsContext } from './FieldControl';
 import { slotNameFor } from '../../content/inject';
 
@@ -44,6 +45,10 @@ export const PrimaryField = ({ field, role, error, onChange }: Props) => {
   const slotted = relocated.has(field.machineName);
 
   const [value, setValue] = useState<string>(() => String(readValue(field)));
+
+  // Something else may write to the native field behind us — the importer applying a
+  // proposal, or Drupal's own AJAX swapping a widget.
+  useNativeSync(field, value, next => setValue(String(next)));
 
   const commit = useCallback((next: string) => {
     setValue(next);

@@ -2,6 +2,7 @@ import React, { useState, useCallback } from 'react';
 import { AlertCircle } from 'lucide-react';
 import { FieldDescriptor } from '../../lib/formSchema';
 import { readValue, writeValue, FieldValue } from '../../lib/fieldBinding';
+import { useNativeSync } from './useNativeSync';
 import { slotNameFor } from '../../content/inject';
 import { displayLabelFor, wasRelabelled } from '../../lib/formSchema/displayLabels';
 
@@ -71,6 +72,10 @@ export const FieldControl = ({ field, error, dense, slotted: slottedProp, onChan
   const slotted = slottedProp ?? relocated.has(field.machineName);
 
   const [value, setValue] = useState<FieldValue>(() => readValue(field));
+
+  // Same reason as PrimaryField: the native field is the source of truth, and it can be
+  // written to by something other than this control.
+  useNativeSync(field, value, setValue);
   const [writeFailed, setWriteFailed] = useState(false);
 
   const commit = useCallback((next: FieldValue) => {
