@@ -3,6 +3,18 @@ import { injectComponent, injectOverlay, injectInsideForm, relocateWidget } from
 import { TaxonomyCombobox } from '../components/TaxonomyCombobox';
 import { HtmlExport } from '../components/HtmlExport';
 import { MenuTree, MenuItem } from '../components/MenuTree';
+import { MenuSearch } from '../components/MenuSearch';
+/**
+ * Static imports, deliberately.
+ *
+ * These were dynamic `import()` calls, which a content script cannot resolve: the chunk
+ * would have to be fetched from the extension origin and declared in
+ * web_accessible_resources, and without that the import rejects silently — the search box
+ * rendered and the index never arrived.
+ */
+import {
+  parseMenuIndex, menuIndexSourceUrl, MenuIndexItem,
+} from '../lib/menuIndex';
 import { CommandPalette } from '../components/CommandPalette';
 import { ContentList } from '../components/ContentList';
 import { NodeEditor } from '../components/editor/NodeEditor';
@@ -30,28 +42,184 @@ const parseDrupalSelect = (select: HTMLSelectElement) => {
   });
 };
 
+/** A subtree Drupal collapsed that lives on a different page, so it is not loaded. */
+export interface RemoteSubtree {
+  label: string;
+  href: string;
+  /** True for a Drupal AJAX toggle, which expands in Drupal's own table rather than navigating. */
+  expandsInDrupal: boolean;
+}
+
+const SHOW_CHILDREN = /show children/i;
+
+/** True for a link that acts on this page rather than navigating away. */
+const isInPageToggle = (a: HTMLAnchorElement): boolean => {
+  const href = (a.getAttribute('href') ?? '').trim();
+  return href === '' || href === '#' || href.startsWith('#') || href.toLowerCase().startsWith('javascript:');
+};
+
+/**
+ * True for a Drupal AJAX link — a real URL that loads INTO this page.
+ *
+ * columbiadoctors.org uses the BigMenu module, whose toggles look like
+ * `/admin/structure/menu/manage/main-menu/bigmenu-customize/subform/7191` and expand
+ * inline through Drupal's ajax framework. So a real href does not mean "another page".
+ *
+ * These are deliberately NOT auto-clicked. BigMenu exists because the menu is too large
+ * to render at once — one item on that site has 297 children and the menu runs past 3,000
+ * — so eagerly expanding every subtree would fire thousands of AJAX requests at the server
+ * to rebuild the exact page BigMenu was installed to avoid. They are offered as links
+ * instead, which expand them in Drupal's own table.
+ */
+const isAjaxToggle = (a: HTMLAnchorElement): boolean =>
+  a.classList.contains('use-ajax')
+  || /\/bigmenu-customize\//.test(a.getAttribute('href') ?? '');
+
+/**
+ * Reveals only the subtrees whose toggle acts on this page already.
+ *
+ * A plain `href="#"` toggle is free: it reveals rows that are in the page. Anything that
+ * costs a request is NOT expanded here — see expandOneSubtree, which does one at a time on
+ * click. Eagerly expanding a BigMenu site meant thousands of requests to rebuild the page
+ * BigMenu exists to avoid, and the first version of this shipped a panel listing the same
+ * nine names as the nine rows above it, which was worse than saying nothing.
+ */
+const expandCollapsedSubtrees = async (
+  table: HTMLTableElement
+): Promise<{ expanded: number; remote: RemoteSubtree[] }> => {
+  const clicked = new Set<HTMLAnchorElement>();
+  const remote = new Map<string, RemoteSubtree>();
+  let expanded = 0;
+
+  for (let pass = 0; pass < 6; pass++) {
+    const toggles = Array.from(table.querySelectorAll<HTMLAnchorElement>('a'))
+      .filter(a => SHOW_CHILDREN.test(a.textContent ?? ''))
+      .filter(a => !clicked.has(a));
+    if (toggles.length === 0) break;
+
+    let clickedThisPass = 0;
+    for (const toggle of toggles) {
+      clicked.add(toggle);
+
+      // Costs a request: left for the row's own expand control.
+      if (isAjaxToggle(toggle)) continue;
+
+      if (!isInPageToggle(toggle)) {
+        // A genuine link to another page. Those rows are not part of this form, so a
+        // change made to them here could not be saved — reported, not loaded.
+        const href = toggle.getAttribute('href') ?? '';
+        const row = toggle.closest('tr');
+        const label = row ? (menuLinkAnchor(row)?.textContent ?? '').trim() : '';
+        remote.set(href, {
+          href,
+          label: label || (toggle.textContent ?? '').trim(),
+          expandsInDrupal: false,
+        });
+        continue;
+      }
+
+      const before = table.querySelectorAll('tr.draggable').length;
+      toggle.click();
+      clickedThisPass++;
+      await new Promise(resolve => setTimeout(resolve, 60));
+      expanded += Math.max(0, table.querySelectorAll('tr.draggable').length - before);
+    }
+
+    if (clickedThisPass === 0) break;
+  }
+
+  return { expanded, remote: [...remote.values()] };
+};
+
+/**
+ * The anchor that IS the menu link, out of the several in a row's first cell.
+ *
+ * `td:nth-child(1) a` was wrong on every real Drupal page. Core's tabledrag inserts
+ * `<a class="tabledrag-handle" href="#">` as the FIRST anchor in that cell, so the parser
+ * took the drag handle: empty text and href="#", which surfaced as a menu of rows all
+ * reading "Untitled" pointing at "#". BigMenu then adds its "Show children (N)" toggle to
+ * the same cell, which is the other thing not to pick.
+ *
+ * No fixture had a drag handle, so the whole suite agreed with the parser.
+ */
+const menuLinkAnchor = (row: Element): HTMLAnchorElement | null => {
+  const cell = row.querySelector('td');
+  if (!cell) return null;
+
+  const anchors = Array.from(cell.querySelectorAll<HTMLAnchorElement>('a'));
+  return anchors.find(a => {
+    if (a.classList.contains('tabledrag-handle')) return false;
+    if (isAjaxToggle(a)) return false;
+    if (SHOW_CHILDREN.test(a.textContent ?? '')) return false;
+    if (/hide children/i.test(a.textContent ?? '')) return false;
+    const href = (a.getAttribute('href') ?? '').trim();
+    // A handle with no class still gives itself away: no destination and no text.
+    if ((href === '' || href === '#') && !(a.textContent ?? '').trim()) return false;
+    return true;
+  }) ?? null;
+};
+
 const parseDrupalMenuTable = (table: HTMLTableElement): MenuItem[] => {
   const items: MenuItem[] = [];
+  onDemandSubtrees.clear();
   const rows = table.querySelectorAll('tr.draggable');
 
-  rows.forEach(row => {
+  rows.forEach((row, index) => {
     // Drupal renders top-level items with 1 .indentation div; subtract 1 so root = 0.
     const depth = Math.max(0, row.querySelectorAll('.indentation').length - 1);
-    const linkEl = row.querySelector('td:nth-child(1) a') as HTMLAnchorElement;
-    const title = linkEl?.innerText || 'Untitled';
+    const linkEl = menuLinkAnchor(row);
+    /**
+     * textContent, NOT innerText.
+     *
+     * innerText reports text AS RENDERED, which means it applies text-transform: a title
+     * an admin theme uppercases comes back "ABOUT US" and is then shown, and written back
+     * into the tree, as the item's name. It also forces layout, once per row, on a menu
+     * thousands of items long. textContent reads the source text and costs nothing.
+     *
+     * Not the reason I first assumed: innerText does NOT return '' for an unrendered
+     * element — the spec falls back to textContent there — so hidden rows were never
+     * mislabelled. Recorded because the wrong reason is worth not repeating.
+     */
+    const title = (linkEl?.textContent ?? '').trim() || 'Untitled';
     const path = linkEl?.getAttribute('href') || '#';
 
     const mlidInput = row.querySelector('input[name*="[mlid]"]') as HTMLInputElement;
-    const id = mlidInput?.value || Math.random().toString(36).substring(7);
+    /**
+     * A row with no mlid gets a STABLE synthetic id.
+     *
+     * This used to be Math.random(), which changes on every parse: React would see a new
+     * key for the same row across re-renders, and syncTreeToDrupal looks rows up BY id, so
+     * a re-parse between edit and save could fail to find the row it meant to write. Tied
+     * to position instead — unlovely, but reproducible.
+     */
+    const id = mlidInput?.value || `row-${index}`;
 
     const enabledCheckbox = row.querySelector('input[type="checkbox"].form-checkbox') as HTMLInputElement;
     const enabled = enabledCheckbox ? enabledCheckbox.checked : true;
+
+    /**
+     * Whether Drupal is holding this item's children back.
+     *
+     * Recorded per menu, not per row: it decides whether this page gets the tree manager at
+     * all. See the injection site.
+     */
+    const toggle = Array.from(row.querySelectorAll<HTMLAnchorElement>('a'))
+      .find(a => SHOW_CHILDREN.test(a.textContent ?? ''));
+    if (toggle && isAjaxToggle(toggle)) onDemandSubtrees.add(id);
 
     items.push({ id, title, path, depth, enabled });
   });
 
   return items;
 };
+
+/**
+ * Items whose children Drupal loads on request. Rebuilt on every parse.
+ *
+ * Their presence means the menu is too large for Drupal to render in one page — the site
+ * runs BigMenu — which is exactly the case where replacing the table makes things worse.
+ */
+const onDemandSubtrees = new Set<string>();
 
 const syncTreeToDrupal = (table: HTMLTableElement, items: MenuItem[]) => {
   const drupalRows = Array.from(table.querySelectorAll('tr.draggable'));
@@ -221,6 +389,86 @@ async function waitForRichEditors(): Promise<string> {
     state = await probe();
   }
   return `timeout:${state?.ready ?? 0}/${state?.total ?? 0}`;
+}
+
+/**
+ * Mounts the whole-menu search above Drupal's table, fetching its index once.
+ *
+ * The index is cached in extension storage per host and menu, so moving between pages does
+ * not refetch. Stale is acceptable and staleness is shown: a menu item added a minute ago
+ * being absent from search is a smaller problem than a request on every page load, and the
+ * Refresh button is right there.
+ */
+async function mountMenuSearch(menuTable: HTMLTableElement, menuName: string): Promise<void> {
+  const cacheKey = `menuIndex:${window.location.host}:${menuName}`;
+
+  const render = (state: {
+    items: MenuIndexItem[] | null;
+    error?: string | null;
+    fetchedAt?: number | null;
+  }) => {
+    root.render(
+      <React.StrictMode>
+        <MenuSearch
+          menuName={menuName}
+          items={state.items}
+          error={state.error ?? null}
+          fetchedAt={state.fetchedAt ?? null}
+          onRefresh={() => { void load(true); }}
+        />
+      </React.StrictMode>
+    );
+  };
+
+  const load = async (force: boolean) => {
+    if (!force) {
+      const cached = await new Promise<Record<string, unknown>>(resolve =>
+        chrome.storage.local.get({ [cacheKey]: null }, resolve));
+      const hit = cached[cacheKey] as { items: MenuIndexItem[]; fetchedAt: number } | null;
+      if (hit?.items?.length) {
+        render({ items: hit.items, fetchedAt: hit.fetchedAt });
+        return;
+      }
+    }
+
+    render({ items: null });
+
+    try {
+      const source = menuIndexSourceUrl(menuName);
+      const response = await fetch(source, { credentials: 'same-origin' });
+      if (!response.ok) {
+        throw new Error(`${source} returned ${response.status}`);
+      }
+
+      /**
+       * DOMParser, not innerHTML on a detached node: the fetched page is a full admin
+       * document and must never be attached or executed. Parsing it inert means its scripts
+       * do not run and its markup cannot touch this page.
+       */
+      const doc = new DOMParser().parseFromString(await response.text(), 'text/html');
+      const items = parseMenuIndex(doc, menuName);
+      const fetchedAt = Date.now();
+
+      if (items.length === 0) {
+        render({ items, fetchedAt, error: null });
+        return;
+      }
+
+      chrome.storage.local.set({ [cacheKey]: { items, fetchedAt } });
+      render({ items, fetchedAt });
+      console.info(`${logStamp()} Indexed ${items.length} items in ${menuName} from ${source}.`);
+    } catch (error) {
+      render({
+        items: [],
+        error: `Could not read the full menu (${error instanceof Error ? error.message : 'unknown error'}).`,
+      });
+    }
+  };
+
+  // injectComponent returns the React root, and already wraps in StrictMode; re-rendering
+  // through it is how this component updates as the index arrives.
+  const root = injectComponent(menuTable, <div />, 'before');
+  await load(false);
 }
 
 const logStamp = () => {
@@ -519,37 +767,77 @@ const init = async () => {
   }
 
   // Feature 3: Menu Tree
-  if (settings.menuTree && url.includes('/admin/structure/menu/manage/main-menu')) {
+  /**
+   * Any menu's overview page, not just main-menu.
+   *
+   * This matched the literal string '/admin/structure/menu/manage/main-menu', so a site
+   * with a secondary or footer menu got nothing on those pages with no indication why.
+   * Anchored at the end so the sub-pages under it — /add, /edit, /delete — are left alone.
+   */
+  const menuOverview = /\/admin\/structure\/menu\/manage\/([^/]+)\/?$/.exec(new URL(url).pathname);
+  if (settings.menuTree && menuOverview) {
+    const menuName = menuOverview[1];
     const menuTable = document.querySelector('table#menu-overview') as HTMLTableElement;
     if (menuTable) {
+      // Before parsing: a collapsed subtree's rows are not in the table yet, and rows
+      // hidden behind a toggle would parse with empty titles.
+      const subtrees = await expandCollapsedSubtrees(menuTable);
       const items = parseDrupalMenuTable(menuTable);
-      menuTable.style.display = 'none';
-
-      const actions = document.querySelector('.form-actions');
-      if (actions) (actions as HTMLElement).style.display = 'none';
 
       /**
-       * Drupal collapses subtrees behind "Show children (N)" links, and only the visible
-       * rows are in the DOM. On the live main menu that is 6 rows out of 3,000+, so the
-       * manager can only reorder what is shown. Saying so beats appearing to manage a
-       * whole menu it cannot see.
+       * On a menu Drupal cannot render in one page, DO NOT replace its table.
+       *
+       * Measured against the real main menu: the tree manager showed 9 rows out of 3,000+,
+       * and the one genuinely useful thing it added — the filter — could only search those
+       * 9. The verdict was blunt and correct: slower than native, and worse. Expanding
+       * subtrees on demand did not rescue it either, because Drupal already does that, and
+       * does it faster.
+       *
+       * So the table stays, and what Drupal has never had goes above it: search across the
+       * WHOLE menu. The index comes from the menu's parent-link select, which Drupal builds
+       * from the full tree whatever BigMenu does to the table — one request, not one per
+       * subtree.
+       *
+       * The tree manager still runs on menus small enough to render whole, where it beats
+       * the native table rather than losing to it.
        */
-      const collapsed = Array.from(document.querySelectorAll('a'))
-        .filter(a => /show children/i.test(a.textContent ?? '')).length;
-      if (collapsed > 0) {
+      if (onDemandSubtrees.size > 0) {
         console.info(
-          `${logStamp()} Menu manager is showing the ${items.length} rows Drupal rendered. `
-          + `${collapsed} subtree(s) are collapsed behind "Show children" and are not included — `
-          + 'expand them in Drupal first if you need to reorder across them.'
+          `${logStamp()} ${menuName} is loaded on demand by Drupal `
+          + `(${onDemandSubtrees.size} subtree(s) held back), so its table is left alone: `
+          + 'reordering it here would be slower than Drupal\u2019s own page. '
+          + 'Search over the full menu is added instead.'
         );
-      }
+        void mountMenuSearch(menuTable, menuName);
+      } else {
+        menuTable.style.display = 'none';
 
-      injectComponent(menuTable, (
-        <MenuTree
-          items={items}
-          onSave={(updatedItems) => syncTreeToDrupal(menuTable, updatedItems)}
-        />
-      ), 'before');
+        const actions = document.querySelector('.form-actions');
+        if (actions) (actions as HTMLElement).style.display = 'none';
+
+        if (subtrees.expanded > 0) {
+          console.info(
+            `${logStamp()} Menu manager expanded ${subtrees.expanded} row(s) that Drupal had `
+            + 'collapsed behind "Show children", so they are editable here.'
+          );
+        }
+        if (subtrees.remote.length > 0) {
+          console.info(
+            `${logStamp()} ${subtrees.remote.length} subtree(s) live on another page and are `
+            + 'NOT loaded. Saving writes into this form\u2019s inputs, which those rows do not '
+            + 'have, so mixing them in would drop every change to them silently.\n'
+            + subtrees.remote.map(r => `  ${r.label} -> ${r.href}`).join('\n')
+          );
+        }
+
+        injectComponent(menuTable, (
+          <MenuTree
+            items={items}
+            unreachable={subtrees.remote}
+            onSave={(updatedItems) => syncTreeToDrupal(menuTable, updatedItems)}
+          />
+        ), 'before');
+      }
     }
   }
 

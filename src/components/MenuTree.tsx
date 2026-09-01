@@ -29,9 +29,29 @@ export interface MenuItem {
   enabled: boolean;
 }
 
+/** A collapsed subtree that lives on another page, so its rows are not in this form. */
+export interface UnreachableSubtree {
+  label: string;
+  href: string;
+  /** True when the link expands the subtree in Drupal's own table instead of navigating. */
+  expandsInDrupal?: boolean;
+}
+
 interface Props {
   items: MenuItem[];
   onSave: (items: MenuItem[]) => void;
+  /**
+   * Subtrees Drupal collapsed behind a link to a DIFFERENT page.
+   *
+   * Listed rather than loaded. Saving writes weights and plids into this form's own
+   * inputs, and rows fetched from another page have none — so mixing them into the tree
+   * would show them as editable while silently dropping every change made to them.
+   *
+   * NOT for on-demand subtrees: those are expandable per row now. Listing them here as
+   * well produced a panel of nine links repeating the nine rows above it, which was worse
+   * than saying nothing.
+   */
+  unreachable?: UnreachableSubtree[];
 }
 
 /** 26px per depth level, and 26px square row controls, per the handoff. */
@@ -116,6 +136,7 @@ function SortableRow({
           {item.title}
         </span>
         <span className="shrink-0 font-mono text-help text-ink-help truncate">{item.path}</span>
+
       </div>
 
       {/* Five controls, in the handoff's order: outdent, indent, up, down, enabled. */}
@@ -163,7 +184,7 @@ export function countChanges(current: MenuItem[], original: MenuItem[]): number 
   return changes;
 }
 
-export const MenuTree = ({ items: initialItems, onSave }: Props) => {
+export const MenuTree = ({ items: initialItems, onSave, unreachable = [] }: Props) => {
   // The parsed original, kept for Revert and for the dirty count.
   const [original] = useState<MenuItem[]>(initialItems);
   const [items, setItems] = useState<MenuItem[]>(initialItems);
@@ -317,6 +338,35 @@ export const MenuTree = ({ items: initialItems, onSave }: Props) => {
           </div>
         )}
       </div>
+
+      {unreachable.length > 0 && (
+        <div data-unreachable-subtrees className="px-5.5 py-3 border-t border-rule bg-cu-tint shrink-0">
+          <p className="text-eyebrow font-semibold uppercase text-cu-onLight">
+            {unreachable.length} subtree{unreachable.length === 1 ? '' : 's'} not shown here
+          </p>
+          <p className="text-help text-ink mt-0.5">
+            {unreachable.some(s => s.expandsInDrupal)
+              ? 'Drupal loads these on demand, because this menu is too large to render at '
+                + 'once. Expanding them all here would mean thousands of requests, so each is '
+                + 'linked instead — the link opens it in Drupal\u2019s own table.'
+              : 'Drupal keeps these on their own page. Reordering here writes into this form, '
+                + 'which those rows are not part of, so they are linked rather than mixed in — '
+                + 'a change made to them here could not be saved.'}
+          </p>
+          <ul className="mt-1.5 flex flex-col gap-0.5">
+            {unreachable.map(subtree => (
+              <li key={subtree.href}>
+                <a
+                  href={subtree.href}
+                  className="text-control text-cu-blue hover:underline"
+                >
+                  {subtree.label || subtree.href}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="px-5.5 py-2 border-t border-rule-hair shrink-0">
         <p className="text-help text-ink-help">

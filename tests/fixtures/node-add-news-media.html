@@ -100,6 +100,123 @@ window.simulateMediaSelect = function (field, fid, filename) {
   return 'replaced';
 };
 
+/*
+  The real launcher flow, which simulateMediaSelect() above skipped.
+
+  Drupal.media.popups.mediaBrowser builds a dialog holding an IFRAME pointed at
+  /media/browser; the library lives in that iframe; choosing a file calls back into this
+  document, which then writes the fid and lets Drupal's ajax replace the widget wrapper.
+
+  Modelled here so a test can exercise the parts that were never covered: that the launcher
+  still opens the dialog after the overlay has relocated it into a shadow host's light DOM,
+  that the dialog is painted ON TOP of the overlay rather than behind it, and that a second
+  selection replaces the first.
+*/
+Drupal.media = Drupal.media || {};
+Drupal.media.popups = Drupal.media.popups || {};
+
+/** Which field's launcher opened the dialog. Set on open, read on select. */
+var openFor = null;
+
+Drupal.media.popups.mediaBrowser = function (field) {
+  openFor = field;
+
+  var existing = document.getElementById('media-browser-dialog');
+  if (existing) existing.parentNode.removeChild(existing);
+
+  /*
+    Appended to document.body, outside the overlay's shadow host — which is where jQuery UI
+    puts a dialog, and the reason its stacking has to be checked against the overlay rather
+    than assumed.
+  */
+  var dialog = document.createElement('div');
+  dialog.id = 'media-browser-dialog';
+  dialog.className = 'ui-dialog media-wrapper';
+  dialog.setAttribute('role', 'dialog');
+  dialog.style.cssText = [
+    'position: fixed', 'top: 60px', 'left: 60px', 'width: 520px', 'height: 320px',
+    'background: #fff', 'border: 1px solid #333', 'z-index: 1000',
+  ].join(';');
+
+  var frame = document.createElement('iframe');
+  frame.id = 'media-browser-frame';
+  frame.setAttribute('src', '/media/browser?field=' + encodeURIComponent(field));
+  frame.style.cssText = 'width: 100%; height: 100%; border: 0';
+  dialog.appendChild(frame);
+
+  document.body.appendChild(dialog);
+};
+
+Drupal.media.browser = Drupal.media.browser || {};
+
+/** Called BY the iframe, exactly as the real media browser calls its opener. */
+Drupal.media.browser.select = function (media) {
+  var dialog = document.getElementById('media-browser-dialog');
+  if (dialog) dialog.parentNode.removeChild(dialog);
+  if (!openFor) return;
+
+  // Drupal answers the selection over ajax, so this is not synchronous.
+  var field = openFor;
+  window.setTimeout(function () {
+    window.simulateMediaSelect(field, media.fid, media.filename);
+  }, 150);
+};
+
+/**
+ * Restores the empty widget, which is what Drupal's Remove does.
+ *
+ * A POPULATED media widget has no Browse launcher — only Remove — so changing an image
+ * means removing the current one first. That is why "no option to change the image" was
+ * reported from a real edit form, and it is the flow a second selection has to follow.
+ */
+window.simulateMediaRemove = function (field) {
+  var wrapperId = 'edit-field-image-' + field + '-und-0-ajax-wrapper';
+  var old = document.getElementById(wrapperId);
+  if (!old) return 'no-wrapper';
+
+  var replacement = document.createElement('div');
+  replacement.className = 'field-widget-media-generic';
+  replacement.id = wrapperId;
+  replacement.innerHTML =
+      '<div class="form-item form-type-textfield media-widget">'
+    +   '<label for="edit-image-' + field + '">'
+    +     (field === 'teaser' ? 'Teaser Image' : 'Hero Image')
+    +   '</label>'
+    +   '<input type="text" id="edit-image-' + field + '"'
+    +        ' name="media[field_image_' + field + '_und_0]" class="form-text" />'
+    +   '<a class="button-yellow launcher" href="#" data-field="' + field + '">Browse</a>'
+    + '</div>'
+    + '<input type="hidden" name="field_image_' + field + '[und][0][fid]"'
+    +      ' value="0" class="fid-' + field + '" />';
+
+  old.parentNode.replaceChild(replacement, old);
+  Drupal.attachBehaviors(replacement);
+  return 'removed';
+};
+
+document.addEventListener('click', function (event) {
+  var remove = event.target.closest ? event.target.closest('a.remove') : null;
+  if (!remove) return;
+  event.preventDefault();
+  var wrapper = remove.closest('.field-widget-media-generic');
+  var field = /image-(\w+)-und/.exec(wrapper && wrapper.id || '');
+  if (!field) return;
+  // Over ajax, like the selection.
+  window.setTimeout(function () { window.simulateMediaRemove(field[1]); }, 150);
+});
+
+/*
+  The launcher itself. Bound once, at page load, on the element Drupal rendered — so this
+  also stands in for the property that matters most: the overlay MOVES this element, and a
+  moved element keeps its listeners.
+*/
+document.addEventListener('click', function (event) {
+  var launcher = event.target.closest ? event.target.closest('a.launcher') : null;
+  if (!launcher) return;
+  event.preventDefault();
+  Drupal.media.popups.mediaBrowser(launcher.getAttribute('data-field'));
+});
+
 Drupal.attachBehaviors(document);
 </script>
 </body>
