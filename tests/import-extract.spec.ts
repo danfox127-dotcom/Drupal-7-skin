@@ -91,6 +91,30 @@ const CALCULATOR = `<!DOCTYPE html>
 
 const CALC_URL = 'https://columbiamedicine.org/divisions/gharavi/calculators/calc_progression.php';
 
+/**
+ * A Drupal search block, reproduced faithfully.
+ *
+ * The point of this fixture is that `type="text"` — not `type="search"` — is what Drupal
+ * actually renders, so excluding `type="search"` does nothing here. It also sits in a
+ * `<div id="header">` rather than a `<header>` element, so the element-name chrome
+ * exclusion does not save us either. Only the control count separates it from a calculator.
+ */
+const SEARCHY = `<!DOCTYPE html>
+<html><head><title>Department News | Example</title></head><body>
+  <div id="header">
+    <form action="/search" method="get" id="search-block-form">
+      <input type="text" title="Enter the terms you wish to search for." class="form-text" id="edit-search-block-form--2" name="search_block_form" maxlength="128" />
+      <input type="submit" id="edit-submit" value="Search" class="form-submit" />
+    </form>
+  </div>
+  <article class="article">
+    <h1>Department Names New Chief of Nephrology</h1>
+    <p>The department announced this week that a new chief of nephrology will join in the fall, following a national search that began last year.</p>
+    <p>The appointment follows an eighteen-month search process involving faculty from three affiliated hospitals and the medical school.</p>
+    <p>A formal introduction is planned for the autumn faculty meeting, with clinical duties beginning shortly afterward.</p>
+  </article>
+</body></html>`;
+
 test.beforeAll(async () => {
   const result = await esbuild.build({
     entryPoints: [path.join(__dirname, '../src/lib/import/extract.ts')],
@@ -483,5 +507,10 @@ test.describe('interactive content', () => {
     expect(finding!.reason).toContain('calc_progression.js');
     expect(finding!.reason).toContain('global.js');
     expect(finding!.reason).not.toContain('jquery');
+  });
+  test('a site search box is not interactive content', async ({ page }) => {
+    const r = await run(page, SEARCHY);
+    const finding = r.unmapped.find(u => /interactive/i.test(u.label));
+    expect(finding, 'a masthead search form must not be reported').toBeFalsy();
   });
 });

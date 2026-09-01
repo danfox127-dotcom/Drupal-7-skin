@@ -27,9 +27,21 @@ function contentControls(form: Element): Element[] {
   });
 }
 
+/**
+ * A form worth reporting.
+ *
+ * The >= 2 threshold is doing the real work, not the type list. Drupal's search block is
+ * `<input type="text" name="search_block_form">` plus a submit — excluding `type="search"`
+ * would not touch it, and it can sit in a `<div id="header">` that no element-name chrome
+ * selector catches. What separates it from a calculator is that it asks one question.
+ *
+ * The cost is a genuine single-field calculator going unreported. Accepted: a rule that
+ * fires on every page in the site would be ignored within a week, which is strictly worse
+ * than a rule with a known gap.
+ */
 function isContentForm(form: Element): boolean {
   if (form.closest(CHROME)) return false;
-  return contentControls(form).length >= 1;
+  return contentControls(form).length >= 2;
 }
 
 /**
