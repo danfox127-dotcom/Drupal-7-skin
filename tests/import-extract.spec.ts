@@ -115,6 +115,27 @@ const SEARCHY = `<!DOCTYPE html>
   </article>
 </body></html>`;
 
+/**
+ * A script-driven widget with no form to anchor on.
+ *
+ * The <noscript> notice is the only thing on the page that says it is interactive — there
+ * is no form, and the chart is an empty <div> that JS fills in. Without rule 2 this page
+ * imports as two paragraphs and an empty div, with nothing reported.
+ */
+const NOSCRIPT_ONLY = `<!DOCTYPE html>
+<html><head><title>Cohort Explorer</title></head><body>
+  <div class="main">
+    <h1>Cohort Data Explorer</h1>
+    <noscript><h2>This tool requires Javascript to display cohort data.</h2></noscript>
+    <p>The explorer plots enrollment across the four participating sites and updates as new cohorts are entered into the registry each quarter.</p>
+    <p>Data are refreshed nightly from the coordinating center and reflect enrollment as of the previous business day.</p>
+    <div id="chart"></div>
+  </div>
+  <script src="js/explorer.js"></script>
+</body></html>`;
+
+const EXPLORER_URL = 'https://columbiamedicine.org/divisions/gharavi/explorer.php';
+
 test.beforeAll(async () => {
   const result = await esbuild.build({
     entryPoints: [path.join(__dirname, '../src/lib/import/extract.ts')],
@@ -512,5 +533,22 @@ test.describe('interactive content', () => {
     const r = await run(page, SEARCHY);
     const finding = r.unmapped.find(u => /interactive/i.test(u.label));
     expect(finding, 'a masthead search form must not be reported').toBeFalsy();
+  });
+  test('a noscript notice is enough, with no form present', async ({ page }) => {
+    const r = await run(page, NOSCRIPT_ONLY, { tags: [], source: 'default' }, EXPLORER_URL);
+    const finding = r.unmapped.find(u => /interactive/i.test(u.label));
+
+    expect(finding, 'a page declaring it needs JavaScript must be reported').toBeTruthy();
+    expect(finding!.label).toContain('Cohort Data Explorer');
+    // It must describe what was actually seen, not claim a form exists.
+    expect(finding!.reason).not.toMatch(/a form with/i);
+    expect(finding!.reason).toContain('requires Javascript');
+    expect(finding!.reason).toContain('explorer.js');
+  });
+
+  test('a page with both a form and a noscript reports once', async ({ page }) => {
+    const r = await run(page, CALCULATOR, { tags: [], source: 'default' }, CALC_URL);
+    const findings = r.unmapped.filter(u => /interactive/i.test(u.label));
+    expect(findings).toHaveLength(1);
   });
 });

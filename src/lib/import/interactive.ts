@@ -113,14 +113,23 @@ function describeForm(form: Element): string {
 
 export function findInteractive(doc: Document, sourceUrl: string): Unmapped[] {
   const form = Array.from(doc.querySelectorAll('form')).find(isContentForm) ?? null;
-  if (!form) return [];
+  const noscript = doc.querySelector('noscript');
+
+  // The form wins when both are present: it describes the page more concretely, and one
+  // page yields one entry.
+  const anchor = form ?? noscript;
+  if (!anchor) return [];
 
   const scripts = firstPartyScripts(doc, sourceUrl);
   const driven = scripts.length ? ` driven by ${scripts.join(' and ')}` : '';
 
+  const what = form
+    ? describeForm(form)
+    : `A page that reports “${norm(noscript!.textContent).slice(0, 90)}” without JavaScript`;
+
   return [{
-    label: `Interactive content — “${headingFor(form, doc)}”`,
-    reason: `${describeForm(form)}${driven}. Forms and scripts cannot live in a node body; `
+    label: `Interactive content — “${headingFor(anchor, doc)}”`,
+    reason: `${what}${driven}. Forms and scripts cannot live in a node body; `
       + `this needs a Full HTML block or a module.`,
   }];
 }
