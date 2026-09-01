@@ -304,7 +304,7 @@ test.describe('URL scheme validation', () => {
       const links = new Set(['http:', 'https:', 'mailto:']);
       return {
         js: api.safeUrlAttribute('javascript:alert(1)', 'https://a.example/', links),
-        obfuscated: api.safeUrlAttribute('java script:alert(1)', 'https://a.example/', links),
+        obfuscated: api.safeUrlAttribute('java\u0000script:alert(1)', 'https://a.example/', links),
         https: api.safeUrlAttribute('https://b.example/x', 'https://a.example/', links),
         relative: api.safeUrlAttribute('/x', 'https://a.example/', links),
         empty: api.safeUrlAttribute('   ', 'https://a.example/', links),
