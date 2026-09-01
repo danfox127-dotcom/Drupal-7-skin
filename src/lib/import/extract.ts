@@ -1,3 +1,5 @@
+import { findInteractive } from './interactive';
+
 /**
  * Extracts a field mapping from a fetched source page.
  *
@@ -47,6 +49,8 @@ export interface BodyStats {
   linksKept: number;
   inlineStylesRemoved: number;
   embedsRemoved: number;
+  formsRemoved: number;
+  scriptsRemoved: number;
   classesRemoved: number;
   tagsStripped: string[];
   /** href/src values dropped for using a disallowed scheme. */
@@ -216,7 +220,8 @@ function filterBody(
 
   const stats: BodyStats = {
     paragraphs: 0, headings: 0, lists: 0, linksKept: 0,
-    inlineStylesRemoved: 0, embedsRemoved: 0, classesRemoved: 0, tagsStripped: [],
+    inlineStylesRemoved: 0, embedsRemoved: 0, formsRemoved: 0, scriptsRemoved: 0,
+    classesRemoved: 0, tagsStripped: [],
     unsafeUrlsRemoved: 0,
   };
 
@@ -270,6 +275,8 @@ function filterBody(
   stats.lists = clone.querySelectorAll('ul,ol').length;
   stats.linksKept = clone.querySelectorAll('a[href]').length;
   stats.embedsRemoved = article.querySelectorAll('iframe,object,embed').length;
+  stats.formsRemoved = article.querySelectorAll('form').length;
+  stats.scriptsRemoved = article.querySelectorAll('script').length;
   stats.tagsStripped = [...stripped].sort();
 
   return { html: clone.innerHTML.trim(), stats };
@@ -323,7 +330,7 @@ function describeImage(img: HTMLImageElement, index: number, base: string): Prop
 }
 
 /** Fields the extractor deliberately does not guess, and why. */
-const UNMAPPED: Unmapped[] = [
+const ALWAYS_UNMAPPED: Unmapped[] = [
   { label: 'Topics', reason: 'Topic terms are site-specific; guessing would tag content wrongly.' },
   { label: 'Related Content', reason: 'Requires matching real nodes on this site, which the source page cannot tell us.' },
   { label: 'Menu Placement', reason: 'Where this belongs in the menu is an editorial decision.' },
@@ -425,7 +432,8 @@ export function extract(
   const article = findArticle(doc);
   let bodyStats: BodyStats = {
     paragraphs: 0, headings: 0, lists: 0, linksKept: 0,
-    inlineStylesRemoved: 0, embedsRemoved: 0, classesRemoved: 0, tagsStripped: [],
+    inlineStylesRemoved: 0, embedsRemoved: 0, formsRemoved: 0, scriptsRemoved: 0,
+    classesRemoved: 0, tagsStripped: [],
     unsafeUrlsRemoved: 0,
   };
 
@@ -444,6 +452,12 @@ export function extract(
       const removed = [
         bodyStats.inlineStylesRemoved ? `${bodyStats.inlineStylesRemoved} inline styles` : null,
         bodyStats.embedsRemoved ? `${bodyStats.embedsRemoved} embeds` : null,
+        bodyStats.formsRemoved
+          ? `${bodyStats.formsRemoved} form${bodyStats.formsRemoved === 1 ? '' : 's'}`
+          : null,
+        bodyStats.scriptsRemoved
+          ? `${bodyStats.scriptsRemoved} script${bodyStats.scriptsRemoved === 1 ? '' : 's'}`
+          : null,
         bodyStats.classesRemoved ? `${bodyStats.classesRemoved} classes` : null,
         bodyStats.unsafeUrlsRemoved
           ? `${bodyStats.unsafeUrlsRemoved} unsafe link${bodyStats.unsafeUrlsRemoved === 1 ? '' : 's'}`
@@ -484,7 +498,7 @@ export function extract(
     sourceUrl,
     proposals,
     images,
-    unmapped: UNMAPPED,
+    unmapped: [...ALWAYS_UNMAPPED, ...findInteractive(doc, sourceUrl)],
     bodyStats,
     annotatedHtml: shell?.innerHTML ?? '',
     allowedTags,
