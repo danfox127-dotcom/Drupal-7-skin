@@ -1,3 +1,5 @@
+import { findInteractive } from './interactive';
+
 /**
  * Extracts a field mapping from a fetched source page.
  *
@@ -323,7 +325,7 @@ function describeImage(img: HTMLImageElement, index: number, base: string): Prop
 }
 
 /** Fields the extractor deliberately does not guess, and why. */
-const UNMAPPED: Unmapped[] = [
+const ALWAYS_UNMAPPED: Unmapped[] = [
   { label: 'Topics', reason: 'Topic terms are site-specific; guessing would tag content wrongly.' },
   { label: 'Related Content', reason: 'Requires matching real nodes on this site, which the source page cannot tell us.' },
   { label: 'Menu Placement', reason: 'Where this belongs in the menu is an editorial decision.' },
@@ -484,7 +486,7 @@ export function extract(
     sourceUrl,
     proposals,
     images,
-    unmapped: UNMAPPED,
+    unmapped: [...ALWAYS_UNMAPPED, ...findInteractive(doc, sourceUrl)],
     bodyStats,
     annotatedHtml: shell?.innerHTML ?? '',
     allowedTags,

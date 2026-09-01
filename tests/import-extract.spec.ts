@@ -43,6 +43,54 @@ const SOURCE = `<!DOCTYPE html>
   <script>tracking();</script>
 </body></html>`;
 
+/**
+ * Trimmed from the real page at
+ * https://columbiamedicine.org/divisions/gharavi/calculators/calc_progression.php
+ *
+ * Real markup, not an approximation. Two details matter and are preserved deliberately:
+ * the <h2> inside <noscript>, which sits between the h1 and the form and will win the
+ * "nearest preceding heading" contest unless it is excluded; and the three <script> tags
+ * at end of body, outside any article container, which is why scripts are attributed by
+ * origin rather than by position.
+ */
+const CALCULATOR = `<!DOCTYPE html>
+<html><head>
+  <title>Gharavi Lab</title>
+  <link rel="stylesheet" href="common/style.css">
+</head><body>
+  <div class="main nosidenav">
+    <h1 class="noline">IgA Nephropathy Progression Calculator</h1>
+    <noscript><h2 style="color:red">This calculator requires Javascript.  Please enable Javascript to continue.</h2></noscript>
+    <p><em>Krzysztof Kiryluk, MD, MS and David A. Fasel</em></p>
+    <p>This risk score is based on the analysis of 619 biopsy-diagnosed Chinese patients with IgA nephropathy followed for an average of 41.3 months from the time of diagnosis.</p>
+    <form name="form" autocomplete="off">
+      <table>
+        <tr><td>Glomerular Filtration Rate:</td><td><input type="text" id="inputEGFR" placeholder="15 - 150"> ml/min/1.73m</td></tr>
+        <tr><td>Hemoglobin:</td><td><input type="text" id="inputHb" placeholder="5 - 18"> g/dL</td></tr>
+        <tr><td>Serum Albumin:</td><td><input type="text" id="inputserumAlbumin" placeholder="0.0 - 6.0" data-decimals="1"> g/dL</td></tr>
+        <tr><td>Systolic Blood Pressure:</td><td><input type="text" id="inputSBP" placeholder="80 - 250"> mm Hg</td></tr>
+      </table>
+      <p><input id="btnCalc" type="button" class="btn" value="Calculate">
+      <input type="button" value="Reset" onClick="ResetForm()" class="btn reset"></p>
+    </form>
+    <p class="legalText"><strong>Interpretation:</strong></p>
+    <table border="0" class="CKDTable">
+      <tr><th scope="col">Risk Group</th><th scope="col">Risk Score</th><th scope="col">Explanation</th></tr>
+      <tr><td>Low</td><td>&lt; -0.887</td><td>First tertile of the risk score distribution. Patients in this risk group may require dialysis or kidney transplantation within 20.5 years of diagnosis on average.</td></tr>
+      <tr><td>High</td><td>&gt; 0.993</td><td>Third tertile of the risk score distribution. Patients in this risk group may require dialysis or kidney transplantation within 5.4 years of diagnosis on average.</td></tr>
+    </table>
+    <ol class="legalText reference">
+      <li>Jingyuan Xie, Krzysztof Kiryluk, et al: <a href="http://www.ncbi.nlm.nih.gov/pubmed/22719981">Predicting Progression of IgA Nephropathy: New Clinical Progression Risk Score.</a> PLoS One 2012;7(6):e38904</li>
+    </ol>
+  </div>
+  <div class="footer"><p>&copy; 2026 Columbia University</p></div>
+  <script src="//ajax.googleapis.com/ajax/libs/jquery/1.7.2/jquery.min.js" type="text/javascript"></script>
+  <script src="common/global.js" type="text/javascript"></script>
+  <script src="common/calc_progression.js" type="text/javascript"></script>
+</body></html>`;
+
+const CALC_URL = 'https://columbiamedicine.org/divisions/gharavi/calculators/calc_progression.php';
+
 test.beforeAll(async () => {
   const result = await esbuild.build({
     entryPoints: [path.join(__dirname, '../src/lib/import/extract.ts')],
@@ -56,13 +104,14 @@ test.beforeAll(async () => {
 async function run(
   page: import('@playwright/test').Page,
   html = SOURCE,
-  allowed: { tags: string[]; source: 'drupal-filter-tips' | 'default' } = { tags: [], source: 'default' }
+  allowed: { tags: string[]; source: 'drupal-filter-tips' | 'default' } = { tags: [], source: 'default' },
+  sourceUrl = 'https://heartresearchtoday.org/news/ablation-five-year-outcomes'
 ) {
   await page.goto('data:text/html,<body>host</body>');
   await page.addScriptTag({ content: bundle });
-  return page.evaluate(([h, a]) => {
+  return page.evaluate(([h, a, u]) => {
     const api = (window as any).Extract;
-    const result = api.extract(h, 'https://heartresearchtoday.org/news/ablation-five-year-outcomes', a);
+    const result = api.extract(h, u, a);
     return {
       proposals: result.proposals,
       images: result.images,
@@ -73,7 +122,7 @@ async function run(
       summary: api.matchSummary(result),
       accepted: api.acceptedCount(result.proposals),
     };
-  }, [html, allowed] as const);
+  }, [html, allowed, sourceUrl] as const);
 }
 
 test.describe('field proposals', () => {
@@ -417,5 +466,22 @@ test.describe('reading Drupal\'s allowed tags off the form', () => {
     await page.addScriptTag({ content: bundle });
     const result = await page.evaluate(() => (window as any).Extract.readAllowedTags(document));
     expect(result.tags).toEqual(['a', 'em']);
+  });
+});
+
+test.describe('interactive content', () => {
+  test('names the calculator and the scripts that drive it', async ({ page }) => {
+    const r = await run(page, CALCULATOR, { tags: [], source: 'default' }, CALC_URL);
+    const finding = r.unmapped.find(u => /interactive/i.test(u.label));
+
+    expect(finding, 'a calculator page must produce an interactive finding').toBeTruthy();
+    // The label must come from the h1, NOT the <h2> inside <noscript>.
+    expect(finding!.label).toContain('IgA Nephropathy Progression Calculator');
+    expect(finding!.label).not.toMatch(/requires Javascript/i);
+    expect(finding!.reason).toContain('4 text inputs');
+    // Same-origin scripts are attributed; the googleapis jQuery is not.
+    expect(finding!.reason).toContain('calc_progression.js');
+    expect(finding!.reason).toContain('global.js');
+    expect(finding!.reason).not.toContain('jquery');
   });
 });
