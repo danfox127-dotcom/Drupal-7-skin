@@ -560,4 +560,26 @@ test.describe('interactive content', () => {
     expect(body.source).toContain('1 form');
     expect(body.source).toContain('3 scripts');
   });
+  /**
+   * A characterization guard, not TDD: this passes the moment it is written, and that is
+   * the point. It pins the constraint that detection changes what is REPORTED and never
+   * what is IMPORTED. Without it, a later change turning this feature into "refuse to
+   * import interactive pages" would go unnoticed.
+   */
+  test('detection does not change what gets imported', async ({ page }) => {
+    const r = await run(page, CALCULATOR, { tags: [], source: 'default' }, CALC_URL);
+
+    const title = r.proposals.find(p => p.key === 'title')!;
+    expect(title.value).toBe('IgA Nephropathy Progression Calculator');
+
+    const body = r.proposals.find(p => p.key === 'body')!;
+    expect(body.accepted).toBe(true);
+    // The prose around the calculator must survive in full.
+    expect(body.value).toContain('619 biopsy-diagnosed Chinese patients');
+    expect(body.value).toContain('First tertile of the risk score distribution');
+    expect(body.value).toContain('PLoS One 2012');
+    // And the calculator itself must not.
+    expect(body.value).not.toContain('inputEGFR');
+    expect(body.value).not.toContain('calc_progression.js');
+  });
 });
