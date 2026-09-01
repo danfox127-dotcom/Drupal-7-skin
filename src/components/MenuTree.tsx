@@ -29,9 +29,20 @@ export interface MenuItem {
   enabled: boolean;
 }
 
+/** A collapsed subtree that lives on another page, so its rows are not in this form. */
+export interface UnreachableSubtree { label: string; href: string }
+
 interface Props {
   items: MenuItem[];
   onSave: (items: MenuItem[]) => void;
+  /**
+   * Subtrees Drupal collapsed behind a link to a DIFFERENT page.
+   *
+   * Listed rather than loaded. Saving writes weights and plids into this form's own
+   * inputs, and rows fetched from another page have none — so mixing them into the tree
+   * would show them as editable while silently dropping every change made to them.
+   */
+  unreachable?: UnreachableSubtree[];
 }
 
 /** 26px per depth level, and 26px square row controls, per the handoff. */
@@ -163,7 +174,7 @@ export function countChanges(current: MenuItem[], original: MenuItem[]): number 
   return changes;
 }
 
-export const MenuTree = ({ items: initialItems, onSave }: Props) => {
+export const MenuTree = ({ items: initialItems, onSave, unreachable = [] }: Props) => {
   // The parsed original, kept for Revert and for the dirty count.
   const [original] = useState<MenuItem[]>(initialItems);
   const [items, setItems] = useState<MenuItem[]>(initialItems);
@@ -317,6 +328,31 @@ export const MenuTree = ({ items: initialItems, onSave }: Props) => {
           </div>
         )}
       </div>
+
+      {unreachable.length > 0 && (
+        <div data-unreachable-subtrees className="px-5.5 py-3 border-t border-rule bg-cu-tint shrink-0">
+          <p className="text-eyebrow font-semibold uppercase text-cu-onLight">
+            {unreachable.length} subtree{unreachable.length === 1 ? '' : 's'} not shown here
+          </p>
+          <p className="text-help text-ink mt-0.5">
+            Drupal keeps {unreachable.length === 1 ? 'this one' : 'these'} on {unreachable.length === 1 ? 'its' : 'their'} own
+            page. Reordering here writes into this form, which those rows are not part of, so
+            they are linked rather than mixed in — a change made to them here could not be saved.
+          </p>
+          <ul className="mt-1.5 flex flex-col gap-0.5">
+            {unreachable.map(subtree => (
+              <li key={subtree.href}>
+                <a
+                  href={subtree.href}
+                  className="text-control text-cu-blue hover:underline"
+                >
+                  {subtree.label || subtree.href}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       <div className="px-5.5 py-2 border-t border-rule-hair shrink-0">
         <p className="text-help text-ink-help">

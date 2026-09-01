@@ -30,19 +30,110 @@ const parseDrupalSelect = (select: HTMLSelectElement) => {
   });
 };
 
+/** A subtree Drupal collapsed that lives on a different page, so it is not loaded. */
+export interface RemoteSubtree { label: string; href: string }
+
+const SHOW_CHILDREN = /show children/i;
+
+/** True for a link that acts on this page rather than navigating away. */
+const isInPageToggle = (a: HTMLAnchorElement): boolean => {
+  const href = (a.getAttribute('href') ?? '').trim();
+  return href === '' || href === '#' || href.startsWith('#') || href.toLowerCase().startsWith('javascript:');
+};
+
+/**
+ * Reveals the subtrees Drupal collapsed behind "Show children (N)".
+ *
+ * On the live main menu the manager was showing 6 rows out of 3,000+, because everything
+ * else sits behind those links. Which fix is possible depends on what the link IS, and the
+ * two cases are genuinely different:
+ *
+ *   - an in-page toggle (href="#") reveals or inserts rows in this same table, so clicking
+ *     it before parsing gets the whole subtree, editable and saveable like any other row.
+ *   - a real URL loads a different page. Those rows cannot be fetched and mixed in here:
+ *     saving writes weights and plids into THIS form's inputs, and rows from another page
+ *     have none, so every "saved" change to them would be silently dropped. They are
+ *     reported instead, with their links, which is the honest answer.
+ *
+ * Nested subtrees need more than one pass, since revealing a parent can expose a child's
+ * toggle that was not in the DOM before. Bounded, because a toggle that re-adds itself
+ * would otherwise spin forever.
+ */
+const expandCollapsedSubtrees = async (
+  table: HTMLTableElement
+): Promise<{ expanded: number; remote: RemoteSubtree[] }> => {
+  const clicked = new Set<HTMLAnchorElement>();
+  const remote = new Map<string, RemoteSubtree>();
+  let expanded = 0;
+
+  for (let pass = 0; pass < 6; pass++) {
+    const toggles = Array.from(table.querySelectorAll<HTMLAnchorElement>('a'))
+      .filter(a => SHOW_CHILDREN.test(a.textContent ?? ''));
+
+    const fresh = toggles.filter(a => !clicked.has(a));
+    if (fresh.length === 0) break;
+
+    let clickedThisPass = 0;
+    for (const toggle of fresh) {
+      clicked.add(toggle);
+      if (isInPageToggle(toggle)) {
+        const before = table.querySelectorAll('tr.draggable').length;
+        toggle.click();
+        clickedThisPass++;
+        // Counted by rows gained, not by clicks: a toggle that turns out to do nothing
+        // should not be reported as having expanded a subtree.
+        await new Promise(resolve => setTimeout(resolve, 60));
+        expanded += Math.max(0, table.querySelectorAll('tr.draggable').length - before);
+      } else {
+        const href = toggle.getAttribute('href') ?? '';
+        const row = toggle.closest('tr');
+        const label = (row?.querySelector('td:nth-child(1) a')?.textContent ?? '').trim();
+        remote.set(href, {
+          href,
+          label: label || (toggle.textContent ?? '').trim(),
+        });
+      }
+    }
+
+    if (clickedThisPass === 0) break;
+  }
+
+  return { expanded, remote: [...remote.values()] };
+};
+
 const parseDrupalMenuTable = (table: HTMLTableElement): MenuItem[] => {
   const items: MenuItem[] = [];
   const rows = table.querySelectorAll('tr.draggable');
 
-  rows.forEach(row => {
+  rows.forEach((row, index) => {
     // Drupal renders top-level items with 1 .indentation div; subtract 1 so root = 0.
     const depth = Math.max(0, row.querySelectorAll('.indentation').length - 1);
     const linkEl = row.querySelector('td:nth-child(1) a') as HTMLAnchorElement;
-    const title = linkEl?.innerText || 'Untitled';
+    /**
+     * textContent, NOT innerText.
+     *
+     * innerText reports text AS RENDERED, which means it applies text-transform: a title
+     * an admin theme uppercases comes back "ABOUT US" and is then shown, and written back
+     * into the tree, as the item's name. It also forces layout, once per row, on a menu
+     * thousands of items long. textContent reads the source text and costs nothing.
+     *
+     * Not the reason I first assumed: innerText does NOT return '' for an unrendered
+     * element — the spec falls back to textContent there — so hidden rows were never
+     * mislabelled. Recorded because the wrong reason is worth not repeating.
+     */
+    const title = (linkEl?.textContent ?? '').trim() || 'Untitled';
     const path = linkEl?.getAttribute('href') || '#';
 
     const mlidInput = row.querySelector('input[name*="[mlid]"]') as HTMLInputElement;
-    const id = mlidInput?.value || Math.random().toString(36).substring(7);
+    /**
+     * A row with no mlid gets a STABLE synthetic id.
+     *
+     * This used to be Math.random(), which changes on every parse: React would see a new
+     * key for the same row across re-renders, and syncTreeToDrupal looks rows up BY id, so
+     * a re-parse between edit and save could fail to find the row it meant to write. Tied
+     * to position instead — unlovely, but reproducible.
+     */
+    const id = mlidInput?.value || `row-${index}`;
 
     const enabledCheckbox = row.querySelector('input[type="checkbox"].form-checkbox') as HTMLInputElement;
     const enabled = enabledCheckbox ? enabledCheckbox.checked : true;
@@ -519,34 +610,45 @@ const init = async () => {
   }
 
   // Feature 3: Menu Tree
-  if (settings.menuTree && url.includes('/admin/structure/menu/manage/main-menu')) {
+  /**
+   * Any menu's overview page, not just main-menu.
+   *
+   * This matched the literal string '/admin/structure/menu/manage/main-menu', so a site
+   * with a secondary or footer menu got nothing on those pages with no indication why.
+   * Anchored at the end so the sub-pages under it — /add, /edit, /delete — are left alone.
+   */
+  const isMenuOverview = /\/admin\/structure\/menu\/manage\/[^/]+\/?$/.test(new URL(url).pathname);
+  if (settings.menuTree && isMenuOverview) {
     const menuTable = document.querySelector('table#menu-overview') as HTMLTableElement;
     if (menuTable) {
+      // Before parsing: a collapsed subtree's rows are not in the table yet, and rows
+      // hidden behind a toggle would parse with empty titles.
+      const subtrees = await expandCollapsedSubtrees(menuTable);
       const items = parseDrupalMenuTable(menuTable);
       menuTable.style.display = 'none';
 
       const actions = document.querySelector('.form-actions');
       if (actions) (actions as HTMLElement).style.display = 'none';
 
-      /**
-       * Drupal collapses subtrees behind "Show children (N)" links, and only the visible
-       * rows are in the DOM. On the live main menu that is 6 rows out of 3,000+, so the
-       * manager can only reorder what is shown. Saying so beats appearing to manage a
-       * whole menu it cannot see.
-       */
-      const collapsed = Array.from(document.querySelectorAll('a'))
-        .filter(a => /show children/i.test(a.textContent ?? '')).length;
-      if (collapsed > 0) {
+      if (subtrees.expanded > 0) {
         console.info(
-          `${logStamp()} Menu manager is showing the ${items.length} rows Drupal rendered. `
-          + `${collapsed} subtree(s) are collapsed behind "Show children" and are not included — `
-          + 'expand them in Drupal first if you need to reorder across them.'
+          `${logStamp()} Menu manager expanded ${subtrees.expanded} row(s) that Drupal had `
+          + 'collapsed behind "Show children", so they are editable here.'
+        );
+      }
+      if (subtrees.remote.length > 0) {
+        console.info(
+          `${logStamp()} ${subtrees.remote.length} subtree(s) live on another page and are `
+          + 'NOT loaded. Saving writes into this form\u2019s inputs, which those rows do not '
+          + 'have, so mixing them in would drop every change to them silently.\n'
+          + subtrees.remote.map(r => `  ${r.label} -> ${r.href}`).join('\n')
         );
       }
 
       injectComponent(menuTable, (
         <MenuTree
           items={items}
+          unreachable={subtrees.remote}
           onSave={(updatedItems) => syncTreeToDrupal(menuTable, updatedItems)}
         />
       ), 'before');

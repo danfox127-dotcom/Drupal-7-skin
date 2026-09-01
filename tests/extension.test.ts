@@ -27,6 +27,8 @@ const FIXTURES = path.join(__dirname, 'fixtures');
 
 /** Fixture served for each Drupal path, longest match first. */
 const ROUTES: [RegExp, string][] = [
+  // Longest match first: the collapsed variant must be tested before the plain one.
+  [/\/admin\/structure\/menu\/manage\/main-menu-collapsed/, 'menu-manage-collapsed.html'],
   [/\/admin\/structure\/menu\/manage\/main-menu/, 'menu-manage.html'],
   [/\/admin\/content/, 'admin/content.html'],
   [/\/node\/add\/news-ckeditor/, 'node-add-news-ckeditor.html'],
@@ -1640,3 +1642,112 @@ test.describe('Feature 5: a rich editor that loads late is still found', () => {
   });
 });
 
+
+test.describe('Feature 3: collapsed subtrees are reached, or reported honestly', () => {
+  /**
+   * The live main menu showed 6 rows out of 3,000+. Everything else sat behind "Show
+   * children (N)" links, and the manager silently presented those 6 as the whole menu.
+   *
+   * Which repair is possible depends on what the link IS, and the two cases differ:
+   *
+   *   - an in-page toggle inserts rows into THIS table, so clicking it before parsing
+   *     yields ordinary rows that save like any other.
+   *   - a real URL loads another page. Those rows cannot be mixed in: saving writes
+   *     weights and plids into this form's inputs, which they do not have, so every
+   *     change to them would be dropped without a word. They get linked instead.
+   *
+   * The fixture carries one of each.
+   */
+  const MENU = `${HOST}/admin/structure/menu/manage/main-menu-collapsed`;
+
+  const open = async (page: Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    await settings({ menuTree: true, combobox: false, htmlExport: false, nodeEditor: false });
+    await page.goto(MENU);
+    await expect(page.locator(`${UI} input[placeholder*="Filter"]`).first()).toBeVisible();
+  };
+
+  test('the fixture really does hide the subtree, or this proves nothing', async ({ page }) => {
+    await page.goto(MENU);
+    // Guards the guard: if the rows were present all along, everything below would pass
+    // for the wrong reason.
+    const before = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('tr.draggable td:first-child a'))
+        .map(a => (a.textContent || '').trim()));
+    expect(before).not.toContain('Labs');
+    expect(before).not.toContain('Funding');
+  });
+
+  test('an in-page subtree is expanded and its items appear in the tree', async ({ page, settings }) => {
+    await open(page, settings);
+    const text = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-container') as HTMLElement)?.shadowRoot;
+      return ((sr ?? document.querySelector('.d7-proxy-ui-container'))?.textContent || '')
+        .replace(/\s+/g, ' ');
+    });
+    expect(text).toContain('Labs');
+    expect(text).toContain('Funding');
+  });
+
+  test('a CSS-uppercased title is read as written, not as rendered', async ({ page, settings }) => {
+    await open(page, settings);
+    /**
+     * The real innerText trap. innerText reports text as RENDERED, so it applies
+     * text-transform and returns "CASE SENSITIVE ITEM" — which is then displayed as the
+     * item's name, misrepresenting a real menu item. textContent reads the source.
+     *
+     * I first justified this change with hidden rows, on the theory that innerText returns
+     * '' for them. It does not: the spec falls back to textContent for an unrendered
+     * element, and a test built on that premise passed with innerText restored. This one
+     * fails with it restored, which is the difference that matters.
+     */
+    const text = await page.evaluate(() => {
+      const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
+      return ((el.shadowRoot ?? el).textContent || '');
+    });
+    expect(text).toContain('Case Sensitive Item');
+    expect(text).not.toContain('CASE SENSITIVE ITEM');
+  });
+
+  test('expanded rows are real rows, so their weights are written on save', async ({ page, settings }) => {
+    await open(page, settings);
+    // The point of expanding in-page rather than fetching: these submit.
+    const wrote = await page.evaluate(() => {
+      const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
+      const root = el.shadowRoot ?? el;
+      const save = Array.from(root.querySelectorAll('button'))
+        .find(b => /save menu/i.test(b.textContent || '')) as HTMLButtonElement;
+      save.click();
+      const weight = document.querySelector('select[name="menu[mlid:901][weight]"]') as HTMLSelectElement;
+      return { found: !!weight, value: weight?.value };
+    });
+    expect(wrote.found).toBe(true);
+    // Written, not left at the fixture's default of 0.
+    expect(wrote.value).not.toBe('0');
+  });
+
+  test('a subtree on another page is listed with its link, not silently dropped', async ({ page, settings }) => {
+    await open(page, settings);
+    const panel = page.locator(`${UI} [data-unreachable-subtrees]`);
+    await expect(panel).toBeVisible();
+    await expect(panel).toContainText('1 subtree not shown here');
+    // The link is what makes it reachable at all.
+    await expect(panel.locator('a')).toHaveAttribute(
+      'href', '/admin/structure/menu/manage/main-menu/parent/950'
+    );
+  });
+
+  test('it says why, rather than looking like an omission', async ({ page, settings }) => {
+    await open(page, settings);
+    // A count with no reason reads as a bug. The reason is that saving cannot reach them.
+    await expect(page.locator(`${UI} [data-unreachable-subtrees]`))
+      .toContainText('could not be saved');
+  });
+
+  test('a menu other than main-menu is handled too', async ({ page, settings }) => {
+    await settings({ menuTree: true, combobox: false, htmlExport: false, nodeEditor: false });
+    // The gate matched the literal string "main-menu", so a footer or secondary menu got
+    // nothing at all, with no indication why.
+    await page.goto(`${HOST}/admin/structure/menu/manage/main-menu-collapsed?x=1`);
+    await expect(page.locator(`${UI} input[placeholder*="Filter"]`).first()).toBeVisible();
+  });
+});
