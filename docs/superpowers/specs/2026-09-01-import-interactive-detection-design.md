@@ -56,17 +56,31 @@ noise — worse than silence, because it trains the reader to skip it.
 **The form is the anchor.** A finding requires one of:
 
 1. A `<form>` inside the article region containing at least one `input`/`select`/`textarea`
-   whose type is not `search`, `submit`, or `hidden`. This excludes site search boxes, which
-   are chrome rather than content.
+   whose type is not `search`, `submit`, or `hidden`, and which is not itself inside a
+   `nav`, `header`, `footer`, or `aside`.
 2. A `<noscript>` element — a page stating outright that it does not work without JS.
-   `calc_progression.php` carries exactly that ("This calculator requires Javascript").
+   Both calculator pages carry exactly that ("This calculator requires Javascript").
 
-Scripts never trigger a finding on their own. Once a trigger fires, same-origin scripts on the
-page are attributed to it as dependencies; this is how `common/calc_progression.js` is named
-despite sitting outside the article at end of `<body>`. Third-party origins are excluded as
+The chrome exclusions in rule 1 are load-bearing, not incidental. `findArticle()` tries
+seven selectors and falls through to `doc.body`; on these calculator pages every candidate
+misses (the wrapper is `<div class="main nosidenav">`), so the article region *is* the whole
+body and site chrome sits inside it. Without the exclusions, any page with a search box in
+its masthead would report a finding.
+
+Scripts never trigger a finding on their own. Once a trigger fires, scripts sharing an origin
+with `sourceUrl` are attributed to it as dependencies; this is how `common/calc_progression.js`
+is named despite sitting outside the article at end of `<body>`. Other origins are excluded as
 infrastructure, not page logic.
 
+**One entry per page region, not per signal.** A page firing both rules — as both calculators
+do — produces a single entry, not two.
+
 The entry's label comes from the nearest preceding heading, falling back to the page `h1`.
+Verified against both sources: "IgA Nephropathy Progression Calculator" and "Multi-ethnic eGFR
+Calculator".
+
+When only rule 2 fires, the entry cannot claim a form exists and must describe what was
+actually seen — the `<noscript>` text and the attributed scripts.
 
 ### Expected output
 
