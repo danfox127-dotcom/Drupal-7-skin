@@ -27,7 +27,9 @@ const FIXTURES = path.join(__dirname, 'fixtures');
 
 /** Fixture served for each Drupal path, longest match first. */
 const ROUTES: [RegExp, string][] = [
-  // Longest match first: the collapsed variant must be tested before the plain one.
+  // Longest match first: /add before the overview it belongs to, and the collapsed
+  // variant before the plain one.
+  [/\/admin\/structure\/menu\/manage\/[^/]+\/add/, 'menu-add-link.html'],
   [/\/admin\/structure\/menu\/manage\/main-menu-collapsed/, 'menu-manage-collapsed.html'],
   [/\/admin\/structure\/menu\/manage\/main-menu/, 'menu-manage.html'],
   [/\/admin\/content/, 'admin/content.html'],
@@ -1643,214 +1645,146 @@ test.describe('Feature 5: a rich editor that loads late is still found', () => {
 });
 
 
-test.describe('Feature 3: collapsed subtrees are reached, or reported honestly', () => {
+test.describe('Feature 3: a menu too large to render gets search, not a worse table', () => {
   /**
-   * The live main menu showed 6 rows out of 3,000+. Everything else sat behind "Show
-   * children (N)" links, and the manager silently presented those 6 as the whole menu.
+   * The verdict from testing the real main menu: the tree manager showed 9 rows out of
+   * 3,000+, was slower than Drupal's own page, and its one useful feature — the filter —
+   * could only search those 9. Expanding subtrees on demand did not rescue it, because
+   * Drupal already does that and does it faster.
    *
-   * Which repair is possible depends on what the link IS, and the two cases differ:
-   *
-   *   - an in-page toggle inserts rows into THIS table, so clicking it before parsing
-   *     yields ordinary rows that save like any other.
-   *   - a real URL loads another page. Those rows cannot be mixed in: saving writes
-   *     weights and plids into this form's inputs, which they do not have, so every
-   *     change to them would be dropped without a word. They get linked instead.
-   *
-   * The fixture carries one of each.
+   * So on a menu Drupal loads on demand, its table is LEFT ALONE, and the thing Drupal has
+   * never had is added above it: search across the whole menu. The index comes from the
+   * menu's parent-link select, which Drupal builds from the full tree whatever BigMenu does
+   * to the table — one request, not one per subtree.
    */
   const MENU = `${HOST}/admin/structure/menu/manage/main-menu-collapsed`;
 
   const open = async (page: Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
     await settings({ menuTree: true, combobox: false, htmlExport: false, nodeEditor: false });
     await page.goto(MENU);
-    await expect(page.locator(`${UI} input[placeholder*="Filter"]`).first()).toBeVisible();
+    await expect(page.locator(`${UI} input[aria-label="Search this menu"]`)).toBeVisible();
   };
 
-  test('the fixture really does hide the subtree, or this proves nothing', async ({ page }) => {
+  test('Drupal\'s own table is left in place, not replaced', async ({ page, settings }) => {
+    await open(page, settings);
+    // The whole correction. Hiding it made the page slower and less capable.
+    const native = await page.evaluate(() => {
+      const table = document.querySelector('table#menu-overview') as HTMLElement;
+      return { present: !!table, visible: table.getBoundingClientRect().height > 0 };
+    });
+    expect(native).toEqual({ present: true, visible: true });
+    // And no tree manager over the top of it.
+    await expect(page.locator(`${UI} input[placeholder="Filter menu items"]`)).toHaveCount(0);
+  });
+
+  test('the index is built from the parent select in one request', async ({ page, settings }) => {
+    const fetched: string[] = [];
+    page.on('request', r => {
+      if (/\/admin\/structure\/menu\/manage\/[^/]+\/add/.test(r.url())) fetched.push(r.url());
+      // The thing being avoided: one request per subtree.
+      if (/bigmenu-customize/.test(r.url())) fetched.push(r.url());
+    });
+
+    await open(page, settings);
+    await expect(page.locator(`${UI} >> text=/233 items/`)).toBeVisible();
+
+    expect(fetched.filter(u => /bigmenu-customize/.test(u))).toEqual([]);
+    expect(fetched.filter(u => /\/add/.test(u))).toHaveLength(1);
+  });
+
+  test('an item Drupal never rendered is findable', async ({ page, settings }) => {
+    await open(page, settings);
+    // "Substance Use Disorders" is three levels deep under Specialties › Psychiatry, and is
+    // not in the table at all — it is exactly what could not be found before.
+    await page.fill(`${UI} input[aria-label="Search this menu"]`, 'substance');
+
+    const result = page.locator(`${UI} [data-menu-search-results] a`).first();
+    await expect(result).toContainText('Substance Use Disorders');
+    // The path, because a bare title is not enough to know which item this is.
+    await expect(result).toContainText('Specialties');
+    await expect(result).toContainText('Psychiatry & Psychology');
+    await expect(result).toHaveAttribute('href', '/admin/structure/menu/item/208/edit');
+  });
+
+  test('the ancestor path separates two items with the same title', async ({ page, settings }) => {
+    await open(page, settings);
+    // Two "Surgery" items, under Cardiology and under Dermatology. Title alone cannot tell
+    // them apart, which is the reason the index carries ancestors at all.
+    await page.fill(`${UI} input[aria-label="Search this menu"]`, 'dermatology surgery');
+    const results = page.locator(`${UI} [data-menu-search-results] a`);
+    await expect(results).toHaveCount(1);
+    await expect(results.first()).toHaveAttribute('href', '/admin/structure/menu/item/206/edit');
+  });
+
+  test('a broad query is capped, and says how many it is hiding', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.fill(`${UI} input[aria-label="Search this menu"]`, 'clinic');
+    // 220 match; rendering all of them would freeze the page, and claiming 50 matched would
+    // misrepresent the menu.
+    await expect(page.locator(`${UI} >> text=/Showing 50 of 220 matches/`)).toBeVisible();
+    await expect(page.locator(`${UI} [data-menu-search-results] a`)).toHaveCount(50);
+  });
+
+  test('an empty query lists nothing rather than everything', async ({ page, settings }) => {
+    await open(page, settings);
+    await expect(page.locator(`${UI} [data-menu-search-results]`)).toHaveCount(0);
+    await page.fill(`${UI} input[aria-label="Search this menu"]`, 'clinic');
+    await expect(page.locator(`${UI} [data-menu-search-results]`)).toBeVisible();
+    await page.fill(`${UI} input[aria-label="Search this menu"]`, '   ');
+    await expect(page.locator(`${UI} [data-menu-search-results] a`)).toHaveCount(0);
+  });
+
+  test('a query matching nothing says so, naming the menu', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.fill(`${UI} input[aria-label="Search this menu"]`, 'zzzznotathing');
+    await expect(page.locator(`${UI} >> text=/Nothing in main-menu-collapsed matches/`)).toBeVisible();
+  });
+
+  test('the index is cached, so a second visit costs no request', async ({ page, settings }) => {
+    await open(page, settings);
+    await expect(page.locator(`${UI} >> text=/233 items/`)).toBeVisible();
+
+    const fetched: string[] = [];
+    page.on('request', r => {
+      if (/\/admin\/structure\/menu\/manage\/[^/]+\/add/.test(r.url())) fetched.push(r.url());
+    });
     await page.goto(MENU);
-    // Guards the guard: if the rows were present all along, everything below would pass
-    // for the wrong reason.
-    const before = await page.evaluate(() =>
-      Array.from(document.querySelectorAll('tr.draggable td:first-child a'))
-        .map(a => (a.textContent || '').trim()));
-    expect(before).not.toContain('Labs');
-    expect(before).not.toContain('Funding');
+    await expect(page.locator(`${UI} >> text=/233 items/`)).toBeVisible();
+    // Stale is acceptable and shown; a request on every page load is not.
+    expect(fetched).toEqual([]);
   });
 
   test('rows show their real titles, not the drag handle', async ({ page, settings }) => {
     /**
-     * What the live site actually showed: every row read "Untitled" pointing at "#".
+     * Kept from the earlier work because it is a real parser bug, still exercised through
+     * the tree manager on menus small enough to render whole.
      *
-     * Core's tabledrag inserts `<a class="tabledrag-handle" href="#">` as the FIRST anchor
-     * in a row's first cell, and the parser used `td:nth-child(1) a` — so it took the drag
-     * handle, which has no text and no destination. BigMenu adds its "Show children (N)"
-     * toggle to the same cell, the other anchor not to pick.
-     *
-     * No fixture had a handle, so the entire suite agreed with the parser. They all have
-     * one now.
+     * Core's tabledrag inserts <a class="tabledrag-handle" href="#"> as the FIRST anchor in
+     * a row's first cell, and the parser used `td:nth-child(1) a` — so every row on the live
+     * site read "Untitled" pointing at "#". No fixture had a handle, so the whole suite
+     * agreed with the parser. They all have one now.
      */
-    await open(page, settings);
-    const rows = await page.evaluate(() => {
-      const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
-      const root = el.shadowRoot ?? el;
-      return Array.from(root.querySelectorAll('[data-menu-row], li, div'))
-        .map(n => (n.textContent || '').trim())
-        .filter(t => /^Untitled/.test(t)).length;
-    });
-    expect(rows).toBe(0);
-
-    const text = await page.evaluate(() => {
-      const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
-      return ((el.shadowRoot ?? el).textContent || '');
-    });
-    expect(text).toContain('About Us');
-    expect(text).toContain('Research');
-  });
-
-  test('the subtree panel names the parent item, not the toggle', async ({ page, settings }) => {
-    await open(page, settings);
-    // The label came through the same broken selector as the row titles, so the panel
-    // listed "Show children (12)" instead of naming which subtree it was.
-    const links = await page.evaluate(() => {
-      const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
-      const root = el.shadowRoot ?? el;
-      const panel = root.querySelector('[data-unreachable-subtrees]');
-      return Array.from(panel?.querySelectorAll('a') ?? []).map(a => (a.textContent || '').trim());
-    });
-    expect(links).toEqual(['Archive']);
-  });
-
-  test('an in-page subtree is expanded and its items appear in the tree', async ({ page, settings }) => {
-    await open(page, settings);
-    const text = await page.evaluate(() => {
-      const sr = (document.querySelector('.d7-proxy-ui-container') as HTMLElement)?.shadowRoot;
-      return ((sr ?? document.querySelector('.d7-proxy-ui-container'))?.textContent || '')
-        .replace(/\s+/g, ' ');
-    });
-    expect(text).toContain('Labs');
-    expect(text).toContain('Funding');
-  });
-
-  test('a CSS-uppercased title is read as written, not as rendered', async ({ page, settings }) => {
-    await open(page, settings);
-    /**
-     * The real innerText trap. innerText reports text as RENDERED, so it applies
-     * text-transform and returns "CASE SENSITIVE ITEM" — which is then displayed as the
-     * item's name, misrepresenting a real menu item. textContent reads the source.
-     *
-     * I first justified this change with hidden rows, on the theory that innerText returns
-     * '' for them. It does not: the spec falls back to textContent for an unrendered
-     * element, and a test built on that premise passed with innerText restored. This one
-     * fails with it restored, which is the difference that matters.
-     */
-    const text = await page.evaluate(() => {
-      const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
-      return ((el.shadowRoot ?? el).textContent || '');
-    });
-    expect(text).toContain('Case Sensitive Item');
-    expect(text).not.toContain('CASE SENSITIVE ITEM');
-  });
-
-  test('expanded rows are real rows, so their weights are written on save', async ({ page, settings }) => {
-    await open(page, settings);
-    // The point of expanding in-page rather than fetching: these submit.
-    const wrote = await page.evaluate(() => {
-      const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
-      const root = el.shadowRoot ?? el;
-      const save = Array.from(root.querySelectorAll('button'))
-        .find(b => /save menu/i.test(b.textContent || '')) as HTMLButtonElement;
-      save.click();
-      const weight = document.querySelector('select[name="menu[mlid:901][weight]"]') as HTMLSelectElement;
-      return { found: !!weight, value: weight?.value };
-    });
-    expect(wrote.found).toBe(true);
-    // Written, not left at the fixture's default of 0.
-    expect(wrote.value).not.toBe('0');
-  });
-
-  test('a subtree on another page is listed with its link, not silently dropped', async ({ page, settings }) => {
-    await open(page, settings);
-    const panel = page.locator(`${UI} [data-unreachable-subtrees]`);
-    await expect(panel).toBeVisible();
-    await expect(panel).toContainText('1 subtree not shown here');
-    // The link is what makes it reachable at all.
-    await expect(panel.locator('a')).toHaveAttribute(
-      'href', '/admin/structure/menu/manage/archive-menu/parent/970'
-    );
-  });
-
-  test('a BigMenu subtree costs nothing until its row is clicked', async ({ page, settings }) => {
-    /**
-     * columbiadoctors.org runs BigMenu: "Show children" links are real URLs that load
-     * inline through Drupal's ajax framework. BigMenu exists BECAUSE the menu is too large
-     * to render at once — one item there has 297 children and the menu runs past 3,000 —
-     * so expanding every subtree on load would fire thousands of requests to rebuild the
-     * page BigMenu was installed to avoid.
-     *
-     * One click, one request, which is the same cost as Drupal's own page.
-     */
-    const requests: string[] = [];
-    page.on('request', r => { if (/bigmenu-customize/.test(r.url())) requests.push(r.url()); });
-
-    await open(page, settings);
-    await page.waitForTimeout(500);
-    expect(requests).toEqual([]);
-
-    // The row offers it, with Drupal's own count.
-    const control = page.locator(`${UI} [data-expand="950"]`);
-    await expect(control).toBeVisible();
-    await expect(control).toContainText('140');
-
-    await control.click();
-    await expect(page.locator(`${UI} >> text=Medical School`).first()).toBeVisible();
-    // Exactly one request, not one per subtree.
-    expect(requests).toHaveLength(1);
-  });
-
-  test('expanded children are editable and saveable, like any other row', async ({ page, settings }) => {
-    await open(page, settings);
-    await page.locator(`${UI} [data-expand="950"]`).click();
-    await expect(page.locator(`${UI} >> text=Residency`).first()).toBeVisible();
-
-    /**
-     * The reason expansion clicks DRUPAL'S link instead of fetching the URL ourselves: its
-     * ajax handler puts the new rows into this form, inputs and all, so they save like the
-     * rows that were there at load. Rows we fetched and injected would look identical and
-     * silently save nothing.
-     */
-    const wrote = await page.evaluate(() => {
-      const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
-      const root = el.shadowRoot ?? el;
-      const save = Array.from(root.querySelectorAll('button'))
-        .find(b => /save menu/i.test(b.textContent || '')) as HTMLButtonElement;
-      save.click();
-      const weight = document.querySelector('select[name="menu[mlid:951][weight]"]') as HTMLSelectElement;
-      return { found: !!weight, value: weight?.value };
-    });
-    expect(wrote.found).toBe(true);
-    expect(wrote.value).not.toBe('0');
-  });
-
-  test('expanding does not discard unsaved reordering', async ({ page, settings }) => {
-    await open(page, settings);
-    // Move the first row down, then expand something else. Re-parsing the whole table
-    // would look like it worked while quietly throwing the edit away.
-    await page.locator(`${UI} [data-menu-row] button[aria-label="Move down"]`).first().click();
-    const counter = page.locator(`${UI} >> text=/\\d+ changes?/`).first();
-    const before = await counter.textContent();
-    expect(before).toBeTruthy();
-
-    await page.locator(`${UI} [data-expand="950"]`).click();
-    await expect(page.locator(`${UI} >> text=Medical School`).first()).toBeVisible();
-    // Same count after loading a subtree: the edit was not thrown away.
-    expect(await counter.textContent()).toBe(before);
-  });
-
-  test('a menu other than main-menu is handled too', async ({ page, settings }) => {
     await settings({ menuTree: true, combobox: false, htmlExport: false, nodeEditor: false });
-    // The gate matched the literal string "main-menu", so a footer or secondary menu got
-    // nothing at all, with no indication why.
-    await page.goto(`${HOST}/admin/structure/menu/manage/main-menu-collapsed?x=1`);
-    await expect(page.locator(`${UI} input[placeholder*="Filter"]`).first()).toBeVisible();
+    await page.goto(`${HOST}/admin/structure/menu/manage/main-menu`);
+    await expect(page.locator(`${UI} input[placeholder="Filter menu items"]`)).toBeVisible();
+
+    const text = await page.evaluate(() => {
+      const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
+      return ((el.shadowRoot ?? el).textContent || '');
+    });
+    expect(text).not.toContain('Untitled');
+    expect(text).toContain('About Us');
+  });
+
+  test('a menu small enough to render whole still gets the tree manager', async ({ page, settings }) => {
+    await settings({ menuTree: true, combobox: false, htmlExport: false, nodeEditor: false });
+    await page.goto(`${HOST}/admin/structure/menu/manage/main-menu`);
+    // Where the manager genuinely beats the native table, it is still used, and there the
+    // filter works because every row is present.
+    await expect(page.locator(`${UI} input[placeholder="Filter menu items"]`)).toBeVisible();
+    const native = await page.evaluate(() =>
+      (document.querySelector('table#menu-overview') as HTMLElement).style.display);
+    expect(native).toBe('none');
   });
 });
+

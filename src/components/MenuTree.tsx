@@ -17,7 +17,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import {
-  GripVertical, ArrowLeft, ArrowRight, ArrowUp, ArrowDown, ChevronRight,
+  GripVertical, ArrowLeft, ArrowRight, ArrowUp, ArrowDown,
 } from 'lucide-react';
 import { filterTreeRetainingAncestors } from '../lib/treeFilter';
 
@@ -27,14 +27,6 @@ export interface MenuItem {
   path: string;
   depth: number;
   enabled: boolean;
-  /**
-   * How many children Drupal says this item has, when they are not loaded yet.
-   *
-   * A large menu is not rendered in one page: the site runs BigMenu, which keeps children
-   * behind a "Show children (N)" link and fetches them on demand. Undefined means either
-   * no children or already loaded.
-   */
-  childCount?: number;
 }
 
 /** A collapsed subtree that lives on another page, so its rows are not in this form. */
@@ -60,14 +52,6 @@ interface Props {
    * than saying nothing.
    */
   unreachable?: UnreachableSubtree[];
-  /**
-   * Loads one item's children, resolving to the rows that were added.
-   *
-   * Per row rather than all at once: the menu runs past 3,000 items and Drupal fetches
-   * each subtree separately, so expanding everything would mean thousands of requests. One
-   * click, one request — the same cost as Drupal's own page.
-   */
-  onExpand?: (id: string) => Promise<MenuItem[]>;
 }
 
 /** 26px per depth level, and 26px square row controls, per the handoff. */
@@ -111,14 +95,11 @@ interface SortableRowProps {
   onDepthChange: (id: string, delta: number) => void;
   onMove: (id: string, delta: number) => void;
   onToggleEnabled: (id: string) => void;
-  onExpand?: (id: string) => void;
-  expanding?: boolean;
   isDragging?: boolean;
 }
 
 function SortableRow({
-  item, isMatch, dragDisabled, onDepthChange, onMove, onToggleEnabled, onExpand, expanding,
-  isDragging,
+  item, isMatch, dragDisabled, onDepthChange, onMove, onToggleEnabled, isDragging,
 }: SortableRowProps) {
   const { attributes, listeners, setNodeRef, transform, transition, isSorting } =
     useSortable({ id: item.id, disabled: dragDisabled });
@@ -156,19 +137,6 @@ function SortableRow({
         </span>
         <span className="shrink-0 font-mono text-help text-ink-help truncate">{item.path}</span>
 
-        {item.childCount ? (
-          <button
-            type="button"
-            data-expand={item.id}
-            disabled={expanding}
-            onClick={() => onExpand?.(item.id)}
-            title={`Load the ${item.childCount} item${item.childCount === 1 ? '' : 's'} under ${item.title}`}
-            className="shrink-0 inline-flex items-center gap-1 px-1.5 text-help font-semibold text-cu-blue hover:underline disabled:opacity-50 disabled:cursor-wait"
-          >
-            <ChevronRight size={12} className={expanding ? 'animate-pulse' : ''} />
-            {expanding ? 'Loading…' : item.childCount}
-          </button>
-        ) : null}
       </div>
 
       {/* Five controls, in the handoff's order: outdent, indent, up, down, enabled. */}
@@ -216,9 +184,9 @@ export function countChanges(current: MenuItem[], original: MenuItem[]): number 
   return changes;
 }
 
-export const MenuTree = ({ items: initialItems, onSave, unreachable = [], onExpand }: Props) => {
+export const MenuTree = ({ items: initialItems, onSave, unreachable = [] }: Props) => {
   // The parsed original, kept for Revert and for the dirty count.
-  const [original, setOriginal] = useState<MenuItem[]>(initialItems);
+  const [original] = useState<MenuItem[]>(initialItems);
   const [items, setItems] = useState<MenuItem[]>(initialItems);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [query, setQuery] = useState('');
@@ -239,52 +207,6 @@ export const MenuTree = ({ items: initialItems, onSave, unreachable = [], onExpa
   const dragDisabled = query.trim().length > 0;
 
   const dirtyCount = useMemo(() => countChanges(items, original), [items, original]);
-
-  const [expanding, setExpanding] = useState<string | null>(null);
-
-  /**
-   * Loads one item's children and splices them in under it.
-   *
-   * Only the rows that are NEW are inserted, and everything already in the list is left
-   * exactly as it is — so unsaved reordering survives an expansion. Re-parsing the whole
-   * table instead would silently throw away the user's work, which is the failure that
-   * matters here: it looks like the expansion worked.
-   */
-  const handleExpand = useCallback(async (id: string) => {
-    if (!onExpand || expanding) return;
-    setExpanding(id);
-    try {
-      const added = await onExpand(id);
-      const known = new Set(items.map(i => i.id));
-      const fresh = added.filter(i => !known.has(i.id));
-
-      const spliceAfter = (list: MenuItem[]) => {
-        const at = list.findIndex(i => i.id === id);
-        if (at === -1) return list;
-        const next = [...list];
-        next.splice(at + 1, 0, ...fresh);
-        return next;
-      };
-
-      setItems(prev => spliceAfter(prev).map(i => (i.id === id ? { ...i, childCount: undefined } : i)));
-
-      /**
-       * The baseline gains them too.
-       *
-       * countChanges treats an item absent from `original` as a change, and compares
-       * positions — so loading 2 children reported "4 changes" the user had not made, and a
-       * 297-child subtree would have claimed hundreds. Loading is not editing. Revert also
-       * reads `original`, so without this it would undo the expansion and leave the row
-       * saying it had no children.
-       */
-      setOriginal(prev => spliceAfter(prev).map(i => (i.id === id ? { ...i, childCount: undefined } : i)));
-    } catch (error) {
-      // Left expandable rather than silently marked as loaded, so it can be retried.
-      console.warn('[D7 Studio] Could not load that subtree:', error);
-    } finally {
-      setExpanding(null);
-    }
-  }, [onExpand, expanding, items]);
 
   const handleDragStart = useCallback((event: DragStartEvent) => {
     setActiveId(String(event.active.id));
@@ -391,8 +313,6 @@ export const MenuTree = ({ items: initialItems, onSave, unreachable = [], onExpa
                 onDepthChange={handleDepthChange}
                 onMove={handleMove}
                 onToggleEnabled={handleToggleEnabled}
-                onExpand={onExpand ? handleExpand : undefined}
-                expanding={expanding === item.id}
                 isDragging={item.id === activeId}
               />
             ))}
