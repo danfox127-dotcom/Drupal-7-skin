@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<!--
+  A Specialty edit form, from columbiadoctors.org/node/17176/edit.
+
+  Two things this shape exposes:
+   * TWO fields labelled "Summary". Matching primary roles on label alone gave both the
+     summary treatment, so the editor showed two boxes each claiming to be the meta
+     description with its own character budget.
+   * metatag fields, to prove the SEO section still forms on a content type other than
+     News — the rail is built from whatever fields exist, not from a per-type list.
+-->
+<html>
+<head><title>Edit Specialty</title></head>
+<body class="logged-in">
+<div id="toolbar"><a href="/user/1">df2832</a></div>
+<form action="/node/17176/edit" method="post" id="specialty-node-form" accept-charset="UTF-8">
+  <input type="hidden" name="form_build_id" value="form-xyz" />
+  <input type="hidden" name="form_id" value="specialty_node_form" />
+
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Overview</span></legend>
+    <div class="form-item form-type-textfield">
+      <label for="edit-title">Title <span class="form-required">*</span></label>
+      <input type="text" id="edit-title" name="title_field[und][0][value]" class="form-text required" required="required" value="Substance Use Disorders" />
+    </div>
+    <div class="form-item form-type-textfield">
+      <label for="edit-subtitle">Subtitle</label>
+      <input type="text" id="edit-subtitle" name="field_subtitle[und][0][value]" class="form-text" value="Smithers Center offers comprehensive care" />
+    </div>
+  </fieldset>
+
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Body</span></legend>
+    <!--
+      Drupal core's REAL text_textarea_with_summary markup, which the earlier version of
+      this fixture did not model and so hid three bugs at once:
+
+        1. The summary form-item is nested INSIDE the value's form-item, not a sibling of
+           it, and the value's own label carries an appended "(Edit summary)" link. Read
+           naively, the body's label comes out as "Body (Edit summary)".
+        2. Both textareas plus the format select share one .text-format-wrapper, and all
+           three names collapse to the base name `body` — so a wrapper climb that stops
+           when it meets a foreign field walks right past the wrapper.
+        3. CKEditor attaches to the VALUE only. The summary is a plain textarea by design;
+           it is the trimmed teaser, and on this site it doubles as the meta description.
+    -->
+    <div class="field-type-text-with-summary field-name-body">
+      <div class="form-item form-type-textarea form-item-body-und-0-value text-format-wrapper">
+        <div class="form-item form-type-textarea form-item-body-und-0-summary js-hide" style="display: none;">
+          <label for="edit-body-und-0-summary">Summary</label>
+          <div class="form-textarea-wrapper resizable-textarea">
+            <textarea id="edit-body-und-0-summary" name="body[und][0][summary]" class="text-summary form-textarea">Existing teaser summary.</textarea>
+          </div>
+          <div class="description">Leave blank to use trimmed value of full text as the summary.</div>
+        </div>
+        <label for="edit-body-und-0-value">Body <span class="field-edit-link">(<a class="link-edit-summary" href="#">Edit summary</a>)</span></label>
+        <div class="form-textarea-wrapper resizable-textarea">
+          <textarea id="edit-body-und-0-value" name="body[und][0][value]" class="text-full form-textarea">&lt;aside class="ck-callout"&gt;&lt;h2&gt;Our Mission&lt;/h2&gt;&lt;/aside&gt;&lt;p&gt;Existing body copy.&lt;/p&gt;</textarea>
+        </div>
+        <fieldset class="filter-wrapper form-wrapper">
+          <div class="form-item form-type-select">
+            <label for="edit-body-und-0-format">Text format</label>
+            <select id="edit-body-und-0-format" name="body[und][0][format]">
+              <option value="filtered_html" selected="selected">Filtered HTML</option>
+              <option value="full_html">Full HTML</option>
+            </select>
+          </div>
+        </fieldset>
+      </div>
+    </div>
+  </fieldset>
+
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Overview 2</span></legend>
+    <div class="form-item form-type-textarea">
+      <label for="edit-summary">Summary <span class="form-required">*</span></label>
+      <textarea id="edit-summary" name="field_summary[und][0][value]" class="form-textarea required" required="required">Smithers Center for Substance Use Disorders offers care for adults 18+.</textarea>
+    </div>
+    <div class="form-item form-type-textarea">
+      <label for="edit-summary-alt">Summary</label>
+      <textarea id="edit-summary-alt" name="field_specialty_summary[und][0][value]" class="form-textarea"></textarea>
+    </div>
+  </fieldset>
+
+  <fieldset class="field-group-tab">
+    <legend><span class="fieldset-legend">Multimedia</span></legend>
+    <div class="field-widget-media-generic" id="edit-field-image-featured-und-0-ajax-wrapper">
+      <label>Featured Image</label>
+      <input type="text" id="edit-image-featured" name="media[field_image_featured_und_0]" class="form-text" />
+      <a class="button-yellow launcher" href="#">Browse</a>
+    </div>
+  </fieldset>
+
+  <fieldset class="vertical-tabs-pane" id="edit-metatags">
+    <legend><span class="fieldset-legend">Meta tags</span></legend>
+    <div class="form-item form-type-textfield">
+      <label for="edit-metatags-title">Page title</label>
+      <input type="text" id="edit-metatags-title" name="metatags[und][title][value]" class="form-text" />
+    </div>
+    <div class="form-item form-type-textarea">
+      <label for="edit-metatags-description">Description</label>
+      <textarea id="edit-metatags-description" name="metatags[und][description][value]" class="form-textarea"></textarea>
+    </div>
+    <div class="form-item form-type-textfield">
+      <label for="edit-metatags-og-title">Content title</label>
+      <input type="text" id="edit-metatags-og-title" name="metatags[und][og:title][value]" class="form-text" />
+    </div>
+    <div class="form-item form-type-textfield">
+      <label for="edit-metatags-twitter-title">Title</label>
+      <input type="text" id="edit-metatags-twitter-title" name="metatags[und][twitter:title][value]" class="form-text" />
+    </div>
+  </fieldset>
+
+  <fieldset class="vertical-tabs-pane" id="edit-menu">
+    <legend><span class="fieldset-legend">Menu settings</span></legend>
+    <div class="form-item form-type-textfield">
+      <label for="edit-menu-link-title">Menu link title</label>
+      <input type="text" id="edit-menu-link-title" name="menu[link_title]" class="form-text" />
+    </div>
+    <div class="form-item form-type-textfield">
+      <label for="edit-menu-attr-title">Title</label>
+      <input type="text" id="edit-menu-attr-title" name="menu[options][attributes][title]" class="form-text" />
+    </div>
+  </fieldset>
+
+  <fieldset class="vertical-tabs-pane" id="edit-path">
+    <legend><span class="fieldset-legend">URL path settings</span></legend>
+    <div class="form-item form-type-textfield">
+      <label for="edit-path-alias">URL alias</label>
+      <input type="text" id="edit-path-alias" name="path[alias]" class="form-text" value="specialties/substance-use-disorders" />
+    </div>
+  </fieldset>
+
+  <input type="submit" id="edit-submit" name="op" value="Save" />
+</form>
+<script>
+window.CKEDITOR = {
+  instances: {},
+  config: { toolbar: ['Bold', 'Italic', 'Link'] },
+  replace: function (idOrEl) {
+    var ta = typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
+    if (!ta) return null;
+    var id = ta.id;
+    var container = document.createElement('div');
+    container.className = 'cke cke_editor_' + id;
+    var top = document.createElement('div');
+    top.className = 'cke_top';
+    CKEDITOR.config.toolbar.forEach(function (n) {
+      var b = document.createElement('a');
+      b.className = 'cke_button';
+      b.setAttribute('role', 'button');
+      b.textContent = n;
+      top.appendChild(b);
+    });
+    container.appendChild(top);
+    var frame = document.createElement('iframe');
+    frame.className = 'cke_wysiwyg_frame';
+    frame.setAttribute('src', 'about:blank');
+    container.appendChild(frame);
+    ta.style.display = 'none';
+    ta.parentNode.insertBefore(container, ta);
+    var inst = {
+      _data: ta.value, _c: container, _t: ta,
+      getData: function () { return this._data; },
+      setData: function (v) { this._data = v; },
+      updateElement: function () { this._t.value = this._data; },
+      destroy: function (noUpdate) {
+        if (!noUpdate) this.updateElement();
+        if (this._c.parentNode) this._c.parentNode.removeChild(this._c);
+        this._t.style.display = '';
+        delete window.CKEDITOR.instances[id];
+      }
+    };
+    window.CKEDITOR.instances[id] = inst;
+    return inst;
+  }
+};
+window.Drupal = window.Drupal || {};
+Drupal.behaviors = Drupal.behaviors || {};
+Drupal.behaviors.ckeditorStub = {
+  attach: function (context) {
+    var root = context || document;
+    var areas = root.querySelectorAll ? root.querySelectorAll('#edit-body-und-0-value') : [];
+    Array.prototype.forEach.call(areas, function (ta) {
+      if (ta.classList.contains('ckeditor-processed')) return;
+      if (window.CKEDITOR.instances[ta.id]) return;
+      ta.classList.add('ckeditor-processed');
+      window.CKEDITOR.replace(ta);
+    });
+  }
+};
+Drupal.attachBehaviors = function (context) {
+  for (var k in Drupal.behaviors) {
+    if (Drupal.behaviors[k] && typeof Drupal.behaviors[k].attach === 'function') {
+      Drupal.behaviors[k].attach(context || document);
+    }
+  }
+};
+/*
+  ASYNCHRONOUS attach, which is the whole point of this fixture.
+
+  Real CKEditor registers the instance on replace() but only inserts its container after
+  loading config and plugins. The content script runs at DOMContentLoaded, so a fixture
+  that attaches synchronously from an inline script can never catch the bug the live
+  Specialty form hit: the body read as having no editor and was rendered as a plain
+  textarea full of HTML tags.
+
+  The delay is deliberately longer than one frame so that anything sampling the DOM once,
+  at DOMContentLoaded, is guaranteed to miss it.
+*/
+window.CKEDITOR.__deferred = true;
+setTimeout(function () { Drupal.attachBehaviors(document); }, 600);
+</script>
+</body>
+</html>

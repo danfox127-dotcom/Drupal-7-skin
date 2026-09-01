@@ -158,7 +158,7 @@ const registerCommandPalette = () => {
  */
 async function sendRichEditorLifecycle(
   elementId: string,
-  op: 'detach' | 'attach'
+  op: 'detach' | 'attach' | 'probe'
 ): Promise<{ ok: boolean; editor?: string }> {
   try {
     const res = await chrome.runtime.sendMessage({ type: 'richEditorLifecycle', elementId, op });
@@ -167,6 +167,60 @@ async function sendRichEditorLifecycle(
     // An invalidated extension context (reloaded mid-session) cannot be recovered here.
     return { ok: false, editor: 'context-invalidated' };
   }
+}
+
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * Waits for the page's rich editors to finish building before the form is read.
+ *
+ * CKEditor is asynchronous: `CKEDITOR.replace()` registers the instance at once, then
+ * loads config and plugins before firing instanceReady and inserting its container. This
+ * content script runs at DOMContentLoaded, so a single sample of the DOM finds no
+ * container and concludes the body has no editor — and then renders a plain textarea over
+ * a field that was about to get CKEditor, complete with a note saying Drupal has no editor
+ * here. Reported twice from the live Specialty form as "the body needs the html editor".
+ *
+ * Every fixture attached CKEditor synchronously from an inline script, so the whole suite
+ * passed while the live site failed. That is the real lesson here, and it is why
+ * node-edit-specialty-async.html exists.
+ *
+ * Nothing is waited for when the page has no editor library at all, which is the common
+ * case for a form with no rich text field.
+ */
+async function waitForRichEditors(): Promise<string> {
+  const probe = async () => {
+    const res = await sendRichEditorLifecycle('*', 'probe');
+    if (!res.ok || !res.editor) return null;
+    try {
+      return JSON.parse(res.editor) as { hasLibrary: boolean; total: number; ready: number };
+    } catch {
+      return null;
+    }
+  };
+
+  // A short look for the library itself. Page scripts have run by DOMContentLoaded, so
+  // this is about the bridge being ready rather than about Drupal being slow.
+  let state = await probe();
+  for (let attempt = 0; attempt < 3 && !state?.hasLibrary; attempt++) {
+    await sleep(150);
+    state = await probe();
+  }
+  if (!state) return 'no-bridge';
+  if (!state.hasLibrary) return 'no-library';
+
+  // Then wait for the instances to finish. Bounded: a library that never builds anything
+  // must not hold the overlay hostage, and falling through renders a working plain
+  // textarea rather than nothing.
+  const deadline = Date.now() + 8000;
+  while (Date.now() < deadline) {
+    if (state && state.total > 0 && state.ready >= state.total) {
+      return `ready:${state.ready}`;
+    }
+    await sleep(120);
+    state = await probe();
+  }
+  return `timeout:${state?.ready ?? 0}/${state?.total ?? 0}`;
 }
 
 const logStamp = () => {
@@ -187,6 +241,30 @@ const init = async () => {
   // Phase 5 editor consumes the schema; until then this exists so the rules can be
   // validated against real forms, which is the one thing fixtures cannot prove.
   if (isNodeFormPath()) {
+    /**
+     * Before the form is read, not after.
+     *
+     * Whether a field HAS a rich editor decides three things at once: that the body is
+     * relocated rather than reimplemented, that its Edit-summary folds into it instead of
+     * becoming a separate box, and whether the "no rich text editor in Drupal" note is
+     * shown. Reading the form while CKEditor is still loading gets all three wrong
+     * together, which is exactly what was reported.
+     *
+     * Skipped when nothing downstream consumes the schema, so a user who has the node
+     * editor switched off does not pay a wait that cannot change anything for them.
+     */
+    const needsSchema = settings.nodeEditor || settings.debugSchema;
+    const editorState = needsSchema ? await waitForRichEditors() : 'not-needed';
+    if (settings.debugSchema) {
+      console.log(`${logStamp()} rich editors: ${editorState}`);
+    }
+    if (editorState.startsWith('timeout')) {
+      console.warn(
+        `${logStamp()} A rich editor library is present but did not finish loading `
+        + `(${editorState}). Fields it owns will show as plain text.`
+      );
+    }
+
     const schema = discoverSchema();
 
     if (!schema) {

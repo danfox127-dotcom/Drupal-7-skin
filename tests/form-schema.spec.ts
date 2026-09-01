@@ -631,3 +631,90 @@ test.describe('live News form — regressions from the real site', () => {
     expect(sectionOf('shield')).toBe('display');
   });
 });
+
+test.describe('labels that would otherwise appear twice', () => {
+  /**
+   * Reported: two boxes on the Specialty form both reading "Summary", one of which is the
+   * default meta description. Drupal gets away with identical labels because its tabs and
+   * fieldsets supply the context; the overlay removes those, so it has to put it back.
+   *
+   * Derived from the machine name rather than listed, because which labels collide differs
+   * per site and per content type — columbiadoctors Specialty has two Summaries where cuimc
+   * News has one, and a hardcoded pair would be wrong on the next form.
+   */
+  const labelsIn = (page: import('@playwright/test').Page, pathname: string) =>
+    page.evaluate((p) => {
+      const api = (window as any).FormSchema;
+      const schema = api.discoverSchema(document, { pathname: p });
+      return schema.fields.map((f: any) => ({
+        name: f.machineName,
+        label: f.label,
+        shown: api.displayLabelFor(f),
+        relabelled: api.wasRelabelled(f),
+        // Set ONLY by the collision pass. wasRelabelled is also true for the metatag
+        // overrides, which are deliberate and unrelated, so it cannot stand in for this.
+        qualified: f.displayLabel ?? null,
+      }));
+    }, pathname);
+
+  test('two Summaries become distinguishable, and only one is renamed', async ({ page }) => {
+    await open(page, 'node-edit-specialty.html');
+    const fields = await labelsIn(page, '/node/17176/edit');
+
+    const meta = fields.find((f: any) => f.name.startsWith('field_summary'));
+    const other = fields.find((f: any) => f.name.startsWith('field_specialty_summary'));
+
+    // The required one — the default meta description — keeps Drupal's wording, so anyone
+    // who knows the native form still recognises it.
+    expect(meta.shown).toBe('Summary');
+    expect(meta.relabelled).toBe(false);
+    // The other takes the one token that distinguishes its machine name.
+    expect(other.shown).toBe('Specialty summary');
+    expect(other.relabelled).toBe(true);
+    expect(other.qualified).toBe('Specialty summary');
+    expect(meta.qualified).toBeNull();
+  });
+
+  test('no two fields in a section end up showing the same label', async ({ page }) => {
+    await open(page, 'node-edit-specialty.html');
+    const collisions = await page.evaluate(() => {
+      const api = (window as any).FormSchema;
+      const schema = api.discoverSchema(document, { pathname: '/node/17176/edit' });
+      const seen = new Map<string, string[]>();
+      for (const f of schema.fields) {
+        const key = `${f.section}|${api.displayLabelFor(f).toLowerCase()}`;
+        seen.set(key, [...(seen.get(key) ?? []), f.machineName]);
+      }
+      return [...seen.entries()].filter(([, names]) => names.length > 1);
+    });
+    expect(collisions).toEqual([]);
+  });
+
+  test('Drupal\'s own label is preserved for rule matching and diagnostics', async ({ page }) => {
+    await open(page, 'node-edit-specialty.html');
+    const fields = await labelsIn(page, '/node/17176/edit');
+    const other = fields.find((f: any) => f.name.startsWith('field_specialty_summary'));
+    // `label` is what the section rules match on and what the schema dump reports; only
+    // the shown label changes. Overwriting it would silently reroute the field.
+    expect(other.label).toBe('Summary');
+  });
+
+  test('a label that is already unique is never qualified', async ({ page }) => {
+    await open(page, 'node-add-news-live.html');
+    const fields = await labelsIn(page, '/node/add/news');
+    // Renaming fields nobody asked about would be worse than the problem being fixed.
+    // News has one Summary, so nothing on this form should pick up a qualifier — the
+    // metatag renames still apply, but those come from the explicit override table.
+    expect(fields.filter((f: any) => f.qualified)).toEqual([]);
+  });
+
+  test('the diagnostic prints both labels when they differ', async ({ page }) => {
+    await open(page, 'node-edit-specialty.html');
+    const dump = await page.evaluate(() => {
+      const api = (window as any).FormSchema;
+      return api.explainSchema(api.discoverSchema(document, { pathname: '/node/17176/edit' }));
+    });
+    // So a misfiled field can still be traced back to what Drupal called it.
+    expect(dump).toContain('Specialty summary (Drupal: Summary)');
+  });
+});
