@@ -551,4 +551,13 @@ test.describe('interactive content', () => {
     const findings = r.unmapped.filter(u => /interactive/i.test(u.label));
     expect(findings).toHaveLength(1);
   });
+  test('the body provenance line counts the form and scripts it dropped', async ({ page }) => {
+    const r = await run(page, CALCULATOR, { tags: [], source: 'default' }, CALC_URL);
+    expect(r.bodyStats.formsRemoved).toBe(1);
+    expect(r.bodyStats.scriptsRemoved).toBe(3);
+
+    const body = r.proposals.find(p => p.key === 'body')!;
+    expect(body.source).toContain('1 form');
+    expect(body.source).toContain('3 scripts');
+  });
 });
