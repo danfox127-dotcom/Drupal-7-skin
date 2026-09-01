@@ -127,9 +127,13 @@ export function findInteractive(doc: Document, sourceUrl: string): Unmapped[] {
     ? describeForm(form)
     : `A page that reports “${norm(noscript!.textContent).slice(0, 90)}” without JavaScript`;
 
+  // Naming only what is actually there. Saying "forms and scripts" on a page with no form
+  // is the same small dishonesty this whole feature exists to remove.
+  const cannot = form ? 'Forms and scripts' : 'Scripts';
+
   return [{
     label: `Interactive content — “${headingFor(anchor, doc)}”`,
-    reason: `${what}${driven}. Forms and scripts cannot live in a node body; `
+    reason: `${what}${driven}. ${cannot} cannot live in a node body; `
       + `this needs a Full HTML block or a module.`,
   }];
 }

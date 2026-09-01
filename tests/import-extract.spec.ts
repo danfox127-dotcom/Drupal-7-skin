@@ -544,6 +544,9 @@ test.describe('interactive content', () => {
     expect(finding!.reason).not.toMatch(/a form with/i);
     expect(finding!.reason).toContain('requires Javascript');
     expect(finding!.reason).toContain('explorer.js');
+    // No form on this page, so the explanation must not claim there is one.
+    expect(finding!.reason).toContain('Scripts cannot live in a node body');
+    expect(finding!.reason).not.toContain('Forms and scripts');
   });
 
   test('a page with both a form and a noscript reports once', async ({ page }) => {
