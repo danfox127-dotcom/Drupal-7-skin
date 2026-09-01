@@ -71,7 +71,7 @@ async function fetchSource(url: string): Promise<FetchSourceResponse> {
 export interface RichEditorLifecycleRequest {
   type: 'richEditorLifecycle';
   elementId: string;
-  op: 'detach' | 'attach' | 'sync';
+  op: 'detach' | 'attach' | 'sync' | 'probe';
 }
 
 export interface SyncRichEditorRequest {
@@ -150,7 +150,7 @@ async function syncRichEditor(tabId: number, elementId: string, value: string): 
 async function richEditorLifecycle(
   tabId: number,
   elementId: string,
-  op: 'detach' | 'attach' | 'sync'
+  op: 'detach' | 'attach' | 'sync' | 'probe'
 ): Promise<{ ok: boolean; editor?: string }> {
   try {
     const [result] = await chrome.scripting.executeScript({
@@ -182,6 +182,39 @@ async function richEditorLifecycle(
          * runs), but the local autosave reads the textarea directly — so without this it
          * would draft an EMPTY body while the user was typing into a full one.
          */
+        /**
+         * 'probe' reports whether the page has a rich-editor library and how many of its
+         * registered instances have finished building their editing surface.
+         *
+         * Needed because CKEditor is ASYNCHRONOUS. `CKEDITOR.replace()` registers the
+         * instance immediately but then loads config and plugins before firing
+         * instanceReady and inserting the container. The content script runs at
+         * DOMContentLoaded, samples the DOM once, sees no container, and concludes the
+         * body has no editor — so it renders a plain textarea over a field that was about
+         * to get CKEditor a moment later. Every fixture attaches synchronously in an
+         * inline script, which is why this never showed up in a test.
+         */
+        if (operation === 'probe') {
+          const ck = w.CKEDITOR as undefined | {
+            instances?: Record<string, unknown>;
+          };
+          const tiny = (w as unknown as { tinymce?: { editors?: { id: string }[] } }).tinymce;
+
+          const ckIds = Object.keys(ck?.instances ?? {});
+          const ckReady = ckIds.filter(instanceId =>
+            document.getElementById(`cke_${instanceId}`)
+            || document.querySelector(`.cke_editor_${instanceId}`)
+          ).length;
+          const tinyIds = (tiny?.editors ?? []).map(e => e.id);
+
+          return JSON.stringify({
+            hasLibrary: Boolean(ck || tiny),
+            total: ckIds.length + tinyIds.length,
+            // A TinyMCE editor in `editors` has already built its UI.
+            ready: ckReady + tinyIds.length,
+          });
+        }
+
         if (operation === 'sync') {
           let synced = 0;
           const instances = w.CKEDITOR?.instances ?? {};

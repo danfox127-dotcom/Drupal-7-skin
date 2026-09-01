@@ -36,6 +36,8 @@ const ROUTES: [RegExp, string][] = [
   [/\/node\/add\/page/, 'node-add-page.html'],
   [/\/node\/18948\/edit/, 'node-edit-media-populated.html'],
   [/\/node\/17176\/edit/, 'node-edit-specialty.html'],
+  // Same form, CKEditor attaching on a delay — see the fixture's own comment.
+  [/\/node\/17177\/edit/, 'node-edit-specialty-async.html'],
   [/\/node\/\d+\/edit/, 'node-edit.html'],
 ];
 
@@ -1546,3 +1548,95 @@ test.describe('Feature 5: the rail is triaged, and the image is not in it', () =
     expect(submitted).toBe(true);
   });
 });
+
+test.describe('Feature 5: a rich editor that loads late is still found', () => {
+  /**
+   * The actual cause of "the body needs the html editor", reported twice from
+   * columbiadoctors.org/node/17176/edit.
+   *
+   * CKEditor is ASYNCHRONOUS. `CKEDITOR.replace()` registers the instance immediately but
+   * then loads config and plugins before firing instanceReady and inserting its container.
+   * This content script runs at DOMContentLoaded and sampled the DOM once, so it found no
+   * container, decided the body had no editor, and rendered a plain textarea full of HTML
+   * tags — under a note reading "This field has no rich text editor in Drupal".
+   *
+   * Whether a field has an editor decides three things together, which is why one wrong
+   * answer produced three symptoms: the body is relocated rather than reimplemented, its
+   * Edit-summary folds into it instead of becoming a separate box, and the plain-text note
+   * is shown or not.
+   *
+   * Every other fixture attaches CKEditor synchronously from an inline script, so the
+   * entire suite passed while the live site failed. This one attaches after 600ms.
+   */
+  const open = async (page: Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/17177/edit`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 20000 });
+  };
+
+  test('the fixture really does attach late, or this proves nothing', async ({ page }) => {
+    // Guards the guard: if the fixture ever becomes synchronous, the tests below would
+    // pass for the wrong reason and the regression could return unnoticed.
+    await page.goto(`${HOST}/node/17177/edit`);
+    const atLoad = await page.evaluate(() => ({
+      deferred: !!(window as any).CKEDITOR?.__deferred,
+      containers: document.querySelectorAll('.cke').length,
+    }));
+    expect(atLoad.deferred).toBe(true);
+    expect(atLoad.containers).toBe(0);
+  });
+
+  test('the body gets the real editor, not a plain textarea', async ({ page, settings }) => {
+    await open(page, settings);
+    const state = await page.evaluate(() => {
+      const cke = document.querySelector('.cke_editor_edit-body-und-0-value') as HTMLElement | null;
+      const ta = document.getElementById('edit-body-und-0-value') as HTMLTextAreaElement;
+      return {
+        editor: !!cke,
+        inOverlay: !!cke?.closest('.d7-proxy-ui-form-host'),
+        toolbar: cke?.querySelectorAll('.cke_button').length ?? 0,
+        sourceVisible: ta.getBoundingClientRect().height > 0,
+      };
+    });
+    expect(state.editor).toBe(true);
+    expect(state.inOverlay).toBe(true);
+    expect(state.toolbar).toBeGreaterThan(0);
+    expect(state.sourceVisible).toBe(false);
+  });
+
+  test('the "no rich text editor" note is not shown for the body', async ({ page, settings }) => {
+    await open(page, settings);
+    // This note is correct for a genuinely plain field and wrong here. It is the exact
+    // string that appeared under the body on the live form.
+    const text = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return (sr.textContent || '').replace(/\s+/g, ' ');
+    });
+    expect(text).not.toContain('no rich text editor in Drupal');
+  });
+
+  test('the Edit-summary still folds into the body', async ({ page, settings }) => {
+    await open(page, settings);
+    // The fold requires the body to be rich, so a late editor previously left a third
+    // summary box on the form. Same root cause, different symptom.
+    //
+    // Asserted as the exact SET of summary labels, not by searching for "Body summary":
+    // which of the three claims the summary role depends on DOM order, so that string is
+    // not guaranteed to appear even when the bug is present. Without the fix this list has
+    // three entries — verified by disabling the wait and re-running.
+    const summary = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return {
+        labels: Array.from(sr.querySelectorAll('label, p, span'))
+          .map(el => (el.textContent || '').trim())
+          .filter(t => /summary$/i.test(t) && t.length < 40),
+        stillSubmits: new FormData(document.querySelector('form[id$="-node-form"]') as HTMLFormElement)
+          .get('body[und][0][summary]'),
+      };
+    });
+    expect(summary.labels).toEqual(['Summary', 'Specialty summary']);
+    // Folded from the overlay, still submitted by the form.
+    expect(summary.stillSubmits).toBe('Existing teaser summary.');
+  });
+});
+
