@@ -55,6 +55,15 @@ export interface FieldDescriptor {
   /** Bare field name without the language/delta suffix, e.g. `field_topics`. */
   baseName: string;
   label: string;
+  /**
+   * Label to SHOW, when Drupal's own would be ambiguous here.
+   *
+   * Set only where a label collided with another field's in the same section — two boxes
+   * both reading "Summary" say nothing about which is which. `label` keeps whatever Drupal
+   * wrote, because the section rules match on it and the schema diagnostic should report
+   * the truth. Read through `displayLabelFor`, never directly.
+   */
+  displayLabel?: string;
   kind: FieldKind;
   required: boolean;
   /** Drupal's `.description` help text, when present. */

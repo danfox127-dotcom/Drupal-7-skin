@@ -1392,6 +1392,24 @@ test.describe('Feature 5: the description is findable and the Titles are disting
     expect(text).toContain('Menu link title');
   });
 
+  test('the two Summary boxes are told apart on screen', async ({ page, settings }) => {
+    await open(page, settings);
+    // Reported: two boxes both reading "Summary", one of them the meta description.
+    const summaries = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const labels = Array.from(sr.querySelectorAll('label, p, span'))
+        .map(el => (el.textContent || '').trim())
+        .filter(t => /summary$/i.test(t));
+      return {
+        plain: labels.filter(t => /^summary$/i.test(t)).length,
+        qualified: labels.filter(t => /^specialty summary$/i.test(t)).length,
+      };
+    });
+    // Exactly one keeps the bare name; the other says which summary it is.
+    expect(summaries.plain).toBe(1);
+    expect(summaries.qualified).toBe(1);
+  });
+
   test('a relabelled field still says what Drupal calls it', async ({ page, settings }) => {
     await open(page, settings);
     // Renaming without a trace would strand anyone cross-referencing the Drupal form.

@@ -2,6 +2,7 @@ import {
   FieldDescriptor, FieldKind, FieldOption, FormSchema, VerticalTab,
 } from './types';
 import { assignSection, isAdvancedField } from './sectionRules';
+import { assignDisplayLabels } from './displayLabels';
 import { hasRichEditorOn } from '../richEditorPresence';
 
 /**
@@ -507,10 +508,14 @@ export function buildSchema(
   contentType: string | null,
   detectedFrom: FormSchema['detectedFrom']
 ): FormSchema {
+  const fields = walkForm(form);
+  // After the walk, because a label collision can only be seen across the whole form.
+  assignDisplayLabels(fields);
+
   return {
     contentType,
     detectedFrom,
-    fields: walkForm(form),
+    fields,
     verticalTabs: readVerticalTabs(form),
     form,
   };

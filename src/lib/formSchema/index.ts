@@ -4,6 +4,7 @@ import { buildSchema, findNodeForm } from './walkForm';
 export * from './types';
 export { walkForm, findNodeForm, readVerticalTabs, baseNameOf } from './walkForm';
 export { assignSection, SECTION_RULES } from './sectionRules';
+export { displayLabelFor, wasRelabelled, assignDisplayLabels } from './displayLabels';
 
 /**
  * Detects the content type.
@@ -94,8 +95,13 @@ export function explainSchema(schema: FormSchema): string {
         field.multiValue ? 'multi' : null,
         field.options ? `${field.options.length} options` : null,
       ].filter(Boolean).join(', ');
+      // Both labels when they differ: the shown one is what the editor is looking at,
+      // Drupal's is what they will find if they open the native form to compare.
+      const shown = field.displayLabel && field.displayLabel !== field.label
+        ? `${field.displayLabel} (Drupal: ${field.label})`
+        : field.label;
       lines.push(
-        `  ${field.label} — ${field.kind}${flags ? ` (${flags})` : ''}` +
+        `  ${shown} — ${field.kind}${flags ? ` (${flags})` : ''}` +
         `\n    name=${field.machineName} rule=${field.matchedBy}` +
         (field.group ? ` group="${field.group}"` : '')
       );
