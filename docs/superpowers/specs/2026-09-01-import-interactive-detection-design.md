@@ -55,9 +55,17 @@ noise — worse than silence, because it trains the reader to skip it.
 
 **The form is the anchor.** A finding requires one of:
 
-1. A `<form>` inside the article region containing at least one `input`/`select`/`textarea`
-   whose type is not `search`, `submit`, or `hidden`, and which is not itself inside a
-   `nav`, `header`, `footer`, or `aside`.
+1. A `<form>` inside the article region containing **at least two** content-bearing
+   controls — `input`/`select`/`textarea` whose type is not `submit`, `button`, `reset`,
+   `image`, `search`, or `hidden` — and which is not inside a `nav`, `header`, `footer`,
+   `aside`, or `[role="search"]`.
+
+   The two-control threshold is the load-bearing part, not the type list. Drupal's own
+   search block renders `<input type="text" name="search_block_form">`, so excluding
+   `type="search"` does not exclude real search boxes; excluding *single-field* forms does.
+   Both calculators clear the bar comfortably (4 and 8 controls). The cost is that a
+   genuine one-field calculator goes undetected — accepted, alongside the script-only gap
+   below.
 2. A `<noscript>` element — a page stating outright that it does not work without JS.
    Both calculator pages carry exactly that ("This calculator requires Javascript").
 
