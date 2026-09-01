@@ -32,6 +32,7 @@ const ROUTES: [RegExp, string][] = [
   [/\/admin\/structure\/menu\/manage\/[^/]+\/add/, 'menu-add-link.html'],
   [/\/admin\/structure\/menu\/manage\/main-menu-collapsed/, 'menu-manage-collapsed.html'],
   [/\/admin\/structure\/menu\/manage\/main-menu/, 'menu-manage.html'],
+  [/\/media\/browser/, 'media-browser.html'],
   [/\/admin\/content/, 'admin/content.html'],
   [/\/node\/add\/news-ckeditor/, 'node-add-news-ckeditor.html'],
   [/\/node\/add\/news-media/, 'node-add-news-media.html'],
@@ -1788,3 +1789,194 @@ test.describe('Feature 3: a menu too large to render gets search, not a worse ta
   });
 });
 
+
+test.describe('Feature 5: the media browser round trip, end to end', () => {
+  /**
+   * The gap this closes: selection was only ever verified by calling
+   * simulateMediaSelect() straight from the test, which is the LAST step of the flow. The
+   * launcher click, the dialog, the iframe and the callback into the opener were never
+   * exercised — so nothing proved the launcher still worked after the overlay relocated it
+   * into a shadow host's light DOM, or that the dialog was painted on top of the overlay
+   * rather than behind it.
+   *
+   * The fixture now models Drupal's actual path: launcher → Drupal.media.popups.mediaBrowser
+   * → a dialog on document.body holding an iframe at /media/browser → the iframe calls
+   * Drupal.media.browser.select in the opener → ajax replaces the widget wrapper.
+   */
+  const open = async (page: Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/add/news-media`);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    await expect(page.locator(`${UI} [data-left-section="multimedia"]`)).toBeVisible();
+  };
+
+  /** The relocated launcher, which lives in the host's light DOM, not the shadow root. */
+  const launcher = (page: Page) =>
+    page.locator('.d7-proxy-ui-form-host a.launcher[data-field="teaser"]');
+
+  const pickFromLibrary = async (page: Page, filename: string) => {
+    const frame = page.frameLocator('#media-browser-frame');
+    await frame.locator(`.media-item:has-text("${filename}")`).click();
+  };
+
+  test('the relocated launcher still opens the browser', async ({ page, settings }) => {
+    await open(page, settings);
+    // Drupal bound this handler at page load, on the element it rendered. The overlay then
+    // moved that element — a moved node keeps its listeners, and this is the assertion that
+    // would fail if the widget were ever rebuilt instead of relocated.
+    await launcher(page).click();
+    await expect(page.locator('#media-browser-dialog')).toBeVisible();
+    await expect(page.locator('#media-browser-frame')).toHaveAttribute(
+      'src', '/media/browser?field=teaser'
+    );
+  });
+
+  test('the dialog is on top of the overlay, not behind it', async ({ page, settings }) => {
+    await open(page, settings);
+    await launcher(page).click();
+
+    /**
+     * jQuery UI appends its dialog to document.body, outside the overlay's host, so which
+     * one paints on top is a question about stacking rather than nesting. A dialog behind
+     * the overlay is unusable and would look exactly like the browser failing to open.
+     */
+    const onTop = await page.evaluate(() => {
+      const dialog = document.getElementById('media-browser-dialog') as HTMLElement;
+      const box = dialog.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + 8);
+      return {
+        dialogVisible: box.width > 0 && box.height > 0,
+        // The topmost element at the dialog's own position must belong to the dialog.
+        hitInsideDialog: !!hit && dialog.contains(hit),
+      };
+    });
+    expect(onTop).toEqual({ dialogVisible: true, hitInsideDialog: true });
+  });
+
+  test('choosing a file in the iframe reaches the form and the overlay', async ({ page, settings }) => {
+    await open(page, settings);
+    await launcher(page).click();
+    await pickFromLibrary(page, 'campus-quad.jpg');
+
+    // The dialog closes and the widget comes back with the file attached.
+    await expect(page.locator('#media-browser-dialog')).toHaveCount(0);
+    await expect(page.locator('.d7-proxy-ui-form-host .preview-teaser')).toBeVisible();
+
+    const state = await page.evaluate(() => {
+      const preview = document.querySelector('.preview-teaser') as HTMLElement;
+      const form = document.querySelector('form[id$="-node-form"]') as HTMLFormElement;
+      return {
+        // Rendered in the overlay, not stranded in the hidden original form.
+        inOverlay: !!preview.closest('.d7-proxy-ui-form-host'),
+        inHiddenRegion: !!preview.closest('[data-d7-hidden]'),
+        // Drupal replaces the wrapper wholesale, so the carrier is what keeps it projected.
+        stillSlotted: !!preview.closest('[slot]'),
+        rendered: preview.getBoundingClientRect().height > 0,
+        filename: preview.querySelector('.filename')?.textContent,
+        fid: new FormData(form).get('field_image_teaser[und][0][fid]'),
+      };
+    });
+
+    expect(state.inOverlay).toBe(true);
+    expect(state.inHiddenRegion).toBe(false);
+    expect(state.stillSlotted).toBe(true);
+    expect(state.rendered).toBe(true);
+    expect(state.filename).toBe('campus-quad.jpg');
+    expect(state.fid).toBe('9911');
+  });
+
+  test('an image can be changed: remove, then pick another', async ({ page, settings }) => {
+    await open(page, settings);
+    await launcher(page).click();
+    await pickFromLibrary(page, 'campus-quad.jpg');
+    await expect(page.locator('.d7-proxy-ui-form-host .preview-teaser')).toBeVisible();
+
+    /**
+     * The real flow, and the one that was reported broken: a POPULATED media widget has no
+     * Browse launcher, only Remove. So changing an image means removing first, and every
+     * step after that runs against markup Drupal has already replaced once — the launcher
+     * clicked at the end is a DIFFERENT element from the one the overlay originally moved.
+     */
+    await page.locator('.d7-proxy-ui-form-host .preview-teaser a.remove').click();
+    await expect(page.locator('.d7-proxy-ui-form-host .preview-teaser')).toHaveCount(0);
+
+    // The launcher is back, still inside the overlay rather than stranded in the hidden form.
+    await expect(launcher(page)).toBeVisible();
+    await launcher(page).click();
+    await pickFromLibrary(page, 'atrium.png');
+
+    await expect(page.locator('.d7-proxy-ui-form-host .filename')).toHaveText('atrium.png');
+
+    const submitted = await page.evaluate(() => {
+      const form = document.querySelector('form[id$="-node-form"]') as HTMLFormElement;
+      return {
+        fid: new FormData(form).get('field_image_teaser[und][0][fid]'),
+        // A leftover copy from the first selection would override this on the server.
+        copies: form.querySelectorAll('input[name="field_image_teaser[und][0][fid]"]').length,
+        previews: document.querySelectorAll('.preview-teaser').length,
+      };
+    });
+    expect(submitted).toEqual({ fid: '9913', copies: 1, previews: 1 });
+  });
+
+  test('a removed image is really cleared, not just hidden', async ({ page, settings }) => {
+    await open(page, settings);
+    await launcher(page).click();
+    await pickFromLibrary(page, 'campus-quad.jpg');
+    await expect(page.locator('.d7-proxy-ui-form-host .preview-teaser')).toBeVisible();
+
+    await page.locator('.d7-proxy-ui-form-host .preview-teaser a.remove').click();
+    await expect(page.locator('.d7-proxy-ui-form-host .preview-teaser')).toHaveCount(0);
+
+    // Saving after a remove must not resubmit the old fid.
+    const fid = await page.evaluate(() =>
+      new FormData(document.querySelector('form[id$="-node-form"]') as HTMLFormElement)
+        .get('field_image_teaser[und][0][fid]'));
+    expect(fid).toBe('0');
+  });
+
+  test('the second field is untouched by the first field\'s selection', async ({ page, settings }) => {
+    await open(page, settings);
+    await launcher(page).click();
+    await pickFromLibrary(page, 'lab-bench.jpg');
+    await expect(page.locator('.d7-proxy-ui-form-host .preview-teaser')).toBeVisible();
+
+    // Two media fields share a name shape and an ajax-wrapper convention; writing the
+    // wrong one would be invisible until publication.
+    const hero = await page.evaluate(() => {
+      const form = document.querySelector('form[id$="-node-form"]') as HTMLFormElement;
+      return {
+        heroFid: new FormData(form).get('field_image_hero[und][0][fid]'),
+        heroPreview: document.querySelectorAll('.preview-hero').length,
+        heroStillSlotted: !!document
+          .querySelector('input[name="field_image_hero[und][0][fid]"]')
+          ?.closest('[slot]'),
+      };
+    });
+    expect(hero).toEqual({ heroFid: '0', heroPreview: 0, heroStillSlotted: true });
+  });
+
+  test('the browser can be opened from the second field too', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.locator('.d7-proxy-ui-form-host a.launcher[data-field="hero"]').click();
+    await expect(page.locator('#media-browser-frame')).toHaveAttribute(
+      'src', '/media/browser?field=hero'
+    );
+    await pickFromLibrary(page, 'atrium.png');
+    await expect(page.locator('.d7-proxy-ui-form-host .preview-hero')).toBeVisible();
+  });
+
+  test('the iframe found its opener, so the callback path is real', async ({ page, settings }) => {
+    await open(page, settings);
+    await launcher(page).click();
+    await pickFromLibrary(page, 'campus-quad.jpg');
+
+    // The browser marks the document when the opener's API is missing. Without this, a test
+    // could pass on a fixture that silently never called back at all.
+    const missing = await page.evaluate(() => {
+      const frame = document.getElementById('media-browser-frame') as HTMLIFrameElement | null;
+      return frame?.contentDocument?.body?.getAttribute('data-callback-missing') ?? null;
+    });
+    expect(missing).toBeNull();
+  });
+});
