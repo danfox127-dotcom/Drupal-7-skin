@@ -64,22 +64,13 @@ const isAjaxToggle = (a: HTMLAnchorElement): boolean =>
   || /\/bigmenu-customize\//.test(a.getAttribute('href') ?? '');
 
 /**
- * Reveals the subtrees Drupal collapsed behind "Show children (N)".
+ * Reveals only the subtrees whose toggle acts on this page already.
  *
- * On the live main menu the manager was showing 6 rows out of 3,000+, because everything
- * else sits behind those links. Which fix is possible depends on what the link IS, and the
- * two cases are genuinely different:
- *
- *   - an in-page toggle (href="#") reveals or inserts rows in this same table, so clicking
- *     it before parsing gets the whole subtree, editable and saveable like any other row.
- *   - a real URL loads a different page. Those rows cannot be fetched and mixed in here:
- *     saving writes weights and plids into THIS form's inputs, and rows from another page
- *     have none, so every "saved" change to them would be silently dropped. They are
- *     reported instead, with their links, which is the honest answer.
- *
- * Nested subtrees need more than one pass, since revealing a parent can expose a child's
- * toggle that was not in the DOM before. Bounded, because a toggle that re-adds itself
- * would otherwise spin forever.
+ * A plain `href="#"` toggle is free: it reveals rows that are in the page. Anything that
+ * costs a request is NOT expanded here — see expandOneSubtree, which does one at a time on
+ * click. Eagerly expanding a BigMenu site meant thousands of requests to rebuild the page
+ * BigMenu exists to avoid, and the first version of this shipped a panel listing the same
+ * nine names as the nine rows above it, which was worse than saying nothing.
  */
 const expandCollapsedSubtrees = async (
   table: HTMLTableElement
@@ -90,32 +81,36 @@ const expandCollapsedSubtrees = async (
 
   for (let pass = 0; pass < 6; pass++) {
     const toggles = Array.from(table.querySelectorAll<HTMLAnchorElement>('a'))
-      .filter(a => SHOW_CHILDREN.test(a.textContent ?? ''));
-
-    const fresh = toggles.filter(a => !clicked.has(a));
-    if (fresh.length === 0) break;
+      .filter(a => SHOW_CHILDREN.test(a.textContent ?? ''))
+      .filter(a => !clicked.has(a));
+    if (toggles.length === 0) break;
 
     let clickedThisPass = 0;
-    for (const toggle of fresh) {
+    for (const toggle of toggles) {
       clicked.add(toggle);
-      if (isInPageToggle(toggle)) {
-        const before = table.querySelectorAll('tr.draggable').length;
-        toggle.click();
-        clickedThisPass++;
-        // Counted by rows gained, not by clicks: a toggle that turns out to do nothing
-        // should not be reported as having expanded a subtree.
-        await new Promise(resolve => setTimeout(resolve, 60));
-        expanded += Math.max(0, table.querySelectorAll('tr.draggable').length - before);
-      } else {
+
+      // Costs a request: left for the row's own expand control.
+      if (isAjaxToggle(toggle)) continue;
+
+      if (!isInPageToggle(toggle)) {
+        // A genuine link to another page. Those rows are not part of this form, so a
+        // change made to them here could not be saved — reported, not loaded.
         const href = toggle.getAttribute('href') ?? '';
         const row = toggle.closest('tr');
         const label = row ? (menuLinkAnchor(row)?.textContent ?? '').trim() : '';
         remote.set(href, {
           href,
           label: label || (toggle.textContent ?? '').trim(),
-          expandsInDrupal: isAjaxToggle(toggle),
+          expandsInDrupal: false,
         });
+        continue;
       }
+
+      const before = table.querySelectorAll('tr.draggable').length;
+      toggle.click();
+      clickedThisPass++;
+      await new Promise(resolve => setTimeout(resolve, 60));
+      expanded += Math.max(0, table.querySelectorAll('tr.draggable').length - before);
     }
 
     if (clickedThisPass === 0) break;
@@ -154,6 +149,7 @@ const menuLinkAnchor = (row: Element): HTMLAnchorElement | null => {
 
 const parseDrupalMenuTable = (table: HTMLTableElement): MenuItem[] => {
   const items: MenuItem[] = [];
+  subtreeToggles.clear();
   const rows = table.querySelectorAll('tr.draggable');
 
   rows.forEach((row, index) => {
@@ -189,10 +185,65 @@ const parseDrupalMenuTable = (table: HTMLTableElement): MenuItem[] => {
     const enabledCheckbox = row.querySelector('input[type="checkbox"].form-checkbox') as HTMLInputElement;
     const enabled = enabledCheckbox ? enabledCheckbox.checked : true;
 
+    /**
+     * The count Drupal advertises on its "Show children (N)" toggle.
+     *
+     * Kept so the row can offer to load them. The toggle itself is remembered against the
+     * item id, because expanding is done by clicking DRUPAL'S OWN link: its ajax handler
+     * replaces the region and the new rows arrive with their form inputs already part of
+     * this form, so they save exactly like the rows that were there at page load.
+     * Reimplementing the request would mean rebuilding Drupal's ajax protocol and would
+     * produce rows that cannot be saved.
+     */
+    const toggle = Array.from(row.querySelectorAll<HTMLAnchorElement>('a'))
+      .find(a => SHOW_CHILDREN.test(a.textContent ?? ''));
+    const count = Number(/\((\d[\d,]*)\)/.exec(toggle?.textContent ?? '')?.[1]?.replace(/,/g, ''));
+
+    if (toggle && Number.isFinite(count) && count > 0) {
+      subtreeToggles.set(id, toggle);
+      items.push({ id, title, path, depth, enabled, childCount: count });
+      return;
+    }
+
     items.push({ id, title, path, depth, enabled });
   });
 
   return items;
+};
+
+/** Item id -> the Drupal link that loads its children. Rebuilt on every parse. */
+const subtreeToggles = new Map<string, HTMLAnchorElement>();
+
+/**
+ * Expands one subtree by clicking Drupal's own toggle, and returns the rows that appeared.
+ *
+ * Waits on the table's own row count rather than a fixed delay: BigMenu's round trip is a
+ * real request and 297 children take longer to arrive than 1.
+ */
+const expandOneSubtree = async (
+  table: HTMLTableElement,
+  itemId: string
+): Promise<MenuItem[]> => {
+  const toggle = subtreeToggles.get(itemId);
+  if (!toggle) return [];
+
+  const before = table.querySelectorAll('tr.draggable').length;
+  toggle.click();
+
+  const deadline = Date.now() + 15000;
+  while (Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 120));
+    if (table.querySelectorAll('tr.draggable').length > before) {
+      // One more beat, so a subtree still being appended is not read half-built.
+      await new Promise(resolve => setTimeout(resolve, 150));
+      return parseDrupalMenuTable(table);
+    }
+  }
+
+  console.warn(
+    `${logStamp()} Drupal did not return the children of menu item ${itemId} within 15s.`
+  );
+  return [];
 };
 
 const syncTreeToDrupal = (table: HTMLTableElement, items: MenuItem[]) => {
@@ -700,6 +751,7 @@ const init = async () => {
         <MenuTree
           items={items}
           unreachable={subtrees.remote}
+          onExpand={(id) => expandOneSubtree(menuTable, id)}
           onSave={(updatedItems) => syncTreeToDrupal(menuTable, updatedItems)}
         />
       ), 'before');

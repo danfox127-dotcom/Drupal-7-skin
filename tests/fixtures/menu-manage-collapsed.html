@@ -198,6 +198,25 @@
             <input type="hidden" name="menu[mlid:900][plid]" value="0" />
           </td>
         </tr>
+        <!--
+          A toggle that is a genuine link to ANOTHER page: no use-ajax, and a path that
+          leaves this form. Those rows cannot be mixed in, because saving writes into this
+          form's inputs and they have none — so they are reported, not loaded.
+        -->
+        <tr class="draggable">
+          <td>
+            <div class="indentation">&nbsp;</div><a href="#" class="tabledrag-handle" title="Drag to re-order"><div class="handle">&nbsp;</div></a><a href="/archive">Archive</a>
+            <a href="/admin/structure/menu/manage/archive-menu/parent/970">Show children (12)</a>
+          </td>
+          <td><input type="checkbox" class="form-checkbox" checked="checked" /></td>
+          <td>
+            <input type="hidden" name="menu[mlid:970][mlid]" value="970" />
+            <select class="menu-weight" name="menu[mlid:970][weight]">
+              <option value="-1">-1</option><option value="0" selected="selected">0</option><option value="1">1</option>
+            </select>
+            <input type="hidden" name="menu[mlid:970][plid]" value="0" />
+          </td>
+        </tr>
         <tr class="draggable">
           <td>
             <div class="indentation">&nbsp;</div><a href="#" class="tabledrag-handle" title="Drag to re-order"><div class="handle">&nbsp;</div></a><a href="/education">Education</a>
@@ -253,6 +272,47 @@ document.addEventListener('click', function (e) {
     after = tr;
   });
   a.textContent = 'Hide children';
+});
+
+/*
+  The BigMenu case: a real href that loads its children INTO this page through Drupal's
+  ajax framework, after a round trip. Modelled with a delay and a fetch so a test can
+  assert both that nothing is requested up front and that one click costs exactly one
+  request.
+*/
+document.addEventListener('click', function (e) {
+  var a = e.target;
+  if (!a || !a.classList || !a.classList.contains('use-ajax')) return;
+  e.preventDefault();
+  if (a.dataset.done) return;
+  a.dataset.done = '1';
+  var row = a.closest('tr');
+  // A real request, so the test can count it.
+  fetch(a.getAttribute('href')).catch(function () {});
+  setTimeout(function () {
+    var kids = [
+      { mlid: 951, title: 'Medical School', path: '/education/md' },
+      { mlid: 952, title: 'Residency', path: '/education/residency' }
+    ];
+    var after = row;
+    kids.forEach(function (k) {
+      var tr = document.createElement('tr');
+      tr.className = 'draggable';
+      tr.innerHTML =
+        '<td><div class="indentation">&nbsp;</div><div class="indentation">&nbsp;</div>' +
+        '<a href="#" class="tabledrag-handle"><div class="handle">&nbsp;</div></a>' +
+        '<a href="' + k.path + '">' + k.title + '</a></td>' +
+        '<td><input type="checkbox" class="form-checkbox" checked="checked" /></td>' +
+        '<td><input type="hidden" name="menu[mlid:' + k.mlid + '][mlid]" value="' + k.mlid + '" />' +
+        '<select class="menu-weight" name="menu[mlid:' + k.mlid + '][weight]">' +
+        '<option value="-1">-1</option><option value="0" selected="selected">0</option><option value="1">1</option>' +
+        '</select>' +
+        '<input type="hidden" name="menu[mlid:' + k.mlid + '][plid]" value="950" /></td>';
+      after.parentNode.insertBefore(tr, after.nextSibling);
+      after = tr;
+    });
+    a.textContent = 'Hide children';
+  }, 250);
 });
 </script>
 </body>

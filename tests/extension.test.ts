@@ -1709,15 +1709,15 @@ test.describe('Feature 3: collapsed subtrees are reached, or reported honestly',
 
   test('the subtree panel names the parent item, not the toggle', async ({ page, settings }) => {
     await open(page, settings);
-    // Same root cause: the label came through the same broken selector, so the panel
-    // listed "Show children (10)" ten times instead of naming which subtrees they were.
+    // The label came through the same broken selector as the row titles, so the panel
+    // listed "Show children (12)" instead of naming which subtree it was.
     const links = await page.evaluate(() => {
       const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
       const root = el.shadowRoot ?? el;
       const panel = root.querySelector('[data-unreachable-subtrees]');
       return Array.from(panel?.querySelectorAll('a') ?? []).map(a => (a.textContent || '').trim());
     });
-    expect(links).toEqual(['Education']);
+    expect(links).toEqual(['Archive']);
   });
 
   test('an in-page subtree is expanded and its items appear in the tree', async ({ page, settings }) => {
@@ -1775,29 +1775,75 @@ test.describe('Feature 3: collapsed subtrees are reached, or reported honestly',
     await expect(panel).toContainText('1 subtree not shown here');
     // The link is what makes it reachable at all.
     await expect(panel.locator('a')).toHaveAttribute(
-      'href', '/admin/structure/menu/manage/main-menu/bigmenu-customize/subform/950'
+      'href', '/admin/structure/menu/manage/archive-menu/parent/970'
     );
   });
 
-  test('a BigMenu AJAX subtree is not eagerly expanded', async ({ page, settings }) => {
+  test('a BigMenu subtree costs nothing until its row is clicked', async ({ page, settings }) => {
     /**
-     * columbiadoctors.org uses BigMenu, whose toggles are real URLs that expand inline
-     * through Drupal's ajax framework — so "has an href" does not mean "another page".
+     * columbiadoctors.org runs BigMenu: "Show children" links are real URLs that load
+     * inline through Drupal's ajax framework. BigMenu exists BECAUSE the menu is too large
+     * to render at once — one item there has 297 children and the menu runs past 3,000 —
+     * so expanding every subtree on load would fire thousands of requests to rebuild the
+     * page BigMenu was installed to avoid.
      *
-     * They are still not clicked. BigMenu exists BECAUSE the menu is too large to render
-     * at once: one item there has 297 children and the menu runs past 3,000, so expanding
-     * every subtree would fire thousands of requests to rebuild the page BigMenu was
-     * installed to avoid. Being slower than Drupal is not a fix.
+     * One click, one request, which is the same cost as Drupal's own page.
      */
-    await open(page, settings);
     const requests: string[] = [];
     page.on('request', r => { if (/bigmenu-customize/.test(r.url())) requests.push(r.url()); });
-    await page.waitForTimeout(600);
+
+    await open(page, settings);
+    await page.waitForTimeout(500);
     expect(requests).toEqual([]);
 
-    // Offered as a link, with the reason stated.
-    await expect(page.locator(`${UI} [data-unreachable-subtrees]`))
-      .toContainText('too large to render');
+    // The row offers it, with Drupal's own count.
+    const control = page.locator(`${UI} [data-expand="950"]`);
+    await expect(control).toBeVisible();
+    await expect(control).toContainText('140');
+
+    await control.click();
+    await expect(page.locator(`${UI} >> text=Medical School`).first()).toBeVisible();
+    // Exactly one request, not one per subtree.
+    expect(requests).toHaveLength(1);
+  });
+
+  test('expanded children are editable and saveable, like any other row', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.locator(`${UI} [data-expand="950"]`).click();
+    await expect(page.locator(`${UI} >> text=Residency`).first()).toBeVisible();
+
+    /**
+     * The reason expansion clicks DRUPAL'S link instead of fetching the URL ourselves: its
+     * ajax handler puts the new rows into this form, inputs and all, so they save like the
+     * rows that were there at load. Rows we fetched and injected would look identical and
+     * silently save nothing.
+     */
+    const wrote = await page.evaluate(() => {
+      const el = document.querySelector('.d7-proxy-ui-container') as HTMLElement;
+      const root = el.shadowRoot ?? el;
+      const save = Array.from(root.querySelectorAll('button'))
+        .find(b => /save menu/i.test(b.textContent || '')) as HTMLButtonElement;
+      save.click();
+      const weight = document.querySelector('select[name="menu[mlid:951][weight]"]') as HTMLSelectElement;
+      return { found: !!weight, value: weight?.value };
+    });
+    expect(wrote.found).toBe(true);
+    expect(wrote.value).not.toBe('0');
+  });
+
+  test('expanding does not discard unsaved reordering', async ({ page, settings }) => {
+    await open(page, settings);
+    // Move the first row down, then expand something else. Re-parsing the whole table
+    // would look like it worked while quietly throwing the edit away.
+    await page.locator(`${UI} [data-menu-row] button[aria-label="Move down"]`).first().click();
+    const counter = page.locator(`${UI} >> text=/\\d+ changes?/`).first();
+    const before = await counter.textContent();
+    expect(before).toBeTruthy();
+
+    await page.locator(`${UI} [data-expand="950"]`).click();
+    await expect(page.locator(`${UI} >> text=Medical School`).first()).toBeVisible();
+    // Same count after loading a subtree: the edit was not thrown away.
+    expect(await counter.textContent()).toBe(before);
   });
 
   test('a menu other than main-menu is handled too', async ({ page, settings }) => {
