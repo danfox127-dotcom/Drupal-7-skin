@@ -300,9 +300,67 @@ export function submitForm(form: HTMLFormElement, opts: { publish?: boolean } = 
     }
   }
 
-  const button = form.querySelector<HTMLElement>('#edit-submit, input[name="op"][type="submit"], button[name="op"]');
+  const button = chooseSubmit(form, Boolean(opts.publish));
   if (!button) return false;
 
   button.click();
   return true;
+}
+
+/** An input's value or a button's text, whichever carries the label. */
+function submitLabel(el: HTMLElement): string {
+  return ((el as HTMLInputElement).value || el.textContent || '').trim();
+}
+
+/**
+ * Buttons a save must never press, whatever was asked for.
+ *
+ * "Delete (all revisions)" is a submit input named `op` sitting in the same actions block
+ * as the saves, so anything selecting by name or by position can reach it.
+ */
+const NEVER_CLICK = /delete|remove|preview|view changes|cancel/i;
+
+/**
+ * Picks the button that does what the caller asked.
+ *
+ * The old selector led with `#edit-submit`, which is fine on a stock Drupal form where
+ * that is the only Save. On a site with a moderation workflow it is not: vagelos.columbia.edu
+ * offers
+ *
+ *   edit-submit          op="Save as draft"
+ *   edit-submit-publish  op="Save and publish"
+ *
+ * and no moderation-state field at all — the choice IS the button. So the overlay's
+ * Publish saved a pending revision every single time. The live node never changed, and a
+ * menu placement set in the same edit looked like it had silently failed to hold, because
+ * reopening the form shows the live revision rather than the pending one. Nothing was
+ * reported, because clicking a real save button genuinely does succeed.
+ *
+ * Matching on the visible label rather than on an id: `edit-submit-publish` is this site's
+ * id, not a Drupal convention, whereas the wording of a publish button is what any editor
+ * would recognise and what a themer is least likely to change silently.
+ */
+function chooseSubmit(form: HTMLFormElement, publish: boolean): HTMLElement | null {
+  const candidates = Array.from(
+    form.querySelectorAll<HTMLElement>('input[type="submit"][name="op"], button[name="op"]')
+  ).filter(el => !NEVER_CLICK.test(submitLabel(el)));
+
+  // Field widgets ("Attach", "Add another item") are submit inputs too, but they carry
+  // their own names rather than `op`, so the selector above already excludes them. Keep
+  // #edit-submit as a last resort for forms that name their button something else.
+  if (candidates.length === 0) {
+    const fallback = form.querySelector<HTMLElement>('#edit-submit');
+    return fallback && !NEVER_CLICK.test(submitLabel(fallback)) ? fallback : null;
+  }
+
+  const wanted = publish ? /publish/i : /draft/i;
+  const match = candidates.find(el => wanted.test(submitLabel(el)));
+  if (match) return match;
+
+  /**
+   * No button for that intent. On a stock form there is one Save which is both — and for
+   * publishing, the `status` checkbox handled above is what makes it a publish.
+   */
+  const plain = candidates.find(el => !/draft|publish/i.test(submitLabel(el)));
+  return plain ?? candidates[0];
 }

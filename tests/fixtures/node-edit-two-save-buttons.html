@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<!--
+  A node form with SEPARATE draft and publish buttons, as vagelos.columbia.edu has.
+
+  Taken from the live form's own button list:
+
+    edit-submit          name=op  value="Save as draft"
+    edit-submit-publish  name=op  value="Save and publish"
+    edit-preview-changes name=op  value="View changes"
+    edit-delete          name=op  value="Delete (all revisions)"
+
+  There is no moderation-state field anywhere on that form — publishing is decided purely
+  by which button is clicked. The old selector led with `#edit-submit`, so the overlay's
+  Publish button clicked "Save as draft" every time. The node saved to a pending revision
+  ("latest version"), the live node never changed, and anything set alongside it — a menu
+  placement, for instance — appeared not to have held at all.
+
+  The field "add more" / "attach" buttons are included because they are also submit inputs
+  on the real form. They carry their own names rather than `op`, and must never be clicked
+  by a save.
+-->
+<html>
+<body class="node-type-page">
+<form id="page-node-form" action="/node/26981/edit" method="post" accept-charset="UTF-8">
+  <div class="form-item form-type-textfield">
+    <label for="edit-title">Title <span class="form-required">*</span></label>
+    <input type="text" id="edit-title" name="title" value="IgA Nephropathy Progression Calculator" class="form-text required" required="required" />
+  </div>
+
+  <div class="form-item form-type-textarea">
+    <label for="edit-summary">Summary <span class="form-required">*</span></label>
+    <textarea id="edit-summary" name="field_summary[und][0][value]" class="form-textarea required" required="required"></textarea>
+  </div>
+
+  <fieldset id="edit-menu" class="vertical-tabs-pane">
+    <legend><span class="fieldset-legend">Menu settings</span></legend>
+    <span class="summary">Not in menu</span>
+    <div class="form-item form-type-checkbox">
+      <input type="checkbox" id="edit-menu-enabled" name="menu[enabled]" value="1" class="form-checkbox" />
+      <label for="edit-menu-enabled">Provide a menu link</label>
+    </div>
+    <div class="form-item form-type-textfield">
+      <label for="edit-menu-link-title">Menu link title</label>
+      <input type="text" id="edit-menu-link-title" name="menu[link_title]" value="" class="form-text" />
+    </div>
+    <div class="form-item form-type-select">
+      <label for="edit-menu-parent">Parent item</label>
+      <select id="edit-menu-parent" name="menu[parent]" class="form-select">
+        <option value="main-menu:0">&lt;Main menu&gt;</option>
+        <option value="main-menu:100">-Gharavi Lab</option>
+        <option value="main-menu:101">--Calculators</option>
+      </select>
+    </div>
+  </fieldset>
+
+  <!-- Field widget buttons: submit inputs, but not saves. -->
+  <input type="submit" id="edit-field-image-teaser-und-0-attach-button" name="field_image_teaser_und_0_attach_button" value="Attach" />
+  <input type="submit" id="edit-og-group-ref-und-0-default-add-more" name="og_group_ref_add_more__default" value="Add another item" />
+
+  <div class="form-actions">
+    <input type="submit" id="edit-submit" name="op" value="Save as draft" class="form-submit" />
+    <input type="submit" id="edit-submit-publish" name="op" value="Save and publish" class="form-submit" />
+    <input type="submit" id="edit-preview-changes" name="op" value="View changes" class="form-submit" />
+    <input type="submit" id="edit-delete" name="op" value="Delete (all revisions)" class="form-submit" />
+  </div>
+</form>
+</body>
+</html>

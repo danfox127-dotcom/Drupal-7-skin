@@ -311,6 +311,101 @@ test.describe('write-back to native controls', () => {
     expect(result.submitted).toBe(true);
   });
 
+  /**
+   * A form with separate draft and publish buttons, which vagelos.columbia.edu has.
+   *
+   * The selector led with `#edit-submit`, and on that site `#edit-submit` is "Save as
+   * draft". So the overlay's Publish button saved a pending revision every time: the live
+   * node never changed, and a menu placement set alongside it looked like it had not held.
+   * Nothing reported anything, because clicking a real save button does succeed.
+   */
+  test('publish clicks the publish button, not the draft one', async ({ page }) => {
+    await open(page, 'node-edit-two-save-buttons.html');
+    const clicked = await page.evaluate(() => {
+      const api = (window as any).Editor;
+      const schema = api.discoverSchema(document, { pathname: '/node/26981/edit' });
+      let which: string | null = null;
+      schema.form.addEventListener('submit', (e: Event) => e.preventDefault());
+      schema.form.querySelectorAll('input[type=submit]').forEach((b: HTMLInputElement) => {
+        b.addEventListener('click', () => { which = b.id; });
+      });
+      api.submitForm(schema.form, { publish: true });
+      return which;
+    });
+    expect(clicked).toBe('edit-submit-publish');
+  });
+
+  test('a draft save clicks the draft button', async ({ page }) => {
+    await open(page, 'node-edit-two-save-buttons.html');
+    const clicked = await page.evaluate(() => {
+      const api = (window as any).Editor;
+      const schema = api.discoverSchema(document, { pathname: '/node/26981/edit' });
+      let which: string | null = null;
+      schema.form.addEventListener('submit', (e: Event) => e.preventDefault());
+      schema.form.querySelectorAll('input[type=submit]').forEach((b: HTMLInputElement) => {
+        b.addEventListener('click', () => { which = b.id; });
+      });
+      api.submitForm(schema.form, { publish: false });
+      return which;
+    });
+    expect(clicked).toBe('edit-submit');
+  });
+
+  /**
+   * The guard protects the FALLBACK path, not the happy path.
+   *
+   * A first version of this test asserted that a normal publish does not click Delete, and
+   * it passed with the guard removed: "Save and publish" precedes "Delete (all revisions)"
+   * in the DOM, so `find` reached the right button regardless. It proved nothing.
+   *
+   * The exposure is a form with no publish button, where the choice falls through to
+   * "first candidate". Here Delete is moved to the front and the publish button removed,
+   * so first-candidate IS Delete unless it has been excluded.
+   */
+  test('with no publish button, a publish falls back to a save and never to Delete', async ({ page }) => {
+    await open(page, 'node-edit-two-save-buttons.html');
+    const clicks = await page.evaluate(() => {
+      const api = (window as any).Editor;
+      const form = document.querySelector('form') as HTMLFormElement;
+      const actions = form.querySelector('.form-actions')!;
+
+      form.querySelector('#edit-submit-publish')!.remove();
+      // Delete first, so document order alone would select it.
+      actions.insertBefore(form.querySelector('#edit-delete')!, actions.firstChild);
+
+      const schema = api.discoverSchema(document, { pathname: '/node/26981/edit' });
+      const seen: string[] = [];
+      form.addEventListener('submit', (e: Event) => e.preventDefault());
+      form.querySelectorAll('input[type=submit]').forEach((b: HTMLInputElement) => {
+        b.addEventListener('click', () => seen.push(b.id));
+      });
+      api.submitForm(schema.form, { publish: true });
+      return seen;
+    });
+
+    expect(clicks, 'a save must never reach Delete').not.toContain('edit-delete');
+    expect(clicks).toEqual(['edit-submit']);
+  });
+
+  test('field widget buttons are never mistaken for a save', async ({ page }) => {
+    // "Attach" and "Add another item" are submit inputs on the real form. They carry their
+    // own names rather than `op`, which is what keeps them out of the candidate list.
+    await open(page, 'node-edit-two-save-buttons.html');
+    const clicks = await page.evaluate(() => {
+      const api = (window as any).Editor;
+      const schema = api.discoverSchema(document, { pathname: '/node/26981/edit' });
+      const seen: string[] = [];
+      schema.form.addEventListener('submit', (e: Event) => e.preventDefault());
+      schema.form.querySelectorAll('input[type=submit]').forEach((b: HTMLInputElement) => {
+        b.addEventListener('click', () => seen.push(b.id));
+      });
+      api.submitForm(schema.form, { publish: true });
+      api.submitForm(schema.form, { publish: false });
+      return seen;
+    });
+    expect(clicks).toEqual(['edit-submit-publish', 'edit-submit']);
+  });
+
   test('submitForm reports failure when there is no save button', async ({ page }) => {
     await page.goto('data:text/html,<body class="node-type-news"><form class="node-form"><input name="title"/></form></body>');
     await page.addScriptTag({ content: bundle });
