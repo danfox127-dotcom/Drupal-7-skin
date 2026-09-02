@@ -430,7 +430,16 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
                 ? (() => {
                     const parent = fields.find(f => /parent/i.test(f.label));
                     const others = fields.filter(f => f !== parent);
-                    return <MenuSection parent={parent} others={others} errorFor={errorFor} />;
+                    // From the whole schema, not this section: Title lives under primary.
+                    const nodeTitle = schema.fields.find(f => primaryRole(f) === 'title');
+                    return (
+                      <MenuSection
+                        parent={parent}
+                        others={others}
+                        nodeTitle={nodeTitle}
+                        errorFor={errorFor}
+                      />
+                    );
                   })()
                 : section === 'related'
                   ? renderRelated()

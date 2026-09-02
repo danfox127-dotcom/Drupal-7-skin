@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { FieldDescriptor, FieldOption } from '../../lib/formSchema';
 import { readValue, writeValue } from '../../lib/fieldBinding';
@@ -19,6 +19,14 @@ interface Props {
   parent?: FieldDescriptor;
   /** Menu link title, "Provide a menu link", and anything else menu-related. */
   others: FieldDescriptor[];
+  /**
+   * The node's own Title, used to default the menu link title.
+   *
+   * Passed in rather than looked up here because it lives in a different section, and
+   * because its machine name varies — a site running the Title module calls it
+   * title_field, so only the label identifies it.
+   */
+  nodeTitle?: FieldDescriptor;
   errorFor: (field: FieldDescriptor) => string | null;
 }
 
@@ -47,7 +55,17 @@ const SEARCH_FIRST_THRESHOLD = 150;
 /** Never render more than this many rows at once, however broad the query. */
 const MAX_RENDERED = 120;
 
-export const MenuSection = ({ parent, others, errorFor }: Props) => {
+/**
+ * How many ancestors to name on a row.
+ *
+ * The rail is 451px and the live main menu nests 16 deep, so a full trail wraps to three
+ * lines and buries the item you are trying to read. The nearest two are what disambiguate
+ * — "Our Services" under Cardiology is a different thing from "Our Services" under
+ * Radiology — and anything above that is signalled with a leading ellipsis.
+ */
+const TRAIL_SHOWN = 2;
+
+export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
   const [value, setValue] = useState<string>(() => (parent ? String(readValue(parent)) : ''));
   const [query, setQuery] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -91,7 +109,7 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
   const breadcrumb = useMemo(() => {
     const index = options.findIndex(o => o.value === value);
     if (index === -1) return null;
-    const chain = ancestorIndices(options, index).map(i => options[index === i ? index : i]);
+    const chain = ancestorIndices(options, index).map(i => options[i]);
     // ancestorIndices returns nearest-first; the trail reads outermost-first.
     return [...chain.reverse().map(o => o.label), options[index].label];
   }, [options, value]);
@@ -102,9 +120,68 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
     [options]
   );
 
+  /**
+   * Matched on machine name, not label.
+   *
+   * These come from core's menu module, so `menu[enabled]` and `menu[link_title]` are
+   * fixed — unlike a content type's own fields, whose names vary and whose labels are the
+   * only stable handle. A label would also break under translation or a theme override.
+   * (baseName is no use here: every menu control shares the base name `menu`.)
+   */
+  const enabled = useMemo(
+    () => others.find(f => f.machineName === 'menu[enabled]'), [others]);
+  const linkTitle = useMemo(
+    () => others.find(f => f.machineName === 'menu[link_title]'), [others]);
+
+  /**
+   * Ancestor labels for one option, nearest last, capped at TRAIL_SHOWN.
+   *
+   * Indentation alone was not enough to tell rows apart: a search shows matches next to
+   * dimmed ancestors, and once the list scrolls the parent rows leave the viewport, so a
+   * row carrying only its own title gives no way to know which of six "Our Services" it
+   * is. Built from the same ancestor walk as the breadcrumb and the filter, so the three
+   * cannot disagree about who a parent is.
+   */
+  const indexByValue = useMemo(() => {
+    const map = new Map<string, number>();
+    options.forEach((option, i) => map.set(option.value, i));
+    return map;
+  }, [options]);
+
+  const trailOf = useCallback((option: FieldOption): { labels: string[]; deeper: boolean } => {
+    const index = indexByValue.get(option.value);
+    if (index === undefined) return { labels: [], deeper: false };
+    const chain = ancestorIndices(options, index);            // nearest first
+    const shown = chain.slice(0, TRAIL_SHOWN).reverse();      // outermost first
+    return { labels: shown.map(i => options[i].label), deeper: chain.length > TRAIL_SHOWN };
+  }, [options, indexByValue]);
+
   const select = (option: FieldOption) => {
     setValue(option.value);
     if (parent) writeValue(parent, option.value);
+
+    /**
+     * Choosing a parent IS placing the node in the menu, so enable the link.
+     *
+     * Drupal 7 gates the entire menu fieldset on menu[enabled] — "Provide a menu link",
+     * unchecked by default and captioned "Not in menu". With it unchecked,
+     * menu_node_save() discards the parent and the title, so a placement chosen here
+     * vanished on save with nothing reported. Writing the parent alone was setting a
+     * value Drupal had already decided to ignore.
+     */
+    if (enabled && readValue(enabled) !== true) writeValue(enabled, true);
+
+    /**
+     * And a link title, which Drupal requires once the link is enabled.
+     *
+     * Without this, fixing the checkbox alone would trade silent loss for a validation
+     * error on save. The node's own title is what an editor would type, and it stays
+     * editable in the field above.
+     */
+    if (linkTitle && nodeTitle && !String(readValue(linkTitle)).trim()) {
+      const title = String(readValue(nodeTitle)).trim();
+      if (title) writeValue(linkTitle, title);
+    }
   };
 
   return (
@@ -144,17 +221,26 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
                 // A row present only to preserve hierarchy is dimmed, so it reads as
                 // context rather than a result.
                 const isContext = !filtered.isMatch(option);
+                // Only real results carry a trail. A dimmed context row IS an ancestor,
+                // so restating its own lineage would be noise on the rows that need it least.
+                const trail = isContext ? { labels: [], deeper: false } : trailOf(option);
                 return (
                   <button
                     key={option.value}
                     type="button"
                     onClick={() => select(option)}
+                    data-parent-option={option.value}
                     className={`w-full text-left px-2 py-1 text-control transition-colors duration-200 ease-studio ${
                       isSelected ? 'bg-cu-tint text-cu-blue font-semibold' : 'text-ink hover:bg-cu-tint'
                     } ${isContext ? 'opacity-60' : ''}`}
                     style={{ paddingLeft: 8 + Math.min(option.depth, MAX_VISUAL_DEPTH) * INDENT_PX }}
                   >
-                    {option.label}
+                    <span data-parent-label className="block">{option.label}</span>
+                    {trail.labels.length > 0 && (
+                      <span data-parent-trail className="block text-help text-ink-help truncate">
+                        in {trail.deeper ? '… › ' : ''}{trail.labels.join(' › ')}
+                      </span>
+                    )}
                   </button>
                 );
               })

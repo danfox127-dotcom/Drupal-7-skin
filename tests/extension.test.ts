@@ -551,11 +551,77 @@ test.describe('D7 Studio: menu parent depth', () => {
 
   test('every parent Drupal offers is selectable, at any depth', async ({ page, settings }) => {
     await openMenuSection(page, settings);
-    const labels = await page.locator(`${UI} aside button`).allInnerTexts();
+    // The row's LABEL, not the whole button: each row also carries its ancestor trail,
+    // so matching the button's full text would break on that context by design.
+    const labels = await page.locator(`${UI} aside [data-parent-label]`).allInnerTexts();
     // Depth 4 and 5 entries must be present, not just the top two levels.
     for (const deep of ['Active BP Blood Pressure Monitoring', 'Video Tutorial', 'FAQ']) {
       expect(labels.some(t => t.trim() === deep), `"${deep}" should be selectable`).toBe(true);
     }
+  });
+
+  /**
+   * The bug this covers: picking a parent set menu[parent] on a fieldset Drupal ignores.
+   *
+   * Drupal 7 gates the whole menu fieldset on menu[enabled] — "Provide a menu link",
+   * unchecked by default, with a "Not in menu" summary beside it. With it unchecked,
+   * menu_node_save() discards the parent and the link title, so the placement silently
+   * fails to persist and the node saves with no menu link at all.
+   *
+   * Drupal also requires a link title once enabled, so setting only the checkbox trades
+   * silent loss for a validation error on save. Both have to be handled for a selection
+   * to survive.
+   */
+  test('selecting a parent enables the menu link, so the placement survives save', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    await expect(page.locator('#edit-menu-enabled')).not.toBeChecked();
+
+    await page.locator(`${UI} aside button`, { hasText: 'Video Tutorial' }).first().click();
+
+    await expect(page.locator('select[name="menu[parent]"]')).not.toHaveValue('');
+    await expect(page.locator('#edit-menu-enabled'),
+      'Drupal discards the whole fieldset when this is unchecked').toBeChecked();
+  });
+
+  test('enabling the menu link gives it a title, which Drupal requires', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    await page.fill(`${UI} input[aria-label="Title"]`, 'Blood Pressure Video Tutorial');
+    await page.locator(`${UI} aside button`, { hasText: 'Video Tutorial' }).first().click();
+
+    // Empty link_title with enabled=1 fails Drupal's own validation on submit.
+    await expect(page.locator('input[name="menu[link_title]"]'))
+      .toHaveValue('Blood Pressure Video Tutorial');
+  });
+
+  /**
+   * A row carrying only its own title is not enough to choose by.
+   *
+   * The live main menu has six items called "Our Services", one per specialty. Indentation
+   * distinguishes them only while their parents are on screen, and a search shows matches
+   * interleaved with dimmed ancestors that scroll away.
+   */
+  test('a deep parent row names its immediate ancestors', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Video Tutorial');
+
+    const trail = page.locator(`${UI} aside [data-parent-option="main-menu:204"] [data-parent-trail]`);
+    await expect(trail).toBeVisible();
+    await expect(trail).toContainText('Our Services');
+    await expect(trail).toContainText('Active BP Blood Pressure Monitoring');
+    // Five ancestors, two shown — the rest are elided rather than wrapping the rail.
+    await expect(trail).toContainText('…');
+    await expect(trail).not.toContainText('Specialties');
+  });
+
+  test('a dimmed context row does not restate its own lineage', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Video Tutorial');
+
+    // Specialties is present only to hold the hierarchy up, so a trail on it is noise.
+    await expect(page.locator(`${UI} aside [data-parent-option="main-menu:200"]`)).toBeVisible();
+    await expect(
+      page.locator(`${UI} aside [data-parent-option="main-menu:200"] [data-parent-trail]`)
+    ).toHaveCount(0);
   });
 
   test('reports how deep the menu goes', async ({ page, settings }) => {
@@ -568,8 +634,10 @@ test.describe('D7 Studio: menu parent depth', () => {
     await openMenuSection(page, settings);
     const pads = await page.evaluate(() => {
       const root = document.querySelector('.d7-proxy-ui-form-host')!.shadowRoot!;
-      const find = (text: string) => [...root.querySelectorAll('aside button')]
-        .find(b => b.textContent?.trim() === text) as HTMLElement | undefined;
+      // Match on the label span, then measure the button that owns it.
+      const find = (text: string) => [...root.querySelectorAll('aside [data-parent-label]')]
+        .find(l => l.textContent?.trim() === text)
+        ?.closest('button') as HTMLElement | undefined;
       return {
         specialties: parseFloat(getComputedStyle(find('Specialties')!).paddingLeft),
         services: parseFloat(getComputedStyle(find('Our Services')!).paddingLeft),
@@ -582,14 +650,14 @@ test.describe('D7 Studio: menu parent depth', () => {
 
   test('a deep parent can be selected and is written to the native select', async ({ page, settings }) => {
     await openMenuSection(page, settings);
-    await page.locator(`${UI} aside button`, { hasText: /^Video Tutorial$/ }).first().click();
+    await page.locator(`${UI} aside [data-parent-option="main-menu:204"]`).click();
     await expect(page.locator('#edit-menu-parent')).toHaveValue('main-menu:204');
   });
 
   test('filtering a deep item keeps its whole ancestor chain visible', async ({ page, settings }) => {
     await openMenuSection(page, settings);
     await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'video');
-    const labels = (await page.locator(`${UI} aside button`).allInnerTexts()).map(t => t.trim());
+    const labels = (await page.locator(`${UI} aside [data-parent-label]`).allInnerTexts()).map(t => t.trim());
     // The match plus all four ancestors, so the position is never ambiguous.
     for (const crumb of ['Specialties', 'Cardiology & Cardiac Surgery', 'Our Services',
                          'Active BP Blood Pressure Monitoring', 'Video Tutorial']) {
@@ -599,7 +667,7 @@ test.describe('D7 Studio: menu parent depth', () => {
 
   test('the breadcrumb shows the full path for a deep selection', async ({ page, settings }) => {
     await openMenuSection(page, settings);
-    await page.locator(`${UI} aside button`, { hasText: /^Video Tutorial$/ }).first().click();
+    await page.locator(`${UI} aside [data-parent-option="main-menu:204"]`).click();
     const trail = await page.locator(`${UI} aside >> text=/Will appear under/`).innerText();
     expect(trail).toContain('Specialties');
     expect(trail).toContain('Our Services');
@@ -638,7 +706,7 @@ test.describe('D7 Studio: parent picker at real scale', () => {
   test('typing narrows to matches with their ancestors', async ({ page, settings }) => {
     await open(page, settings);
     await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Detail 7.1');
-    const labels = (await page.locator(`${UI} aside button`).allInnerTexts()).map(t => t.trim());
+    const labels = (await page.locator(`${UI} aside [data-parent-label]`).allInnerTexts()).map(t => t.trim());
     expect(labels).toContain('Detail 7.1 Cardiology');
     // Ancestors retained, so the position in a 200-row menu is never ambiguous.
     expect(labels).toContain('Specialty 7');
@@ -657,7 +725,7 @@ test.describe('D7 Studio: parent picker at real scale', () => {
   test('a deep match can still be selected and written back', async ({ page, settings }) => {
     await open(page, settings);
     await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Detail 12.1');
-    await page.locator(`${UI} aside button`, { hasText: /^Detail 12\.1 Cardiology$/ }).first().click();
+    await page.locator(`${UI} aside [data-parent-option="main-menu:3121"]`).click();
     await expect(page.locator('#edit-menu-parent')).toHaveValue('main-menu:3121');
   });
 
