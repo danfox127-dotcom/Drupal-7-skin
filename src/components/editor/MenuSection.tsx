@@ -73,6 +73,19 @@ export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
   // Menu-attribute fields: real, but not what anyone opens this section for.
   const advancedOthers = useMemo(() => others.filter(f => f.advanced), [others]);
 
+  /** The two controls a parent selection writes to, shown right under the picker. */
+  const gating = useMemo(
+    () => others.filter(f => !f.advanced
+      && (f.machineName === 'menu[enabled]' || f.machineName === 'menu[link_title]')),
+    [others]
+  );
+  /** Everything else non-advanced, including any fields a site has added of its own. */
+  const otherPlain = useMemo(
+    () => others.filter(f => !f.advanced
+      && f.machineName !== 'menu[enabled]' && f.machineName !== 'menu[link_title]'),
+    [others]
+  );
+
   /**
    * EVERY option Drupal offers, at any depth.
    *
@@ -186,13 +199,19 @@ export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Menu link title and the enable checkbox come first — they gate the rest. The
-          menu-attribute fields (ID, CLASSES, STYLE, TARGET, ACCESS KEY, …) are marked
-          advanced and collapse, so they stop burying the parent picker. */}
-      {others.filter(f => !f.advanced).map(field => (
-        <FieldControl key={field.machineName} field={field} dense error={errorFor(field)} />
-      ))}
+      {/*
+        The picker leads, then the two controls it writes to, then anything else.
 
+        Marking core's menu-attribute fields advanced was supposed to keep them from
+        burying the picker, and it does — but a site can add its own non-advanced menu
+        fields, and Vagelos has two ("Menu modal: NID", "Link tooltip"). That pushed the
+        placement control to fifth in a section called Menu Placement, below the fold of
+        the panel, where an editor never saw it.
+
+        "Provide a menu link" and the link title sit directly beneath the picker rather
+        than above it, so the values selecting a parent writes appear where the click
+        happened.
+      */}
       {parent && (
         <>
           <div className="flex flex-col gap-1.5">
@@ -274,6 +293,15 @@ export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
           )}
         </>
       )}
+
+
+      {gating.map(field => (
+        <FieldControl key={field.machineName} field={field} dense error={errorFor(field)} />
+      ))}
+
+      {otherPlain.map(field => (
+        <FieldControl key={field.machineName} field={field} dense error={errorFor(field)} />
+      ))}
 
       {advancedOthers.length > 0 && (
         <div className="flex flex-col gap-3">

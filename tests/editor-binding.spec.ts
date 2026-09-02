@@ -210,6 +210,62 @@ test.describe('write-back to native controls', () => {
     expect(result.t1).toBe(false);
   });
 
+  test('a write to a detached element is reported as failed, not silently dropped', async ({ page }) => {
+    // Assigning to an input that has left the document throws nothing and changes nothing
+    // the form will submit. Claiming success there let the overlay diverge from Drupal.
+    await open(page, 'node-add-news.html');
+    const result = await page.evaluate(() => {
+      const api = (window as any).Editor;
+      const schema = api.discoverSchema(document, { pathname: '/node/add/news' });
+      const title = schema.fields.find((f: any) => /^title$/i.test(f.label));
+      const el = title.elements[0];
+
+      const okWhileAttached = api.writeValue(title, 'still in the page');
+      el.remove();
+      const okAfterDetach = api.writeValue(title, 'no longer in the page');
+
+      return { okWhileAttached, okAfterDetach, connected: el.isConnected };
+    });
+    expect(result.okWhileAttached).toBe(true);
+    expect(result.connected).toBe(false);
+    expect(result.okAfterDetach, 'a detached write must not report success').toBe(false);
+  });
+
+  test('a wrapper replaced by Drupal AJAX does not break write-back', async ({ page }) => {
+    /**
+     * The real failure, reproduced: Drupal answers an interaction by replacing a widget
+     * wrapper, so the schema's element reference goes stale while an identically-named
+     * input takes its place. Writes were landing on the discarded node — which is how the
+     * overlay showed a checkbox ticked that Drupal read as false.
+     */
+    await open(page, 'node-add-news.html');
+    const result = await page.evaluate(() => {
+      const api = (window as any).Editor;
+      const schema = api.discoverSchema(document, { pathname: '/node/add/news' });
+      const title = schema.fields.find((f: any) => /^title$/i.test(f.label));
+      const stale = title.elements[0] as HTMLInputElement;
+
+      // Swap in a fresh input under the same name, exactly as an AJAX replace would.
+      const replacement = stale.cloneNode(true) as HTMLInputElement;
+      replacement.value = '';
+      stale.replaceWith(replacement);
+
+      const ok = api.writeValue(title, 'written after the swap');
+      return {
+        ok,
+        staleValue: stale.value,
+        liveValue: replacement.value,
+        readsBack: api.readValue(title),
+      };
+    });
+
+    expect(result.ok, 'the write must be reported as succeeding').toBe(true);
+    // The value has to land on the input Drupal will submit, not the discarded one.
+    expect(result.liveValue).toBe('written after the swap');
+    expect(result.staleValue).toBe('');
+    expect(result.readsBack).toBe('written after the swap');
+  });
+
   test('writeAll names the fields that failed rather than silently dropping them', async ({ page }) => {
     await open(page, 'node-add-news.html');
     const failed = await page.evaluate(() => {

@@ -624,6 +624,27 @@ test.describe('D7 Studio: menu parent depth', () => {
     ).toHaveCount(0);
   });
 
+  /**
+   * Order matters more than it looks.
+   *
+   * The Vagelos Page type adds two menu fields of its own — "Menu modal: NID" and
+   * "Link tooltip" — which are not advanced, so marking core's attribute fields advanced
+   * did not stop them pushing the parent picker to fifth position, below the panel's
+   * visible area. The placement control has to lead the section named Menu Placement.
+   */
+  test('the parent picker comes before the fields it writes to', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    const order = await page.evaluate(() => {
+      const root = document.querySelector('.d7-proxy-ui-form-host')!.shadowRoot!;
+      const picker = root.querySelector('aside input[placeholder="Filter parent items"]')!;
+      const enabled = [...root.querySelectorAll('aside label')]
+        .find(l => /Provide a menu link/i.test(l.textContent ?? ''))!;
+      // DOCUMENT_POSITION_FOLLOWING === the checkbox comes after the picker.
+      return Boolean(picker.compareDocumentPosition(enabled) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    expect(order, 'the picker must precede "Provide a menu link"').toBe(true);
+  });
+
   test('reports how deep the menu goes', async ({ page, settings }) => {
     await openMenuSection(page, settings);
     // 11 options spanning depths 0..5.

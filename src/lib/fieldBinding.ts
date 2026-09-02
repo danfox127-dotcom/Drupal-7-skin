@@ -1,5 +1,5 @@
 import { hasRichEditorOn } from './richEditorPresence';
-import { FieldDescriptor } from './formSchema';
+import { FieldDescriptor, findNodeForm } from './formSchema';
 
 /**
  * Reads and writes the native Drupal controls behind the overlay.
@@ -73,9 +73,43 @@ export function hasRichEditor(field: FieldDescriptor): boolean {
   return hasRichEditorOn(field.elements[0]);
 }
 
+/**
+ * The field's controls as they exist in the page RIGHT NOW.
+ *
+ * The schema captures element references at discovery. Drupal then re-renders parts of
+ * the form — its AJAX answers an interaction by replacing a widget wrapper outright, as
+ * inject.tsx already notes for slot stability — and every reference into that wrapper is
+ * left pointing at a detached node.
+ *
+ * Assigning to a detached input is silent: no error, no exception, and the input Drupal
+ * will actually submit is untouched. That is how the overlay came to show "Provide a menu
+ * link" ticked while Drupal's own menu[enabled] read false, and the placement was dropped
+ * on save with nothing reported anywhere.
+ *
+ * So the stored references are treated as a hint. When they have gone stale, the name is
+ * re-resolved against the live form — a name survives any number of AJAX replacements,
+ * which is exactly why Drupal keys its own form state on it.
+ */
+function liveElements(field: FieldDescriptor): HTMLElement[] {
+  const els = field.elements;
+  if (els.length === 0) return els;
+  if (els.some(el => el.isConnected)) return els;
+  if (!field.machineName) return els;
+
+  const form = findNodeForm(document);
+  if (!form) return els;
+
+  // JSON.stringify for the quoting, not CSS.escape: this is an attribute VALUE, and
+  // Drupal names carry brackets — [name="menu[enabled]"] is already valid.
+  const fresh = Array.from(
+    form.querySelectorAll<HTMLElement>(`[name=${JSON.stringify(field.machineName)}]`)
+  );
+  return fresh.length > 0 ? fresh : els;
+}
+
 /** Current value of a field, read from its native control(s). */
 export function readValue(field: FieldDescriptor): FieldValue {
-  const els = field.elements;
+  const els = liveElements(field);
   if (els.length === 0) return '';
 
   switch (field.kind) {
@@ -110,15 +144,34 @@ export function readValue(field: FieldDescriptor): FieldValue {
  * reported rather than assumed.
  */
 export function writeValue(field: FieldDescriptor, value: FieldValue): boolean {
-  const els = field.elements;
+  const els = liveElements(field);
   if (els.length === 0) return false;
+
+  /**
+   * Refuse to claim success when writing to an element that has left the document.
+   *
+   * The schema holds direct element references taken at discovery. If Drupal's AJAX
+   * replaces a wrapper afterwards — or anything else re-renders that part of the form —
+   * those references point at detached nodes. Assigning to a detached input succeeds
+   * silently: no error, no exception, and the live input Drupal will submit is untouched.
+   *
+   * That is exactly how the overlay came to show "Provide a menu link" ticked while
+   * Drupal's own menu[enabled] stayed false, and the placement was discarded on save with
+   * nothing reported. Returning false surfaces it as a failed write instead, which
+   * FieldControl already renders as a warning.
+   */
+  if (!els.some(el => el.isConnected)) return false;
 
   switch (field.kind) {
     case 'checkbox': {
       const el = els[0] as HTMLInputElement;
-      el.checked = Boolean(value);
+      const wanted = Boolean(value);
+      el.checked = wanted;
       notify(el);
-      return true;
+      // Confirmed rather than assumed. If anything on the page rejects or reverts the
+      // change, this reports a failed write and the control shows a warning, instead of
+      // the overlay quietly disagreeing with the form Drupal is about to save.
+      return el.checked === wanted;
     }
 
     case 'checkboxGroup': {
