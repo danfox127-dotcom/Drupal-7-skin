@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import { FormSchema, FieldDescriptor } from '../lib/formSchema';
+import { FormSchema } from '../lib/formSchema';
+import { findTarget } from '../lib/import/targets';
 import { writeValue } from '../lib/fieldBinding';
 import { Proposal, ProposedImage, readAllowedTags, extract, ExtractionResult } from '../lib/import/extract';
 import { PendingImport, clearPendingImport, setPendingImport } from '../lib/import/pending';
@@ -12,27 +13,6 @@ import { injectOverlay } from './inject';
  * Approval writes to the FORM ONLY. Nothing is sent to Drupal — the editor still has
  * to press Save, which is the guarantee the handoff is built around.
  */
-
-/**
- * Maps a proposal key to a discovered field.
- *
- * Matches on the section and role the schema already worked out rather than on machine
- * names, so it survives the same name uncertainty everything else does.
- */
-function findTarget(schema: FormSchema, key: string): FieldDescriptor | null {
-  const byLabel = (pattern: RegExp) =>
-    schema.fields.find(f => pattern.test(f.label.toLowerCase())) ?? null;
-
-  switch (key) {
-    case 'title': return byLabel(/^title$/);
-    case 'subtitle': return byLabel(/^subtitle/);
-    case 'summary': return byLabel(/^summary$/);
-    case 'body': return byLabel(/^body$/);
-    case 'byline': return byLabel(/^byline$/);
-    case 'date': return byLabel(/display date|^date$/);
-    default: return null;
-  }
-}
 
 export interface ApplyOutcome {
   applied: string[];

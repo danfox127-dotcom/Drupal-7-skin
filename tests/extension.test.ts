@@ -757,6 +757,35 @@ test.describe('D7 Studio: safe defaults', () => {
     await expect(page.locator('#edit-title-field')).toHaveValue('Ablation outcomes at five years');
   });
 
+  /**
+   * The other direction, which nothing covered.
+   *
+   * PrimaryField and FieldControl read their value once, in a useState initializer, and
+   * never again — no effect, no observer, no listener. So anything that writes to the
+   * native input behind the overlay is invisible: the import applies a title to
+   * Drupal's real field, the overlay keeps showing the empty box it captured at mount,
+   * and an empty title box is indistinguishable from an import that failed.
+   *
+   * This reproduces exactly what fieldBinding.writeValue() does — assign, then dispatch
+   * the bubbling input/change pair from notify().
+   */
+  test('the overlay reflects a value written to the native field behind it', async ({ page, settings }) => {
+    await settings({ nodeEditor: true });
+    await page.goto(`${HOST}/node/add/news`);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toHaveValue('');
+
+    await page.evaluate(() => {
+      const el = document.querySelector('#edit-title-field') as HTMLInputElement;
+      el.value = 'Predicting Progression of IgA Nephropathy';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+
+    await expect(page.locator(`${UI} input[aria-label="Title"]`))
+      .toHaveValue('Predicting Progression of IgA Nephropathy');
+  });
+
   test('the schema diagnostic is off by default and on when enabled', async ({ page, settings }) => {
     const logs: string[] = [];
     page.on('console', m => logs.push(m.text()));

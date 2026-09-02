@@ -337,6 +337,63 @@ const ALWAYS_UNMAPPED: Unmapped[] = [
   { label: 'Groups', reason: 'Group membership is a permissions decision, not content.' },
 ];
 
+/**
+ * A summary drawn from the page's own prose, for pages whose meta description is empty.
+ *
+ * Legacy pages very often ship `<meta name="description" content="">` — both Gharavi
+ * calculators do — so keying the Summary proposal solely on that tag means the field is
+ * never filled on exactly the pages being migrated. The first substantive paragraph is
+ * what a person would copy anyway.
+ *
+ * Marked medium confidence with its own provenance line, because it IS a guess: it is the
+ * page's opening prose, not an author's chosen description. It still defaults to accepted,
+ * since a required Summary left empty blocks the save and an editor can see and reject it.
+ */
+function summaryFromProse(doc: Document): string | null {
+  const article = findArticle(doc);
+  if (!article) return null;
+
+  /**
+   * Only the prose ABOVE the page's interactive widget is in scope.
+   *
+   * A tool page introduces itself, then presents the tool, then discusses it at length.
+   * Those later sections are the longest text on the page — the eGFR calculator carries
+   * 537- and 657-character paragraphs about individual equations — and none of them
+   * describe the page.
+   */
+  const form = article.querySelector('form');
+  const paragraphs = Array.from(article.querySelectorAll('p')).filter(p => {
+    if (p.closest('nav, header, footer, aside, form, .legalText')) return false;
+    if (form && !(p.compareDocumentPosition(form) & Node.DOCUMENT_POSITION_FOLLOWING)) return false;
+    // Short paragraphs are bylines, dates, breadcrumbs and "enter values below" prompts.
+    return norm(p.textContent).length >= 80;
+  });
+  if (paragraphs.length === 0) return null;
+
+  /**
+   * The longest of them, not the first.
+   *
+   * "First" grabbed whatever aside happened to lead: on the eGFR page that is a note
+   * offering a non-Javascript version by email, which would have become the page's meta
+   * description and therefore its search-result snippet. A page's description is reliably
+   * the substantial paragraph, and asides are short.
+   */
+  const best = paragraphs.reduce((a, b) =>
+    norm(b.textContent).length > norm(a.textContent).length ? b : a);
+
+  return trimToLength(norm(best.textContent), 300);
+}
+
+/** Cuts at a sentence end where possible, else a word boundary. Never mid-word. */
+function trimToLength(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const window = text.slice(0, max);
+  const sentence = window.lastIndexOf('. ');
+  if (sentence > max * 0.5) return window.slice(0, sentence + 1);
+  const word = window.lastIndexOf(' ');
+  return `${window.slice(0, word > 0 ? word : max).trimEnd()}…`;
+}
+
 export function extract(
   html: string,
   sourceUrl: string,
@@ -382,13 +439,18 @@ export function extract(
   const metaDesc = doc.querySelector('meta[name="description"]')?.getAttribute('content');
   const ogDesc = doc.querySelector('meta[property="og:description"]')?.getAttribute('content');
   const summary = norm(metaDesc) || norm(ogDesc);
-  if (summary) {
+  const prose = summary ? null : summaryFromProse(doc);
+  if (summary || prose) {
     proposals.push({
       key: 'summary',
       label: 'Summary',
-      value: summary,
-      source: metaDesc ? 'From <meta name="description">' : 'From <meta property="og:description">',
-      confidence: 'high',
+      value: summary || prose!,
+      source: summary
+        ? (norm(metaDesc)
+            ? 'From <meta name="description">'
+            : 'From <meta property="og:description">')
+        : 'From the first paragraph — this page publishes no meta description',
+      confidence: summary ? 'high' : 'medium',
       accepted: true,
       regionId: null,
     });
