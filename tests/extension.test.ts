@@ -770,6 +770,93 @@ test.describe('D7 Studio: parent picker at real scale', () => {
     await expect(page.locator('#edit-menu-parent')).toHaveValue('main-menu:3071');
   });
 
+  /**
+   * Reported: "it worked but it doesn't look selected."
+   *
+   * The selected row carried bg-cu-tint — a pale wash that reads as nothing on one row of
+   * a scrolling list, especially next to the dimmed context rows. A selection the editor
+   * cannot see is a selection they will make twice.
+   */
+  test('the selected parent is unmistakable, not a faint tint', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Specialty 7');
+    await page.locator(`${UI} aside [data-parent-option="main-menu:3071"]`).click();
+
+    const row = `${UI} aside [data-parent-option="main-menu:3071"]`;
+    await expect(page.locator(row)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator(`${row} svg`), 'a tick, so it does not rely on colour alone')
+      .toBeVisible();
+
+    /**
+     * Contrast of the selected row's background against an UNSELECTED row's — not
+     * against its own text.
+     *
+     * Two earlier versions of this assertion passed with the old bg-cu-tint restored.
+     * The first checked opacity: a pale wash is fully opaque, just invisible. The second
+     * checked text-on-background contrast: the old style also set text-cu-blue, giving a
+     * perfectly readable 7.2:1. Neither measured the thing that was reported.
+     *
+     * What "it doesn't look selected" means is that the row does not stand out from its
+     * neighbours. cu-tint against white is 1.06:1 — a difference you cannot see across a
+     * scrolling list. cu-blue against white is 8.2:1.
+     *
+     * Polled because these rows carry `transition-colors duration-200`, so a style read
+     * the instant after a click is mid-animation and still shows the previous colour.
+     */
+    await expect.poll(async () => page.evaluate(() => {
+      const lum = (c: string) => {
+        const p = (c.match(/rgba?\(([^)]+)\)/)?.[1] ?? '255,255,255')
+          .split(',').slice(0, 3).map(v => {
+            const n = parseFloat(v) / 255;
+            return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+          });
+        return 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+      };
+      /**
+       * The PAINTED background, walking up through transparency.
+       *
+       * Unselected rows set no background of their own, so getComputedStyle returns
+       * rgba(0,0,0,0). Read literally that parses as black, which inverted this whole
+       * comparison: transparent-vs-blue looked like poor contrast and transparent-vs-tint
+       * like excellent contrast, the exact opposite of what a reader sees.
+       */
+      const painted = (start: Element): string => {
+        let node: Element | null = start;
+        while (node) {
+          const c = getComputedStyle(node).backgroundColor;
+          const parts = (c.match(/rgba?\(([^)]+)\)/)?.[1] ?? '').split(',').map(Number);
+          const alpha = parts.length > 3 ? parts[3] : 1;
+          if (parts.length && alpha > 0.01) return c;
+          node = node.parentElement;
+        }
+        return 'rgb(255, 255, 255)';
+      };
+
+      const sr = document.querySelector('.d7-proxy-ui-form-host')!.shadowRoot!;
+      const sel = sr.querySelector('aside [data-parent-option][data-selected]');
+      const plain = sr.querySelector('aside [data-parent-option]:not([data-selected])');
+      if (!sel || !plain) return 0;
+      const a = lum(painted(sel));
+      const b = lum(painted(plain));
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    }), 'the selected row must stand out from an unselected one').toBeGreaterThan(3);
+  });
+
+  test('a row trail is not clipped, so the nearest ancestor survives', async ({ page, settings }) => {
+    // Clipping cut the trail from the right, which is where the NEAREST ancestor sits —
+    // leaving a dangling separator ("in … › Gharavi Lab ›") and losing the useful half.
+    await open(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Specialty 7');
+
+    const trail = page.locator(
+      `${UI} aside [data-parent-option="main-menu:3071"] [data-parent-trail]`
+    );
+    await expect(trail).toContainText('Service 7.1');
+    await expect(trail).not.toHaveText(/›\s*$/);
+    const clipped = await trail.evaluate(el => getComputedStyle(el).textOverflow);
+    expect(clipped).not.toBe('ellipsis');
+  });
+
   test('a broad query is capped rather than rendering everything', async ({ page, settings }) => {
     await open(page, settings);
     await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'e');

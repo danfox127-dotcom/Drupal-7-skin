@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import { ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
+import { ChevronRight, ChevronUp, ChevronDown, Check } from 'lucide-react';
 import { FieldDescriptor, FieldOption } from '../../lib/formSchema';
 import { readValue, writeValue } from '../../lib/fieldBinding';
 import { filterTreeRetainingAncestors } from '../../lib/treeFilter';
@@ -279,17 +279,37 @@ export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
                     type="button"
                     onClick={() => select(option)}
                     data-parent-option={option.value}
-                    className={`w-full text-left px-2 py-1 text-control transition-colors duration-200 ease-studio ${
-                      isSelected ? 'bg-cu-tint text-cu-blue font-semibold' : 'text-ink hover:bg-cu-tint'
+                    data-selected={isSelected ? '' : undefined}
+                    aria-pressed={isSelected}
+                    className={`w-full text-left px-2 py-1 text-control flex items-start gap-1.5 transition-colors duration-200 ease-studio ${
+                      isSelected
+                        // Solid, not a tint. A 6%-opacity wash on one row of a scrolling
+                        // list is not a selected state — it was reported as not looking
+                        // selected at all.
+                        ? 'bg-cu-blue text-white font-semibold'
+                        : 'text-ink hover:bg-cu-tint'
                     } ${isContext ? 'opacity-60' : ''}`}
                     style={{ paddingLeft: 8 + Math.min(option.depth, MAX_VISUAL_DEPTH) * INDENT_PX }}
                   >
-                    <span data-parent-label className="block">{option.label}</span>
-                    {trail.labels.length > 0 && (
-                      <span data-parent-trail className="block text-help text-ink-help truncate">
-                        in {trail.deeper ? '… › ' : ''}{trail.labels.join(' › ')}
-                      </span>
-                    )}
+                    {isSelected && <Check size={13} className="mt-0.5 shrink-0" aria-hidden />}
+                    <span className="min-w-0">
+                      <span data-parent-label className="block">{option.label}</span>
+                      {trail.labels.length > 0 && (
+                        /*
+                          Wraps rather than clipping. The trail reads outermost-first, so
+                          `truncate` cut the NEAREST ancestor — the one that tells six items
+                          called "Our Services" apart — and left a dangling separator behind
+                          it ("in … › Gharavi Lab ›"). A second line costs a row of height and
+                          keeps the part worth reading.
+                        */
+                        <span
+                          data-parent-trail
+                          className={`block text-help ${isSelected ? 'text-white/85' : 'text-ink-help'}`}
+                        >
+                          in {trail.deeper ? '… › ' : ''}{trail.labels.join(' › ')}
+                        </span>
+                      )}
+                    </span>
                   </button>
                 );
               })
