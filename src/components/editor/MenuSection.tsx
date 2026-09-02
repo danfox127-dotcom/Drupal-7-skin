@@ -2,7 +2,7 @@ import React, { useState, useMemo, useCallback } from 'react';
 import { ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
 import { FieldDescriptor, FieldOption } from '../../lib/formSchema';
 import { readValue, writeValue } from '../../lib/fieldBinding';
-import { filterTreeRetainingAncestors, ancestorIndices } from '../../lib/treeFilter';
+import { filterTreeRetainingAncestors } from '../../lib/treeFilter';
 import { FieldControl } from './FieldControl';
 
 /**
@@ -100,9 +100,53 @@ export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
    */
   const options = useMemo(() => parent?.options ?? [], [parent]);
 
+  const ancestorsByValue = useMemo(() => {
+    /**
+     * One pass, not an ancestor walk per row.
+     *
+     * The select is in tree order, so the running trail indexed by depth IS the ancestry:
+     * truncate it to the item's depth, and what remains are its ancestors. Calling
+     * ancestorIndices per option instead is O(n²), and at 3,331 options that ran on every
+     * keystroke once matching moved to the full path.
+     */
+    const trail: string[] = [];
+    const map = new Map<string, string[]>();
+    for (const option of options) {
+      trail.length = option.depth;
+      map.set(option.value, trail.slice(0, option.depth));
+      trail[option.depth] = option.label;
+    }
+    return map;
+  }, [options]);
+
+  /**
+   * Match against the whole path, not just the item's own title.
+   *
+   * Typing "gharavi" used to find only items with "gharavi" in their own name — the
+   * Gharavi Lab menu root and one unrelated news item — while every page actually inside
+   * that section stayed invisible, because none of them repeat the section's name. There
+   * was no way to reach a child of a section you had just found.
+   *
+   * Menu roots are deliberately included in the path. On this site the thing you search
+   * for IS often a root ("Gharavi Lab"), and it is what its descendants have in common.
+   */
+  const pathText = useCallback(
+    (option: FieldOption) =>
+      [...(ancestorsByValue.get(option.value) ?? []), option.label].join(' '),
+    [ancestorsByValue]
+  );
+
+  const trailOf = useCallback((option: FieldOption): { labels: string[]; deeper: boolean } => {
+    const chain = ancestorsByValue.get(option.value) ?? [];    // outermost first
+    return {
+      labels: chain.slice(-TRAIL_SHOWN),                       // nearest few
+      deeper: chain.length > TRAIL_SHOWN,
+    };
+  }, [ancestorsByValue]);
+
   const filtered = useMemo(
-    () => filterTreeRetainingAncestors(options, query, o => o.label),
-    [options, query]
+    () => filterTreeRetainingAncestors(options, query, pathText),
+    [options, query, pathText]
   );
 
   const searching = query.trim().length > 0;
@@ -120,12 +164,12 @@ export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
    * cannot disagree about who a parent is.
    */
   const breadcrumb = useMemo(() => {
-    const index = options.findIndex(o => o.value === value);
-    if (index === -1) return null;
-    const chain = ancestorIndices(options, index).map(i => options[i]);
-    // ancestorIndices returns nearest-first; the trail reads outermost-first.
-    return [...chain.reverse().map(o => o.label), options[index].label];
-  }, [options, value]);
+    const selected = options.find(o => o.value === value);
+    if (!selected) return null;
+    // Same ancestry map the filter and the row trails use, so the three cannot disagree
+    // about who a parent is.
+    return [...(ancestorsByValue.get(value) ?? []), selected.label];
+  }, [options, value, ancestorsByValue]);
 
   /** Deepest level present, for the "N levels deep" hint. */
   const maxDepth = useMemo(
@@ -155,20 +199,6 @@ export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
    * is. Built from the same ancestor walk as the breadcrumb and the filter, so the three
    * cannot disagree about who a parent is.
    */
-  const indexByValue = useMemo(() => {
-    const map = new Map<string, number>();
-    options.forEach((option, i) => map.set(option.value, i));
-    return map;
-  }, [options]);
-
-  const trailOf = useCallback((option: FieldOption): { labels: string[]; deeper: boolean } => {
-    const index = indexByValue.get(option.value);
-    if (index === undefined) return { labels: [], deeper: false };
-    const chain = ancestorIndices(options, index);            // nearest first
-    const shown = chain.slice(0, TRAIL_SHOWN).reverse();      // outermost first
-    return { labels: shown.map(i => options[i].label), deeper: chain.length > TRAIL_SHOWN };
-  }, [options, indexByValue]);
-
   const select = (option: FieldOption) => {
     setValue(option.value);
     if (parent) writeValue(parent, option.value);

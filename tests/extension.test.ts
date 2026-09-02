@@ -734,6 +734,42 @@ test.describe('D7 Studio: parent picker at real scale', () => {
     expect(labels).toContain('Service 7.1');
   });
 
+  /**
+   * Searching a section must reach INTO it.
+   *
+   * Reported on the live form: typing "ghar" found the Gharavi Lab menu root and one
+   * unrelated news item, and nothing else — every page actually inside that section was
+   * invisible, because none of them repeat the section's name in their own title. There
+   * was no way to place a node under a child of a section you had just found.
+   *
+   * "Specialty 7" appears in no descendant's own label, only in their ancestry.
+   */
+  test('searching a parent surfaces the items beneath it', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Specialty 7');
+
+    const labels = (await page.locator(`${UI} aside [data-parent-label]`).allInnerTexts())
+      .map(t => t.trim());
+    expect(labels, 'the section itself').toContain('Specialty 7');
+    expect(labels, 'a child of it').toContain('Service 7.1');
+    expect(labels, 'a grandchild of it').toContain('Detail 7.1 Cardiology');
+  });
+
+  test('a descendant found by its ancestry is selectable, not just context', async ({ page, settings }) => {
+    // Retained ancestors render dimmed and are still clickable, but a descendant surfaced
+    // by the section name has to count as a real match — otherwise the count lies and it
+    // reads as scaffolding rather than a result.
+    await open(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Specialty 7');
+
+    // Detail 7.1 Cardiology — a grandchild of Specialty 7, whose own label contains
+    // nothing matching the query.
+    const row = page.locator(`${UI} aside [data-parent-option="main-menu:3071"]`);
+    await expect(row).toBeVisible();
+    await row.click();
+    await expect(page.locator('#edit-menu-parent')).toHaveValue('main-menu:3071');
+  });
+
   test('a broad query is capped rather than rendering everything', async ({ page, settings }) => {
     await open(page, settings);
     await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'e');
