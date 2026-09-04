@@ -103,11 +103,19 @@ write('latest.json', {
 console.log(`
 Written: package.json, manifest.json, latest.json, ${zipName}
 
-Two steps left, both irreversible, so they are yours to run:
+Three steps left, all irreversible, so they are yours to run — IN THIS ORDER:
 
-  gh release create ${tag} ${zipName} --title "${tag}" --notes ${JSON.stringify(notes || tag)}
-  git add -A && git commit -m "release: ${tag}" && git push
+  1. git add package.json manifest.json && git commit -m "release: ${tag}" && git push
+  2. gh release create ${tag} ${zipName} --title "${tag}" --notes ${JSON.stringify(notes || tag)}
+  3. git add latest.json && git commit -m "release: announce ${tag}" && git push
 
-Order matters. Create the release FIRST so the download link in latest.json resolves,
-then push latest.json — otherwise every installed copy is told to fetch a 404.
+Why three, and why this order:
+
+  - Push BEFORE creating the release. \`gh release create\` puts the tag at the remote
+    default branch's HEAD, so releasing first tags whatever was already pushed — not the
+    bump you just made.
+
+  - Push latest.json LAST, in its own commit. It is the file installed copies poll, and
+    it names a download URL that does not exist until step 2. Publishing it earlier
+    points every installed copy at a 404 for as long as the gap lasts.
 `);

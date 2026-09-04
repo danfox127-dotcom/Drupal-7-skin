@@ -2221,3 +2221,87 @@ test.describe('Feature 5: the media browser round trip, end to end', () => {
     expect(missing).toBeNull();
   });
 });
+
+test.describe('the update notifier', () => {
+  /**
+   * The service worker checks on install, which fires when the test context loads the
+   * extension. That real check writes updateState — and overwrote a seeded value, so the
+   * first version of these tests read the worker's verdict instead of the fixture's.
+   * (It also proved the notifier works against the live file: it fetched, compared, and
+   * correctly reported itself current.)
+   *
+   * So wait for the worker to have written once, THEN seed. Offline the worker still
+   * writes — a failed fetch yields "not available" rather than nothing — so this does not
+   * hang without a network.
+   */
+  const seedAfterWorkerCheck = async (
+    page: Page,
+    extensionId: string,
+    state: unknown,
+  ) => {
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await expect.poll(async () => page.evaluate(async () => {
+      const r = await new Promise<Record<string, unknown>>(
+        res => chrome.storage.local.get({ updateState: null }, res));
+      return r.updateState !== null;
+    }), { timeout: 15000 }).toBe(true);
+
+    await page.evaluate(
+      v => new Promise<void>(res => chrome.storage.local.set({ updateState: v }, () => res())),
+      state,
+    );
+    await page.reload();
+  };
+
+  /**
+   * The half the user actually sees.
+   *
+   * Chrome cannot auto-update a Load-unpacked extension, so this banner IS the feature —
+   * if it does not render, the extension is silently stale forever, which is the exact
+   * condition it exists to prevent. The service worker's own check needs the network, so
+   * these seed the state it would have written and exercise the rendering.
+   */
+  test('the popup names the new version and how to install it', async ({ page, extensionId }) => {
+    await seedAfterWorkerCheck(page, extensionId, {
+      available: true,
+      current: '0.2.0',
+      latest: '0.9.9',
+      notes: 'Publish now really publishes.',
+      download: 'https://github.com/example/releases/download/v0.9.9/ext.zip',
+      checkedAt: 1788000000000,
+    });
+
+    const banner = page.locator('[data-update-banner]');
+    await expect(banner).toBeVisible();
+    await expect(banner).toContainText('0.9.9');
+    await expect(banner).toContainText('You have 0.2.0');
+    await expect(banner).toContainText('Publish now really publishes.');
+    // The instruction matters as much as the link: there is no automatic install.
+    await expect(banner).toContainText('reload the extension');
+
+    const link = banner.locator('a[href^="https://"]');
+    await expect(link).toHaveAttribute('href', /ext\.zip$/);
+    await expect(link).toHaveAttribute('rel', /noopener/);
+  });
+
+  test('no banner when the running build is current', async ({ page, extensionId }) => {
+    // A permanent "you are up to date" row trains people to ignore this area, which is
+    // how the real notice would then get missed.
+    await seedAfterWorkerCheck(page, extensionId,
+      { available: false, current: '0.2.0', checkedAt: 1788000000000 });
+
+    await expect(page.locator('[data-update-banner]')).toHaveCount(0);
+    // The footer still answers "what am I running?".
+    await expect(page.locator('text=/^v0\\.2\\.0/')).toBeVisible();
+  });
+
+  test('the popup survives never having checked', async ({ page, extensionId }) => {
+    // First run: the worker fires on browser start, so the popup can open before any
+    // check has happened. It must not render a broken banner or crash.
+    await seedAfterWorkerCheck(page, extensionId, null);
+
+    await expect(page.locator('[data-update-banner]')).toHaveCount(0);
+    await expect(page.locator('text=Check for updates')).toBeVisible();
+  });
+});
+

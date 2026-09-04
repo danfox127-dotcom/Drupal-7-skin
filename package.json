@@ -1,6 +1,6 @@
 {
   "name": "d7-admin-proxy-ui",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Modern React/Tailwind interface for Drupal 7 admin forms",
   "type": "module",
   "scripts": {

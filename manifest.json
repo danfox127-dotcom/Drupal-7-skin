@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "D7 Admin Proxy UI",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A modern React/Tailwind interface for legacy Drupal 7 administration.",
   "permissions": [
     "storage",
