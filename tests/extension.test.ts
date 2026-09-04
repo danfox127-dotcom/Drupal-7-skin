@@ -2305,3 +2305,62 @@ test.describe('the update notifier', () => {
   });
 });
 
+
+test.describe('capturing a real form as a fixture', () => {
+  /**
+   * The wiring, not the scrubbing.
+   *
+   * captureFixture's rules are covered in tests/capture-fixture.spec.ts. What this checks
+   * is that the content script actually answers the popup's request on a real page with
+   * the extension loaded — the path that turns "hand-authored fixture" into "captured
+   * fixture", and the reason every bug this project has had was invisible until someone
+   * hit it in production.
+   */
+  test('the content script returns a scrubbed, usable fixture', async ({ page, context, extensionId }) => {
+    await page.goto(`${HOST}/node/add/page`);
+    await expect(page.locator('#edit-title')).toBeVisible();
+
+    // Ask exactly as the popup does, from an extension page.
+    const asker = await context.newPage();
+    await asker.goto(`chrome-extension://${extensionId}/index.html`);
+    const result = await asker.evaluate(async () => {
+      const tabs = await chrome.tabs.query({});
+      const target = tabs.find(t => (t.url ?? '').includes('/node/add/page'));
+      if (!target?.id) return { error: 'no target tab' };
+      return new Promise(resolve => {
+        chrome.tabs.sendMessage(target.id!, { type: 'captureFixture' }, r =>
+          resolve(r ?? { error: chrome.runtime.lastError?.message ?? 'no response' }));
+      });
+    }) as { html?: string; report?: Record<string, unknown>; error?: string };
+    await asker.close();
+
+    expect(result.error).toBeUndefined();
+    const html = result.html!;
+
+    // Scrubbed: the security fields are gone as elements.
+    expect(html).not.toContain('name="form_token"');
+    expect(html).not.toContain('name="form_build_id"');
+
+    // Usable: the structure the tests read survives, and it is a standalone document.
+    expect(html.startsWith('<!DOCTYPE html>')).toBe(true);
+    expect(html).toContain('node-type-page');
+    expect(html).toContain('name="title"');
+    expect(html).toContain('name="menu[parent]"');
+    expect(html).toContain('/node/add/page');
+
+    // And it says what it stripped, so a human can review before committing.
+    expect(html).toContain('Removed:');
+    expect(result.report!.removedFields).toContain('form_token');
+  });
+
+  test('the popup offers the capture action', async ({ page, extensionId }) => {
+    /*
+      Minimal on purpose. The scrubbing is covered by unit tests and the content-script
+      answer by the test above; what is NOT covered anywhere is the popup's clipboard
+      write, which needs the popup's own focus and gesture and is verified by hand. This
+      at least fails if the button disappears.
+    */
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await expect(page.locator('text=Copy this form as a test fixture')).toBeVisible();
+  });
+});
