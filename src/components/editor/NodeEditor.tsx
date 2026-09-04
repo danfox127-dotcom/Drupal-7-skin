@@ -430,7 +430,29 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
                 ? (() => {
                     const parent = fields.find(f => /parent/i.test(f.label));
                     const others = fields.filter(f => f !== parent);
-                    return <MenuSection parent={parent} others={others} errorFor={errorFor} />;
+                    /**
+                     * The node's title comes from the PRIMARY section, not from the whole
+                     * schema.
+                     *
+                     * Several fields on these forms carry the label "Title" — the metatag
+                     * title, the Twitter card title, and menu[options][attributes][title],
+                     * which Drupal labels "Title" and we display as "Link tooltip". Display
+                     * labels disambiguate them for the reader, but field.label is still
+                     * "Title" on all of them, so searching every field for that label can
+                     * land on an empty metatag field and silently write nothing.
+                     *
+                     * The primary section is where the node's own title lives, and it is the
+                     * same field PrimaryField renders in the title role.
+                     */
+                    const nodeTitle = left.find(f => primaryRole(f) === 'title');
+                    return (
+                      <MenuSection
+                        parent={parent}
+                        others={others}
+                        nodeTitle={nodeTitle}
+                        errorFor={errorFor}
+                      />
+                    );
                   })()
                 : section === 'related'
                   ? renderRelated()

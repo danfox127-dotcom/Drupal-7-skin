@@ -1,8 +1,8 @@
-import React, { useState, useMemo } from 'react';
-import { ChevronRight, ChevronUp, ChevronDown } from 'lucide-react';
+import React, { useState, useMemo, useCallback } from 'react';
+import { ChevronRight, ChevronUp, ChevronDown, Check } from 'lucide-react';
 import { FieldDescriptor, FieldOption } from '../../lib/formSchema';
 import { readValue, writeValue } from '../../lib/fieldBinding';
-import { filterTreeRetainingAncestors, ancestorIndices } from '../../lib/treeFilter';
+import { filterTreeRetainingAncestors } from '../../lib/treeFilter';
 import { FieldControl } from './FieldControl';
 
 /**
@@ -19,6 +19,14 @@ interface Props {
   parent?: FieldDescriptor;
   /** Menu link title, "Provide a menu link", and anything else menu-related. */
   others: FieldDescriptor[];
+  /**
+   * The node's own Title, used to default the menu link title.
+   *
+   * Passed in rather than looked up here because it lives in a different section, and
+   * because its machine name varies — a site running the Title module calls it
+   * title_field, so only the label identifies it.
+   */
+  nodeTitle?: FieldDescriptor;
   errorFor: (field: FieldDescriptor) => string | null;
 }
 
@@ -47,13 +55,36 @@ const SEARCH_FIRST_THRESHOLD = 150;
 /** Never render more than this many rows at once, however broad the query. */
 const MAX_RENDERED = 120;
 
-export const MenuSection = ({ parent, others, errorFor }: Props) => {
+/**
+ * How many ancestors to name on a row.
+ *
+ * The rail is 451px and the live main menu nests 16 deep, so a full trail wraps to three
+ * lines and buries the item you are trying to read. The nearest two are what disambiguate
+ * — "Our Services" under Cardiology is a different thing from "Our Services" under
+ * Radiology — and anything above that is signalled with a leading ellipsis.
+ */
+const TRAIL_SHOWN = 2;
+
+export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
   const [value, setValue] = useState<string>(() => (parent ? String(readValue(parent)) : ''));
   const [query, setQuery] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Menu-attribute fields: real, but not what anyone opens this section for.
   const advancedOthers = useMemo(() => others.filter(f => f.advanced), [others]);
+
+  /** The two controls a parent selection writes to, shown right under the picker. */
+  const gating = useMemo(
+    () => others.filter(f => !f.advanced
+      && (f.machineName === 'menu[enabled]' || f.machineName === 'menu[link_title]')),
+    [others]
+  );
+  /** Everything else non-advanced, including any fields a site has added of its own. */
+  const otherPlain = useMemo(
+    () => others.filter(f => !f.advanced
+      && f.machineName !== 'menu[enabled]' && f.machineName !== 'menu[link_title]'),
+    [others]
+  );
 
   /**
    * EVERY option Drupal offers, at any depth.
@@ -69,9 +100,53 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
    */
   const options = useMemo(() => parent?.options ?? [], [parent]);
 
+  const ancestorsByValue = useMemo(() => {
+    /**
+     * One pass, not an ancestor walk per row.
+     *
+     * The select is in tree order, so the running trail indexed by depth IS the ancestry:
+     * truncate it to the item's depth, and what remains are its ancestors. Calling
+     * ancestorIndices per option instead is O(n²), and at 3,331 options that ran on every
+     * keystroke once matching moved to the full path.
+     */
+    const trail: string[] = [];
+    const map = new Map<string, string[]>();
+    for (const option of options) {
+      trail.length = option.depth;
+      map.set(option.value, trail.slice(0, option.depth));
+      trail[option.depth] = option.label;
+    }
+    return map;
+  }, [options]);
+
+  /**
+   * Match against the whole path, not just the item's own title.
+   *
+   * Typing "gharavi" used to find only items with "gharavi" in their own name — the
+   * Gharavi Lab menu root and one unrelated news item — while every page actually inside
+   * that section stayed invisible, because none of them repeat the section's name. There
+   * was no way to reach a child of a section you had just found.
+   *
+   * Menu roots are deliberately included in the path. On this site the thing you search
+   * for IS often a root ("Gharavi Lab"), and it is what its descendants have in common.
+   */
+  const pathText = useCallback(
+    (option: FieldOption) =>
+      [...(ancestorsByValue.get(option.value) ?? []), option.label].join(' '),
+    [ancestorsByValue]
+  );
+
+  const trailOf = useCallback((option: FieldOption): { labels: string[]; deeper: boolean } => {
+    const chain = ancestorsByValue.get(option.value) ?? [];    // outermost first
+    return {
+      labels: chain.slice(-TRAIL_SHOWN),                       // nearest few
+      deeper: chain.length > TRAIL_SHOWN,
+    };
+  }, [ancestorsByValue]);
+
   const filtered = useMemo(
-    () => filterTreeRetainingAncestors(options, query, o => o.label),
-    [options, query]
+    () => filterTreeRetainingAncestors(options, query, pathText),
+    [options, query, pathText]
   );
 
   const searching = query.trim().length > 0;
@@ -89,12 +164,12 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
    * cannot disagree about who a parent is.
    */
   const breadcrumb = useMemo(() => {
-    const index = options.findIndex(o => o.value === value);
-    if (index === -1) return null;
-    const chain = ancestorIndices(options, index).map(i => options[index === i ? index : i]);
-    // ancestorIndices returns nearest-first; the trail reads outermost-first.
-    return [...chain.reverse().map(o => o.label), options[index].label];
-  }, [options, value]);
+    const selected = options.find(o => o.value === value);
+    if (!selected) return null;
+    // Same ancestry map the filter and the row trails use, so the three cannot disagree
+    // about who a parent is.
+    return [...(ancestorsByValue.get(value) ?? []), selected.label];
+  }, [options, value, ancestorsByValue]);
 
   /** Deepest level present, for the "N levels deep" hint. */
   const maxDepth = useMemo(
@@ -102,20 +177,71 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
     [options]
   );
 
+  /**
+   * Matched on machine name, not label.
+   *
+   * These come from core's menu module, so `menu[enabled]` and `menu[link_title]` are
+   * fixed — unlike a content type's own fields, whose names vary and whose labels are the
+   * only stable handle. A label would also break under translation or a theme override.
+   * (baseName is no use here: every menu control shares the base name `menu`.)
+   */
+  const enabled = useMemo(
+    () => others.find(f => f.machineName === 'menu[enabled]'), [others]);
+  const linkTitle = useMemo(
+    () => others.find(f => f.machineName === 'menu[link_title]'), [others]);
+
+  /**
+   * Ancestor labels for one option, nearest last, capped at TRAIL_SHOWN.
+   *
+   * Indentation alone was not enough to tell rows apart: a search shows matches next to
+   * dimmed ancestors, and once the list scrolls the parent rows leave the viewport, so a
+   * row carrying only its own title gives no way to know which of six "Our Services" it
+   * is. Built from the same ancestor walk as the breadcrumb and the filter, so the three
+   * cannot disagree about who a parent is.
+   */
   const select = (option: FieldOption) => {
     setValue(option.value);
     if (parent) writeValue(parent, option.value);
+
+    /**
+     * Choosing a parent IS placing the node in the menu, so enable the link.
+     *
+     * Drupal 7 gates the entire menu fieldset on menu[enabled] — "Provide a menu link",
+     * unchecked by default and captioned "Not in menu". With it unchecked,
+     * menu_node_save() discards the parent and the title, so a placement chosen here
+     * vanished on save with nothing reported. Writing the parent alone was setting a
+     * value Drupal had already decided to ignore.
+     */
+    if (enabled && readValue(enabled) !== true) writeValue(enabled, true);
+
+    /**
+     * And a link title, which Drupal requires once the link is enabled.
+     *
+     * Without this, fixing the checkbox alone would trade silent loss for a validation
+     * error on save. The node's own title is what an editor would type, and it stays
+     * editable in the field above.
+     */
+    if (linkTitle && nodeTitle && !String(readValue(linkTitle)).trim()) {
+      const title = String(readValue(nodeTitle)).trim();
+      if (title) writeValue(linkTitle, title);
+    }
   };
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Menu link title and the enable checkbox come first — they gate the rest. The
-          menu-attribute fields (ID, CLASSES, STYLE, TARGET, ACCESS KEY, …) are marked
-          advanced and collapse, so they stop burying the parent picker. */}
-      {others.filter(f => !f.advanced).map(field => (
-        <FieldControl key={field.machineName} field={field} dense error={errorFor(field)} />
-      ))}
+      {/*
+        The picker leads, then the two controls it writes to, then anything else.
 
+        Marking core's menu-attribute fields advanced was supposed to keep them from
+        burying the picker, and it does — but a site can add its own non-advanced menu
+        fields, and Vagelos has two ("Menu modal: NID", "Link tooltip"). That pushed the
+        placement control to fifth in a section called Menu Placement, below the fold of
+        the panel, where an editor never saw it.
+
+        "Provide a menu link" and the link title sit directly beneath the picker rather
+        than above it, so the values selecting a parent writes appear where the click
+        happened.
+      */}
       {parent && (
         <>
           <div className="flex flex-col gap-1.5">
@@ -144,17 +270,46 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
                 // A row present only to preserve hierarchy is dimmed, so it reads as
                 // context rather than a result.
                 const isContext = !filtered.isMatch(option);
+                // Only real results carry a trail. A dimmed context row IS an ancestor,
+                // so restating its own lineage would be noise on the rows that need it least.
+                const trail = isContext ? { labels: [], deeper: false } : trailOf(option);
                 return (
                   <button
                     key={option.value}
                     type="button"
                     onClick={() => select(option)}
-                    className={`w-full text-left px-2 py-1 text-control transition-colors duration-200 ease-studio ${
-                      isSelected ? 'bg-cu-tint text-cu-blue font-semibold' : 'text-ink hover:bg-cu-tint'
+                    data-parent-option={option.value}
+                    data-selected={isSelected ? '' : undefined}
+                    aria-pressed={isSelected}
+                    className={`w-full text-left px-2 py-1 text-control flex items-start gap-1.5 transition-colors duration-200 ease-studio ${
+                      isSelected
+                        // Solid, not a tint. A 6%-opacity wash on one row of a scrolling
+                        // list is not a selected state — it was reported as not looking
+                        // selected at all.
+                        ? 'bg-cu-blue text-white font-semibold'
+                        : 'text-ink hover:bg-cu-tint'
                     } ${isContext ? 'opacity-60' : ''}`}
                     style={{ paddingLeft: 8 + Math.min(option.depth, MAX_VISUAL_DEPTH) * INDENT_PX }}
                   >
-                    {option.label}
+                    {isSelected && <Check size={13} className="mt-0.5 shrink-0" aria-hidden />}
+                    <span className="min-w-0">
+                      <span data-parent-label className="block">{option.label}</span>
+                      {trail.labels.length > 0 && (
+                        /*
+                          Wraps rather than clipping. The trail reads outermost-first, so
+                          `truncate` cut the NEAREST ancestor — the one that tells six items
+                          called "Our Services" apart — and left a dangling separator behind
+                          it ("in … › Gharavi Lab ›"). A second line costs a row of height and
+                          keeps the part worth reading.
+                        */
+                        <span
+                          data-parent-trail
+                          className={`block text-help ${isSelected ? 'text-white/85' : 'text-ink-help'}`}
+                        >
+                          in {trail.deeper ? '… › ' : ''}{trail.labels.join(' › ')}
+                        </span>
+                      )}
+                    </span>
                   </button>
                 );
               })
@@ -188,6 +343,15 @@ export const MenuSection = ({ parent, others, errorFor }: Props) => {
           )}
         </>
       )}
+
+
+      {gating.map(field => (
+        <FieldControl key={field.machineName} field={field} dense error={errorFor(field)} />
+      ))}
+
+      {otherPlain.map(field => (
+        <FieldControl key={field.machineName} field={field} dense error={errorFor(field)} />
+      ))}
 
       {advancedOthers.length > 0 && (
         <div className="flex flex-col gap-3">

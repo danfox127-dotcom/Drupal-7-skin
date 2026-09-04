@@ -551,11 +551,98 @@ test.describe('D7 Studio: menu parent depth', () => {
 
   test('every parent Drupal offers is selectable, at any depth', async ({ page, settings }) => {
     await openMenuSection(page, settings);
-    const labels = await page.locator(`${UI} aside button`).allInnerTexts();
+    // The row's LABEL, not the whole button: each row also carries its ancestor trail,
+    // so matching the button's full text would break on that context by design.
+    const labels = await page.locator(`${UI} aside [data-parent-label]`).allInnerTexts();
     // Depth 4 and 5 entries must be present, not just the top two levels.
     for (const deep of ['Active BP Blood Pressure Monitoring', 'Video Tutorial', 'FAQ']) {
       expect(labels.some(t => t.trim() === deep), `"${deep}" should be selectable`).toBe(true);
     }
+  });
+
+  /**
+   * The bug this covers: picking a parent set menu[parent] on a fieldset Drupal ignores.
+   *
+   * Drupal 7 gates the whole menu fieldset on menu[enabled] — "Provide a menu link",
+   * unchecked by default, with a "Not in menu" summary beside it. With it unchecked,
+   * menu_node_save() discards the parent and the link title, so the placement silently
+   * fails to persist and the node saves with no menu link at all.
+   *
+   * Drupal also requires a link title once enabled, so setting only the checkbox trades
+   * silent loss for a validation error on save. Both have to be handled for a selection
+   * to survive.
+   */
+  test('selecting a parent enables the menu link, so the placement survives save', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    await expect(page.locator('#edit-menu-enabled')).not.toBeChecked();
+
+    await page.locator(`${UI} aside button`, { hasText: 'Video Tutorial' }).first().click();
+
+    await expect(page.locator('select[name="menu[parent]"]')).not.toHaveValue('');
+    await expect(page.locator('#edit-menu-enabled'),
+      'Drupal discards the whole fieldset when this is unchecked').toBeChecked();
+  });
+
+  test('enabling the menu link gives it a title, which Drupal requires', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    await page.fill(`${UI} input[aria-label="Title"]`, 'Blood Pressure Video Tutorial');
+    await page.locator(`${UI} aside button`, { hasText: 'Video Tutorial' }).first().click();
+
+    // Empty link_title with enabled=1 fails Drupal's own validation on submit.
+    await expect(page.locator('input[name="menu[link_title]"]'))
+      .toHaveValue('Blood Pressure Video Tutorial');
+  });
+
+  /**
+   * A row carrying only its own title is not enough to choose by.
+   *
+   * The live main menu has six items called "Our Services", one per specialty. Indentation
+   * distinguishes them only while their parents are on screen, and a search shows matches
+   * interleaved with dimmed ancestors that scroll away.
+   */
+  test('a deep parent row names its immediate ancestors', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Video Tutorial');
+
+    const trail = page.locator(`${UI} aside [data-parent-option="main-menu:204"] [data-parent-trail]`);
+    await expect(trail).toBeVisible();
+    await expect(trail).toContainText('Our Services');
+    await expect(trail).toContainText('Active BP Blood Pressure Monitoring');
+    // Five ancestors, two shown — the rest are elided rather than wrapping the rail.
+    await expect(trail).toContainText('…');
+    await expect(trail).not.toContainText('Specialties');
+  });
+
+  test('a dimmed context row does not restate its own lineage', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Video Tutorial');
+
+    // Specialties is present only to hold the hierarchy up, so a trail on it is noise.
+    await expect(page.locator(`${UI} aside [data-parent-option="main-menu:200"]`)).toBeVisible();
+    await expect(
+      page.locator(`${UI} aside [data-parent-option="main-menu:200"] [data-parent-trail]`)
+    ).toHaveCount(0);
+  });
+
+  /**
+   * Order matters more than it looks.
+   *
+   * The Vagelos Page type adds two menu fields of its own — "Menu modal: NID" and
+   * "Link tooltip" — which are not advanced, so marking core's attribute fields advanced
+   * did not stop them pushing the parent picker to fifth position, below the panel's
+   * visible area. The placement control has to lead the section named Menu Placement.
+   */
+  test('the parent picker comes before the fields it writes to', async ({ page, settings }) => {
+    await openMenuSection(page, settings);
+    const order = await page.evaluate(() => {
+      const root = document.querySelector('.d7-proxy-ui-form-host')!.shadowRoot!;
+      const picker = root.querySelector('aside input[placeholder="Filter parent items"]')!;
+      const enabled = [...root.querySelectorAll('aside label')]
+        .find(l => /Provide a menu link/i.test(l.textContent ?? ''))!;
+      // DOCUMENT_POSITION_FOLLOWING === the checkbox comes after the picker.
+      return Boolean(picker.compareDocumentPosition(enabled) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+    expect(order, 'the picker must precede "Provide a menu link"').toBe(true);
   });
 
   test('reports how deep the menu goes', async ({ page, settings }) => {
@@ -568,8 +655,10 @@ test.describe('D7 Studio: menu parent depth', () => {
     await openMenuSection(page, settings);
     const pads = await page.evaluate(() => {
       const root = document.querySelector('.d7-proxy-ui-form-host')!.shadowRoot!;
-      const find = (text: string) => [...root.querySelectorAll('aside button')]
-        .find(b => b.textContent?.trim() === text) as HTMLElement | undefined;
+      // Match on the label span, then measure the button that owns it.
+      const find = (text: string) => [...root.querySelectorAll('aside [data-parent-label]')]
+        .find(l => l.textContent?.trim() === text)
+        ?.closest('button') as HTMLElement | undefined;
       return {
         specialties: parseFloat(getComputedStyle(find('Specialties')!).paddingLeft),
         services: parseFloat(getComputedStyle(find('Our Services')!).paddingLeft),
@@ -582,14 +671,14 @@ test.describe('D7 Studio: menu parent depth', () => {
 
   test('a deep parent can be selected and is written to the native select', async ({ page, settings }) => {
     await openMenuSection(page, settings);
-    await page.locator(`${UI} aside button`, { hasText: /^Video Tutorial$/ }).first().click();
+    await page.locator(`${UI} aside [data-parent-option="main-menu:204"]`).click();
     await expect(page.locator('#edit-menu-parent')).toHaveValue('main-menu:204');
   });
 
   test('filtering a deep item keeps its whole ancestor chain visible', async ({ page, settings }) => {
     await openMenuSection(page, settings);
     await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'video');
-    const labels = (await page.locator(`${UI} aside button`).allInnerTexts()).map(t => t.trim());
+    const labels = (await page.locator(`${UI} aside [data-parent-label]`).allInnerTexts()).map(t => t.trim());
     // The match plus all four ancestors, so the position is never ambiguous.
     for (const crumb of ['Specialties', 'Cardiology & Cardiac Surgery', 'Our Services',
                          'Active BP Blood Pressure Monitoring', 'Video Tutorial']) {
@@ -599,7 +688,7 @@ test.describe('D7 Studio: menu parent depth', () => {
 
   test('the breadcrumb shows the full path for a deep selection', async ({ page, settings }) => {
     await openMenuSection(page, settings);
-    await page.locator(`${UI} aside button`, { hasText: /^Video Tutorial$/ }).first().click();
+    await page.locator(`${UI} aside [data-parent-option="main-menu:204"]`).click();
     const trail = await page.locator(`${UI} aside >> text=/Will appear under/`).innerText();
     expect(trail).toContain('Specialties');
     expect(trail).toContain('Our Services');
@@ -638,11 +727,134 @@ test.describe('D7 Studio: parent picker at real scale', () => {
   test('typing narrows to matches with their ancestors', async ({ page, settings }) => {
     await open(page, settings);
     await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Detail 7.1');
-    const labels = (await page.locator(`${UI} aside button`).allInnerTexts()).map(t => t.trim());
+    const labels = (await page.locator(`${UI} aside [data-parent-label]`).allInnerTexts()).map(t => t.trim());
     expect(labels).toContain('Detail 7.1 Cardiology');
     // Ancestors retained, so the position in a 200-row menu is never ambiguous.
     expect(labels).toContain('Specialty 7');
     expect(labels).toContain('Service 7.1');
+  });
+
+  /**
+   * Searching a section must reach INTO it.
+   *
+   * Reported on the live form: typing "ghar" found the Gharavi Lab menu root and one
+   * unrelated news item, and nothing else — every page actually inside that section was
+   * invisible, because none of them repeat the section's name in their own title. There
+   * was no way to place a node under a child of a section you had just found.
+   *
+   * "Specialty 7" appears in no descendant's own label, only in their ancestry.
+   */
+  test('searching a parent surfaces the items beneath it', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Specialty 7');
+
+    const labels = (await page.locator(`${UI} aside [data-parent-label]`).allInnerTexts())
+      .map(t => t.trim());
+    expect(labels, 'the section itself').toContain('Specialty 7');
+    expect(labels, 'a child of it').toContain('Service 7.1');
+    expect(labels, 'a grandchild of it').toContain('Detail 7.1 Cardiology');
+  });
+
+  test('a descendant found by its ancestry is selectable, not just context', async ({ page, settings }) => {
+    // Retained ancestors render dimmed and are still clickable, but a descendant surfaced
+    // by the section name has to count as a real match — otherwise the count lies and it
+    // reads as scaffolding rather than a result.
+    await open(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Specialty 7');
+
+    // Detail 7.1 Cardiology — a grandchild of Specialty 7, whose own label contains
+    // nothing matching the query.
+    const row = page.locator(`${UI} aside [data-parent-option="main-menu:3071"]`);
+    await expect(row).toBeVisible();
+    await row.click();
+    await expect(page.locator('#edit-menu-parent')).toHaveValue('main-menu:3071');
+  });
+
+  /**
+   * Reported: "it worked but it doesn't look selected."
+   *
+   * The selected row carried bg-cu-tint — a pale wash that reads as nothing on one row of
+   * a scrolling list, especially next to the dimmed context rows. A selection the editor
+   * cannot see is a selection they will make twice.
+   */
+  test('the selected parent is unmistakable, not a faint tint', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Specialty 7');
+    await page.locator(`${UI} aside [data-parent-option="main-menu:3071"]`).click();
+
+    const row = `${UI} aside [data-parent-option="main-menu:3071"]`;
+    await expect(page.locator(row)).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator(`${row} svg`), 'a tick, so it does not rely on colour alone')
+      .toBeVisible();
+
+    /**
+     * Contrast of the selected row's background against an UNSELECTED row's — not
+     * against its own text.
+     *
+     * Two earlier versions of this assertion passed with the old bg-cu-tint restored.
+     * The first checked opacity: a pale wash is fully opaque, just invisible. The second
+     * checked text-on-background contrast: the old style also set text-cu-blue, giving a
+     * perfectly readable 7.2:1. Neither measured the thing that was reported.
+     *
+     * What "it doesn't look selected" means is that the row does not stand out from its
+     * neighbours. cu-tint against white is 1.06:1 — a difference you cannot see across a
+     * scrolling list. cu-blue against white is 8.2:1.
+     *
+     * Polled because these rows carry `transition-colors duration-200`, so a style read
+     * the instant after a click is mid-animation and still shows the previous colour.
+     */
+    await expect.poll(async () => page.evaluate(() => {
+      const lum = (c: string) => {
+        const p = (c.match(/rgba?\(([^)]+)\)/)?.[1] ?? '255,255,255')
+          .split(',').slice(0, 3).map(v => {
+            const n = parseFloat(v) / 255;
+            return n <= 0.03928 ? n / 12.92 : Math.pow((n + 0.055) / 1.055, 2.4);
+          });
+        return 0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2];
+      };
+      /**
+       * The PAINTED background, walking up through transparency.
+       *
+       * Unselected rows set no background of their own, so getComputedStyle returns
+       * rgba(0,0,0,0). Read literally that parses as black, which inverted this whole
+       * comparison: transparent-vs-blue looked like poor contrast and transparent-vs-tint
+       * like excellent contrast, the exact opposite of what a reader sees.
+       */
+      const painted = (start: Element): string => {
+        let node: Element | null = start;
+        while (node) {
+          const c = getComputedStyle(node).backgroundColor;
+          const parts = (c.match(/rgba?\(([^)]+)\)/)?.[1] ?? '').split(',').map(Number);
+          const alpha = parts.length > 3 ? parts[3] : 1;
+          if (parts.length && alpha > 0.01) return c;
+          node = node.parentElement;
+        }
+        return 'rgb(255, 255, 255)';
+      };
+
+      const sr = document.querySelector('.d7-proxy-ui-form-host')!.shadowRoot!;
+      const sel = sr.querySelector('aside [data-parent-option][data-selected]');
+      const plain = sr.querySelector('aside [data-parent-option]:not([data-selected])');
+      if (!sel || !plain) return 0;
+      const a = lum(painted(sel));
+      const b = lum(painted(plain));
+      return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+    }), 'the selected row must stand out from an unselected one').toBeGreaterThan(3);
+  });
+
+  test('a row trail is not clipped, so the nearest ancestor survives', async ({ page, settings }) => {
+    // Clipping cut the trail from the right, which is where the NEAREST ancestor sits —
+    // leaving a dangling separator ("in … › Gharavi Lab ›") and losing the useful half.
+    await open(page, settings);
+    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Specialty 7');
+
+    const trail = page.locator(
+      `${UI} aside [data-parent-option="main-menu:3071"] [data-parent-trail]`
+    );
+    await expect(trail).toContainText('Service 7.1');
+    await expect(trail).not.toHaveText(/›\s*$/);
+    const clipped = await trail.evaluate(el => getComputedStyle(el).textOverflow);
+    expect(clipped).not.toBe('ellipsis');
   });
 
   test('a broad query is capped rather than rendering everything', async ({ page, settings }) => {
@@ -657,7 +869,7 @@ test.describe('D7 Studio: parent picker at real scale', () => {
   test('a deep match can still be selected and written back', async ({ page, settings }) => {
     await open(page, settings);
     await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Detail 12.1');
-    await page.locator(`${UI} aside button`, { hasText: /^Detail 12\.1 Cardiology$/ }).first().click();
+    await page.locator(`${UI} aside [data-parent-option="main-menu:3121"]`).click();
     await expect(page.locator('#edit-menu-parent')).toHaveValue('main-menu:3121');
   });
 

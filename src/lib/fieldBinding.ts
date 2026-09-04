@@ -1,5 +1,5 @@
 import { hasRichEditorOn } from './richEditorPresence';
-import { FieldDescriptor } from './formSchema';
+import { FieldDescriptor, findNodeForm } from './formSchema';
 
 /**
  * Reads and writes the native Drupal controls behind the overlay.
@@ -73,9 +73,43 @@ export function hasRichEditor(field: FieldDescriptor): boolean {
   return hasRichEditorOn(field.elements[0]);
 }
 
+/**
+ * The field's controls as they exist in the page RIGHT NOW.
+ *
+ * The schema captures element references at discovery. Drupal then re-renders parts of
+ * the form — its AJAX answers an interaction by replacing a widget wrapper outright, as
+ * inject.tsx already notes for slot stability — and every reference into that wrapper is
+ * left pointing at a detached node.
+ *
+ * Assigning to a detached input is silent: no error, no exception, and the input Drupal
+ * will actually submit is untouched. That is how the overlay came to show "Provide a menu
+ * link" ticked while Drupal's own menu[enabled] read false, and the placement was dropped
+ * on save with nothing reported anywhere.
+ *
+ * So the stored references are treated as a hint. When they have gone stale, the name is
+ * re-resolved against the live form — a name survives any number of AJAX replacements,
+ * which is exactly why Drupal keys its own form state on it.
+ */
+function liveElements(field: FieldDescriptor): HTMLElement[] {
+  const els = field.elements;
+  if (els.length === 0) return els;
+  if (els.some(el => el.isConnected)) return els;
+  if (!field.machineName) return els;
+
+  const form = findNodeForm(document);
+  if (!form) return els;
+
+  // JSON.stringify for the quoting, not CSS.escape: this is an attribute VALUE, and
+  // Drupal names carry brackets — [name="menu[enabled]"] is already valid.
+  const fresh = Array.from(
+    form.querySelectorAll<HTMLElement>(`[name=${JSON.stringify(field.machineName)}]`)
+  );
+  return fresh.length > 0 ? fresh : els;
+}
+
 /** Current value of a field, read from its native control(s). */
 export function readValue(field: FieldDescriptor): FieldValue {
-  const els = field.elements;
+  const els = liveElements(field);
   if (els.length === 0) return '';
 
   switch (field.kind) {
@@ -110,15 +144,34 @@ export function readValue(field: FieldDescriptor): FieldValue {
  * reported rather than assumed.
  */
 export function writeValue(field: FieldDescriptor, value: FieldValue): boolean {
-  const els = field.elements;
+  const els = liveElements(field);
   if (els.length === 0) return false;
+
+  /**
+   * Refuse to claim success when writing to an element that has left the document.
+   *
+   * The schema holds direct element references taken at discovery. If Drupal's AJAX
+   * replaces a wrapper afterwards — or anything else re-renders that part of the form —
+   * those references point at detached nodes. Assigning to a detached input succeeds
+   * silently: no error, no exception, and the live input Drupal will submit is untouched.
+   *
+   * That is exactly how the overlay came to show "Provide a menu link" ticked while
+   * Drupal's own menu[enabled] stayed false, and the placement was discarded on save with
+   * nothing reported. Returning false surfaces it as a failed write instead, which
+   * FieldControl already renders as a warning.
+   */
+  if (!els.some(el => el.isConnected)) return false;
 
   switch (field.kind) {
     case 'checkbox': {
       const el = els[0] as HTMLInputElement;
-      el.checked = Boolean(value);
+      const wanted = Boolean(value);
+      el.checked = wanted;
       notify(el);
-      return true;
+      // Confirmed rather than assumed. If anything on the page rejects or reverts the
+      // change, this reports a failed write and the control shows a warning, instead of
+      // the overlay quietly disagreeing with the form Drupal is about to save.
+      return el.checked === wanted;
     }
 
     case 'checkboxGroup': {
@@ -247,9 +300,67 @@ export function submitForm(form: HTMLFormElement, opts: { publish?: boolean } = 
     }
   }
 
-  const button = form.querySelector<HTMLElement>('#edit-submit, input[name="op"][type="submit"], button[name="op"]');
+  const button = chooseSubmit(form, Boolean(opts.publish));
   if (!button) return false;
 
   button.click();
   return true;
+}
+
+/** An input's value or a button's text, whichever carries the label. */
+function submitLabel(el: HTMLElement): string {
+  return ((el as HTMLInputElement).value || el.textContent || '').trim();
+}
+
+/**
+ * Buttons a save must never press, whatever was asked for.
+ *
+ * "Delete (all revisions)" is a submit input named `op` sitting in the same actions block
+ * as the saves, so anything selecting by name or by position can reach it.
+ */
+const NEVER_CLICK = /delete|remove|preview|view changes|cancel/i;
+
+/**
+ * Picks the button that does what the caller asked.
+ *
+ * The old selector led with `#edit-submit`, which is fine on a stock Drupal form where
+ * that is the only Save. On a site with a moderation workflow it is not: vagelos.columbia.edu
+ * offers
+ *
+ *   edit-submit          op="Save as draft"
+ *   edit-submit-publish  op="Save and publish"
+ *
+ * and no moderation-state field at all — the choice IS the button. So the overlay's
+ * Publish saved a pending revision every single time. The live node never changed, and a
+ * menu placement set in the same edit looked like it had silently failed to hold, because
+ * reopening the form shows the live revision rather than the pending one. Nothing was
+ * reported, because clicking a real save button genuinely does succeed.
+ *
+ * Matching on the visible label rather than on an id: `edit-submit-publish` is this site's
+ * id, not a Drupal convention, whereas the wording of a publish button is what any editor
+ * would recognise and what a themer is least likely to change silently.
+ */
+function chooseSubmit(form: HTMLFormElement, publish: boolean): HTMLElement | null {
+  const candidates = Array.from(
+    form.querySelectorAll<HTMLElement>('input[type="submit"][name="op"], button[name="op"]')
+  ).filter(el => !NEVER_CLICK.test(submitLabel(el)));
+
+  // Field widgets ("Attach", "Add another item") are submit inputs too, but they carry
+  // their own names rather than `op`, so the selector above already excludes them. Keep
+  // #edit-submit as a last resort for forms that name their button something else.
+  if (candidates.length === 0) {
+    const fallback = form.querySelector<HTMLElement>('#edit-submit');
+    return fallback && !NEVER_CLICK.test(submitLabel(fallback)) ? fallback : null;
+  }
+
+  const wanted = publish ? /publish/i : /draft/i;
+  const match = candidates.find(el => wanted.test(submitLabel(el)));
+  if (match) return match;
+
+  /**
+   * No button for that intent. On a stock form there is one Save which is both — and for
+   * publishing, the `status` checkbox handled above is what makes it a publish.
+   */
+  const plain = candidates.find(el => !/draft|publish/i.test(submitLabel(el)));
+  return plain ?? candidates[0];
 }
