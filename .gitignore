@@ -35,3 +35,6 @@ Thumbs.db
 # Env
 .env
 .env.*
+
+# Release artefacts
+d7-studio-extension-*.zip

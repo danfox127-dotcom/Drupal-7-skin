@@ -14,6 +14,13 @@
  * script, which is why the popup asks and the worker only fetches.
  */
 
+import { LATEST_URL, UPDATE_STATE_KEY, evaluateUpdate } from '../lib/updateCheck';
+
+/** Popup asking for a fresh check, so "Check again" reuses the worker's one fetch path. */
+export interface CheckForUpdateRequest {
+  type: 'checkForUpdate';
+}
+
 export interface FetchSourceRequest {
   type: 'fetchSource';
   url: string;
@@ -297,7 +304,8 @@ async function richEditorLifecycle(
 }
 
 chrome.runtime.onMessage.addListener((
-  message: FetchSourceRequest | SyncRichEditorRequest | RichEditorLifecycleRequest,
+  message: FetchSourceRequest | SyncRichEditorRequest | RichEditorLifecycleRequest
+    | CheckForUpdateRequest,
   sender,
   sendResponse
 ) => {
@@ -318,6 +326,13 @@ chrome.runtime.onMessage.addListener((
     return true;
   }
 
+  if (message?.type === 'checkForUpdate') {
+    void checkForUpdate().then(() =>
+      chrome.storage.local.get({ [UPDATE_STATE_KEY]: null }, r =>
+        sendResponse(r[UPDATE_STATE_KEY])));
+    return true;
+  }
+
   if (message?.type === 'richEditorLifecycle') {
     const tabId = sender.tab?.id;
     if (tabId === undefined) {
@@ -330,3 +345,50 @@ chrome.runtime.onMessage.addListener((
 
   return false;
 });
+
+/**
+ * Update check — on browser start and on install, never on a timer.
+ *
+ * Chrome ignores a self-hosted `update_url` for a Load-unpacked install, so the
+ * extension cannot update itself; the most it can honestly do is say it is out of date.
+ * See src/lib/updateCheck.ts.
+ *
+ * Once per browser launch is enough for a tool released every week or two, and it avoids
+ * asking for the `alarms` permission to run a schedule nobody needs. The fetch needs no
+ * host permission either: raw.githubusercontent.com sends
+ * `access-control-allow-origin: *`, so CORS allows it from the extension's own context.
+ */
+async function checkForUpdate(): Promise<void> {
+  const current = chrome.runtime.getManifest().version;
+
+  let raw: unknown = null;
+  try {
+    const response = await fetch(LATEST_URL, { cache: 'no-cache' });
+    if (response.ok) raw = await response.json();
+  } catch {
+    // Offline, blocked, or malformed. Staying silent is right: an update prompt that
+    // appears because the network hiccuped is worse than one that arrives a day late.
+  }
+
+  const state = evaluateUpdate(current, raw);
+  await chrome.storage.local.set({
+    [UPDATE_STATE_KEY]: { ...state, checkedAt: Date.now() },
+  });
+
+  /**
+   * A dot on the icon, not a number. There is only ever one thing to report, and a
+   * count would imply otherwise.
+   */
+  await chrome.action.setBadgeText({ text: state.available ? '\u2022' : '' });
+  if (state.available) {
+    await chrome.action.setBadgeBackgroundColor({ color: '#B8562F' });
+    await chrome.action.setTitle({
+      title: `D7 Studio ${current} \u2014 version ${state.latest} is available`,
+    });
+  } else {
+    await chrome.action.setTitle({ title: `D7 Studio ${current}` });
+  }
+}
+
+chrome.runtime.onStartup.addListener(() => { void checkForUpdate(); });
+chrome.runtime.onInstalled.addListener(() => { void checkForUpdate(); });

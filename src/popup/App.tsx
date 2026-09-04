@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import {
   LayoutList, FilePlus, GitBranch, Tags, Users, Settings,
-  ExternalLink, Layers, Wifi, WifiOff, X, Command,
+  ExternalLink, Layers, Wifi, WifiOff, X, Command, ArrowDownToLine, RefreshCw,
 } from 'lucide-react';
 import { useSettings, Settings as SettingsShape } from './useSettings';
 import { useImportQueue, displayUrl } from './useImportQueue';
 import { requestOriginAccess, setPendingImport, importTarget } from '../lib/import/pending';
+import { UPDATE_STATE_KEY, UpdateState } from '../lib/updateCheck';
 
 interface QuickLink {
   label: string;
@@ -58,6 +59,27 @@ function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void 
 
 export function App() {
   const [tabOrigin, setTabOrigin] = useState<string | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateState | null>(null);
+  const [rechecking, setRechecking] = useState(false);
+
+  /**
+   * Read whatever the service worker last wrote. The popup does not fetch: the worker
+   * owns the one code path that talks to the network, so both cannot disagree about what
+   * the latest version is.
+   */
+  useEffect(() => {
+    chrome.storage.local.get({ [UPDATE_STATE_KEY]: null }, result => {
+      setUpdateInfo((result[UPDATE_STATE_KEY] as UpdateState | null) ?? null);
+    });
+  }, []);
+
+  const recheck = () => {
+    setRechecking(true);
+    chrome.runtime.sendMessage({ type: 'checkForUpdate' }, (state: UpdateState) => {
+      setUpdateInfo(state ?? null);
+      setRechecking(false);
+    });
+  };
   const [tabPath, setTabPath] = useState<string | null>(null);
   const [isActive, setIsActive] = useState(false);
   const { settings, update, loaded } = useSettings();
@@ -198,6 +220,48 @@ export function App() {
         </div>
       </div>
 
+      {/*
+        Update notice.
+
+        Only rendered when there IS one — a permanent "you are up to date" row trains
+        people to ignore this area, which is the opposite of the point. The extension
+        cannot update itself (Chrome ignores update_url for an unpacked install), so this
+        states plainly what the person has to do.
+      */}
+      {updateInfo?.available && (
+        <div data-update-banner className="px-4 py-3 bg-cu-tint">
+          <div className="flex items-start gap-2">
+            <ArrowDownToLine size={14} className="mt-0.5 shrink-0 text-cu-onLight" />
+            <div className="min-w-0 flex-1">
+              <p className="text-control font-semibold text-cu-onLight">
+                Version {updateInfo.latest} is available
+              </p>
+              <p className="text-help text-ink-secondary mt-0.5">
+                You have {updateInfo.current}.
+              </p>
+              {updateInfo.notes && (
+                <p className="text-help text-ink-secondary mt-1">{updateInfo.notes}</p>
+              )}
+              {updateInfo.download && (
+                <a
+                  href={updateInfo.download}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="mt-2 inline-flex items-center gap-1.5 text-help font-semibold text-cu-blue hover:underline"
+                >
+                  Download the new version
+                  <ExternalLink size={11} />
+                </a>
+              )}
+              <p className="text-help text-ink-help mt-1.5">
+                Unzip it over your existing extension folder, then reload the extension at
+                chrome://extensions. Keep the folder in the same place.
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Import Queue */}
       <div className="pb-2">
         <p className="px-4 pt-3 pb-1 text-eyebrow-wide font-semibold uppercase text-ink-secondary">
@@ -322,6 +386,23 @@ export function App() {
         </span>
         <span className="text-eyebrow-wide text-ink-help uppercase font-semibold shrink-0">v0.1.0</span>
       </div>
+      {/* Version footer — quiet, but it answers "what am I running?" without a hunt. */}
+      <div className="px-4 py-2 flex items-center justify-between gap-2">
+        <p className="text-help text-ink-help">
+          v{updateInfo?.current ?? chrome.runtime.getManifest().version}
+          {updateInfo?.checkedAt ? ` · checked ${new Date(updateInfo.checkedAt).toLocaleDateString()}` : ''}
+        </p>
+        <button
+          type="button"
+          onClick={recheck}
+          disabled={rechecking}
+          className="inline-flex items-center gap-1 text-help font-semibold text-cu-blue hover:underline disabled:text-ink-help"
+        >
+          <RefreshCw size={11} className={rechecking ? 'animate-spin' : ''} />
+          {rechecking ? 'Checking…' : 'Check for updates'}
+        </button>
+      </div>
+
     </div>
   );
 }
