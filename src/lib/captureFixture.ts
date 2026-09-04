@@ -1,4 +1,4 @@
-import { findNodeForm } from './formSchema';
+import { findNodeForm, detectContentType } from './formSchema';
 
 /**
  * Turns the node form on screen into a fixture that is safe to commit.
@@ -46,8 +46,10 @@ export interface CaptureReport {
   /** Names of fields whose value was replaced rather than emptied. */
   anonymisedFields: string[];
   scriptsRemoved: number;
+  /** Content type, for naming the downloaded file. */
+  contentType: string | null;
   /** Selects big enough to be worth a second thought before committing. */
-  largeSelects: { name: string; options: number }[];
+  largeSelects: { name: string; options: number; kept?: number }[];
 }
 
 export interface Capture {
@@ -76,6 +78,19 @@ export interface CaptureOptions {
    * identical here.
    */
   keepValues?: boolean;
+  /**
+   * Reduce option lists that run to thousands, keeping the tree's shape.
+   *
+   * The menu parent select is the same 3,333 options on every content type, and it is
+   * 77% of a capture's bytes. Capturing ten types whole would commit that list ten
+   * times over.
+   *
+   * Not a plain truncation: taking the first N gives one branch of the tree and destroys
+   * the depth variety the menu tests exist to exercise. This keeps a sample from every
+   * depth, so ancestor chains and deep selection still have something to work on, and
+   * says exactly what it dropped.
+   */
+  trimLargeSelects?: boolean;
 }
 
 /**
@@ -102,6 +117,9 @@ const STRUCTURAL_TYPES = new Set(['checkbox', 'radio', 'submit', 'button', 'rese
 /** Above this, a select is worth flagging: the live menu parent list runs to 3,331. */
 const LARGE_SELECT = 200;
 
+/** Options kept per depth level when trimming. Enough for an ancestor chain and siblings. */
+const TRIM_PER_DEPTH = 6;
+
 function attr(el: Element, name: string): string {
   return el.getAttribute(name) ?? '';
 }
@@ -119,6 +137,17 @@ export function captureFixture(
     valuesKept: Boolean(options.keepValues),
     anonymisedFields: [],
     scriptsRemoved: 0,
+    /**
+     * Via detectContentType, which reads the URL as well as the body class.
+     *
+     * A first version matched only `node-type-…`, and on /node/add/page Drupal's body
+     * class is `page-node-add-page` — so every capture came out named "form" and would
+     * have overwritten the last one in a batch.
+     */
+    contentType: detectContentType(
+      { pathname: new URL(options.sourceUrl).pathname },
+      doc.body,
+    ).contentType,
     largeSelects: [],
   };
 
@@ -152,8 +181,40 @@ export function captureFixture(
     const tag = field.tagName.toLowerCase();
 
     if (tag === 'select') {
-      const count = field.querySelectorAll('option').length;
-      if (count >= LARGE_SELECT) report.largeSelects.push({ name: name || '(unnamed)', options: count });
+      const options_ = Array.from(field.querySelectorAll('option'));
+      if (options_.length < LARGE_SELECT) continue;
+
+      if (!options.trimLargeSelects) {
+        report.largeSelects.push({ name: name || '(unnamed)', options: options_.length });
+        continue;
+      }
+
+      /**
+       * A sample per depth, not the first N.
+       *
+       * Drupal encodes depth as leading hyphens on the option label, so the depth of each
+       * entry is readable without the tree. Keeping a few at every level preserves what
+       * the menu tests actually read — ancestor chains, deep selection, indentation —
+       * where the first N would be one branch and nothing else.
+       *
+       * Selected options are always kept: dropping the current value would change what
+       * the form says it holds.
+       */
+      const perDepth = new Map<number, number>();
+      let kept = 0;
+      for (const option of options_) {
+        const label = option.textContent ?? '';
+        const depth = /^(-+)/.exec(label.trim())?.[1].length ?? 0;
+        const seen = perDepth.get(depth) ?? 0;
+        const isSelected = option.hasAttribute('selected');
+        if (seen >= TRIM_PER_DEPTH && !isSelected) {
+          option.remove();
+          continue;
+        }
+        perDepth.set(depth, seen + 1);
+        kept++;
+      }
+      report.largeSelects.push({ name: name || '(unnamed)', options: options_.length, kept });
       continue;
     }
 
@@ -219,8 +280,14 @@ export function captureFixture(
   if (report.largeSelects.length) {
     lines.push(
       '',
-      'Large option lists, kept in full — check the file size before committing:',
-      ...report.largeSelects.map(s => `  ${s.name}: ${s.options} options`),
+      report.largeSelects.some(s => s.kept !== undefined)
+        ? 'Large option lists were TRIMMED to a sample per depth level, so the tree keeps its'
+        : 'Large option lists, kept in full — check the file size before committing:',
+      ...(report.largeSelects.some(s => s.kept !== undefined)
+        ? ['shape without repeating thousands of identical options in every capture:'] : []),
+      ...report.largeSelects.map(s => s.kept === undefined
+        ? `  ${s.name}: ${s.options} options`
+        : `  ${s.name}: ${s.kept} of ${s.options} options kept`),
     );
   }
 

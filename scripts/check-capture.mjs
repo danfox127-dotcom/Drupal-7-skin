@@ -64,13 +64,18 @@ const TOKEN_SHAPE = /\b[A-Za-z0-9_-]{32,}\b/g;
  * is lowercase words joined by separators. Anything with a capital letter mixed in, or no
  * separators at all, stays suspicious.
  *
+ * Note the DOUBLED separators. Drupal emits `edit-field-image-teaser-und-0-upload--widget`
+ * and `og-group-ref-add-more-wrapper--2` when a field appears more than once on a page,
+ * and the first real capture tripped on seven of them — exactly the cry-wolf failure this
+ * comment warns about, found the first time the check met a live form.
+ *
  * The gap this leaves, stated rather than hidden: a token that happens to be all
  * lowercase AND contains an underscore or hyphen would pass. That is a narrow shape and
  * the field-value and identity checks are independent of it, but this rule alone is not
  * a guarantee. Read the file.
  */
 const TOKEN_ALLOWED = [
-  /^[a-z0-9]+([_-][a-z0-9]+)+$/,       // lowercase words joined by - or _
+  /^[a-z0-9]+([_-]+[a-z0-9]+)+$/,      // lowercase words joined by - or _, singly or doubled
   /^[a-z_]+(\[[a-z0-9_]*\])*$/i,       // Drupal field names with brackets
   /^(https?|data|javascript)$/i,
 ];

@@ -7,6 +7,23 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   workers: process.env.CI ? 1 : undefined,
   reporter: 'html',
+  /**
+   * Web-first assertions get 15s, not Playwright's default 5s.
+   *
+   * The extension project drives a headful browser that loads a Drupal admin page, mounts
+   * a shadow-root overlay and sometimes CKEditor. On an idle machine that is fast; under
+   * load a full run has taken 13 minutes, and 5s stopped being enough for a row to render
+   * after a filter keystroke.
+   *
+   * Six spurious failures in one day, each one sending someone to hunt a regression that
+   * was not there — and one nearly got a good test deleted as worthless. A longer ceiling
+   * costs nothing when things are healthy: an assertion that will pass still passes at the
+   * same speed, and only a genuine failure waits out the timeout.
+   *
+   * Deliberately NOT retries. Retries would hide the flakiness rather than fix it, and a
+   * suite that goes green on the second attempt teaches you to stop reading failures.
+   */
+  expect: { timeout: 15000 },
   use: {
     trace: 'on-first-retry',
     // Some tests need a real browser. If `npx playwright install` has not been run,

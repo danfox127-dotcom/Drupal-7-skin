@@ -569,3 +569,62 @@ test.describe('autosave draft keys and conflict handling', () => {
     expect(formatAge(now + 5_000, now)).toBe('0s ago');
   });
 });
+
+test.describe('against the real captured Page form', () => {
+  /**
+   * The fixture that would have caught the Publish bug on day one.
+   *
+   * tests/fixtures/node-add-page.html was hand-authored and had ONE submit button,
+   * `edit-submit` with value "Save". The real form has seven, and `edit-submit` is
+   * "Save as draft" — the publish is a separate `edit-submit-publish`. So the old
+   * selector, which led with `#edit-submit`, looked correct against the fixture while
+   * saving a pending revision on every real Publish for months. The fixture did not
+   * merely miss the bug; it endorsed it.
+   *
+   * Captured markup, so this cannot drift from the site the way a hand-written fixture
+   * silently did.
+   */
+  test('publish reaches the publish button on the real form', async ({ page }) => {
+    await open(page, 'node-add-page-real.html');
+    const clicked = await page.evaluate(() => {
+      const api = (window as any).Editor;
+      const schema = api.discoverSchema(document, { pathname: '/node/add/page' });
+      const seen: string[] = [];
+      schema.form.addEventListener('submit', (e: Event) => e.preventDefault());
+      schema.form.querySelectorAll('input[type=submit]').forEach((b: HTMLInputElement) => {
+        b.addEventListener('click', () => seen.push(b.id));
+      });
+      api.submitForm(schema.form, { publish: true });
+      api.submitForm(schema.form, { publish: false });
+      return seen;
+    });
+    expect(clicked).toEqual(['edit-submit-publish', 'edit-submit']);
+  });
+
+  test('the real form is read despite the Title module renaming the title field', async ({ page }) => {
+    // The captured form has no `title` at all — it is title_field[und][0][value], which
+    // no fixture had. Matching on the LABEL is what survives that, and this pins it.
+    await open(page, 'node-add-page-real.html');
+    const found = await page.evaluate(() => {
+      const api = (window as any).Editor;
+      const schema = api.discoverSchema(document, { pathname: '/node/add/page' });
+      const title = schema.fields.find((f: any) => /^title$/i.test(f.label));
+      const summary = schema.fields.find((f: any) => /^summary$/i.test(f.label));
+      return {
+        titleName: title?.machineName ?? null,
+        summaryName: summary?.machineName ?? null,
+        summaryRequired: summary?.required ?? null,
+        hasPlainTitle: Boolean(document.querySelector('[name="title"]')),
+        hasBodySummary: Boolean(document.querySelector('[name="body[und][0][summary]"]')),
+      };
+    });
+
+    expect(found.titleName).toBe('title_field[und][0][value]');
+    expect(found.hasPlainTitle, 'the real form has no plain `title` field').toBe(false);
+
+    // And the summary is a real field, not core's body summary — which this form lacks.
+    expect(found.summaryName).toBe('field_summary[und][0][value]');
+    expect(found.summaryRequired).toBe(true);
+    expect(found.hasBodySummary).toBe(false);
+  });
+});

@@ -89,6 +89,28 @@ const LIVE_FORM = `<!DOCTYPE html>
   <script>Drupal.settings = {"ajaxPageState":{"token":"SECRET"},"user":{"uid":"4471"}};</script>
 </body></html>`;
 
+/** 600 options across 5 depths, in Drupal's leading-hyphen encoding. */
+function bigMenuForm(): string {
+  const options: string[] = ['<option value="main-menu:0">&lt;Main menu&gt;</option>'];
+  let id = 100;
+  for (let top = 0; top < 20; top++) {
+    options.push(`<option value="main-menu:${id++}">-Section ${top}</option>`);
+    for (let mid = 0; mid < 5; mid++) {
+      options.push(`<option value="main-menu:${id++}">--Area ${top}.${mid}</option>`);
+      for (let leaf = 0; leaf < 5; leaf++) {
+        options.push(`<option value="main-menu:${id++}">---Page ${top}.${mid}.${leaf}</option>`);
+      }
+    }
+  }
+  return `<!DOCTYPE html><html><body class="node-type-page">
+    <form id="page-node-form">
+      <div class="form-item"><label for="edit-title">Title</label>
+      <input type="text" id="edit-title" name="title" value="" /></div>
+      <div class="form-item"><label for="edit-menu-parent">Parent item</label>
+      <select id="edit-menu-parent" name="menu[parent]">${options.join('')}</select></div>
+    </form></body></html>`;
+}
+
 async function capture(
   page: import('@playwright/test').Page,
   html = LIVE_FORM,
@@ -270,5 +292,90 @@ test.describe('keeping page text, on purpose', () => {
     const result = await capture(page);
     expect(result.report.valuesKept).toBe(false);
     expect(result.html).not.toContain('PAGE TEXT WAS KEPT');
+  });
+});
+
+test.describe('trimming huge option lists', () => {
+  /**
+   * The menu parent select is the same 3,333 options on every content type, and 77% of a
+   * capture's bytes. Capturing every type whole would commit that list once per type.
+   *
+   * Trimming must not become a plain truncation: the first N options are one branch of the
+   * tree, and the menu tests read depth, ancestor chains and indentation.
+   */
+  async function bigCapture(page: import('@playwright/test').Page, trim: boolean) {
+    await page.goto('data:text/html,<body>host</body>');
+    await page.setContent(bigMenuForm());
+    await page.addScriptTag({ content: bundle });
+    return page.evaluate(t => (window as any).Capture.captureFixture(document, {
+      sourceUrl: 'https://vagelos.columbia.edu/node/add/page',
+      capturedOn: '2026-09-04',
+      trimLargeSelects: t,
+    }), trim);
+  }
+
+  test('untrimmed keeps every option', async ({ page }) => {
+    const r = await bigCapture(page, false);
+    expect(r.report.largeSelects[0].options).toBe(621);
+    expect(r.report.largeSelects[0].kept).toBeUndefined();
+    expect((r.html.match(/<option/g) ?? []).length).toBe(621);
+  });
+
+  test('trimmed keeps a sample from EVERY depth, not the first N', async ({ page }) => {
+    const r = await bigCapture(page, true);
+    const kept = r.report.largeSelects[0].kept as number;
+    expect(kept).toBeLessThan(621);
+    expect(kept).toBeGreaterThan(0);
+
+    const labels = [...r.html.matchAll(/<option[^>]*>([^<]*)</g)].map(m => m[1].trim());
+    const depths = new Set(labels.map(l => (/^(-+)/.exec(l)?.[1].length ?? 0)));
+    expect([...depths].sort()).toEqual([0, 1, 2, 3]);
+
+    /**
+     * BREADTH is the assertion that discriminates.
+     *
+     * A first version checked only that all four depths survived, and it passed with
+     * first-N truncation restored: the first six options in tree order are
+     * "<Main menu>", "-Section 0", "--Area 0.0", "---Page 0.0.0"… which spans every
+     * depth by accident. First-N gives ONE branch; per-depth sampling gives siblings at
+     * each level, and siblings are what the ancestor-chain and deep-selection tests read.
+     */
+    const sections = new Set(labels.filter(l => /^-[^-]/.test(l)));
+    expect(sections.size, 'several top-level sections, not just the first').toBeGreaterThan(1);
+    const areas = new Set(labels.filter(l => /^--[^-]/.test(l)));
+    expect(areas.size, 'several areas, not just one branch').toBeGreaterThan(1);
+  });
+
+  test('the selected option is never trimmed away', async ({ page }) => {
+    // Dropping the current value would change what the form says it holds.
+    await page.goto('data:text/html,<body>host</body>');
+    await page.setContent(bigMenuForm().replace(
+      '<option value="main-menu:600">', '<option selected="selected" value="main-menu:600">'));
+    await page.addScriptTag({ content: bundle });
+    const r = await page.evaluate(() => (window as any).Capture.captureFixture(document, {
+      sourceUrl: 'https://vagelos.columbia.edu/node/add/page',
+      capturedOn: '2026-09-04',
+      trimLargeSelects: true,
+    }));
+    expect(r.html).toContain('main-menu:600');
+  });
+
+  test('the file says what was trimmed', async ({ page }) => {
+    const r = await bigCapture(page, true);
+    expect(r.html).toContain('TRIMMED');
+    expect(r.html).toMatch(/menu\[parent\]: \d+ of 621 options kept/);
+  });
+
+  test('the content type names the file, from the URL when the body class does not', async ({ page }) => {
+    // On /node/add/page the body class is page-node-add-page, not node-type-page. Naming
+    // by body class alone made every capture "form", which in a batch overwrites the last.
+    await page.goto('data:text/html,<body>host</body>');
+    await page.setContent(bigMenuForm().replace('class="node-type-page"', 'class="page-node-add page-node-add-page"'));
+    await page.addScriptTag({ content: bundle });
+    const r = await page.evaluate(() => (window as any).Capture.captureFixture(document, {
+      sourceUrl: 'https://vagelos.columbia.edu/node/add/specialty',
+      capturedOn: '2026-09-04',
+    }));
+    expect(r.report.contentType).toBe('specialty');
   });
 });

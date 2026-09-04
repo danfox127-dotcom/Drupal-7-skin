@@ -64,6 +64,7 @@ export function App() {
   const [rechecking, setRechecking] = useState(false);
   const [captureNote, setCaptureNote] = useState<string | null>(null);
   const [keepText, setKeepText] = useState(false);
+  const [trimLists, setTrimLists] = useState(true);
 
   /**
    * Copy the current node form as a test fixture.
@@ -77,7 +78,7 @@ export function App() {
     setCaptureNote('Reading the form…');
     chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
       if (!tab?.id) { setCaptureNote('No active tab.'); return; }
-      chrome.tabs.sendMessage(tab.id, { type: 'captureFixture', keepValues: keepText }, async (result: Capture | null) => {
+      chrome.tabs.sendMessage(tab.id, { type: 'captureFixture', keepValues: keepText, trimLargeSelects: trimLists }, async (result: Capture | null) => {
         if (chrome.runtime.lastError || result === undefined) {
           setCaptureNote('The extension is not running on this page.');
           return;
@@ -86,18 +87,39 @@ export function App() {
           setCaptureNote('No node form on this page — open one for editing first.');
           return;
         }
+        /**
+         * Downloaded to a file, AND copied to the clipboard.
+         *
+         * The clipboard alone was a trap: retrieving the capture means running a command,
+         * and copying that command overwrites the clipboard with the command itself. A
+         * file does not have that failure mode.
+         *
+         * An <a download> works from a popup with no extra permission, unlike
+         * chrome.downloads. The clipboard copy stays as a convenience and is allowed to
+         * fail silently — the file is the reliable path.
+         */
+        const slug = (result.report.contentType || 'form').replace(/[^a-z0-9]+/gi, '-');
         try {
-          await navigator.clipboard.writeText(result.html);
+          const url = URL.createObjectURL(new Blob([result.html], { type: 'text/html' }));
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `capture-${slug}.html`;
+          a.click();
+          URL.revokeObjectURL(url);
         } catch {
-          setCaptureNote('Could not reach the clipboard.');
+          setCaptureNote('Could not save the file.');
           return;
         }
+        try {
+          await navigator.clipboard.writeText(result.html);
+        } catch { /* the file is what matters */ }
         const r = result.report;
         const big = r.largeSelects.length
           ? ` ${r.largeSelects.length} large option list${r.largeSelects.length === 1 ? '' : 's'} kept in full — check the size.`
           : '';
         setCaptureNote(
-          `Copied. Removed ${[...new Set(r.removedFields)].length} security field(s), ` +
+          `Saved to Downloads as capture-${slug}.html. ` +
+          `Removed ${[...new Set(r.removedFields)].length} security field(s), ` +
           (r.valuesKept
             ? 'KEPT this page\'s text — check for anything unpublished before committing.'
             : `blanked ${r.blankedValues} value(s),`) +
@@ -445,6 +467,26 @@ export function App() {
           work this whole action exists to remove. Security fields and usernames are
           stripped either way.
         */}
+        {/*
+          On by default. The menu parent select is the same 3,333 options on every content
+          type and 77% of a capture's bytes; one full copy already exists in
+          node-add-page-real.html, so repeating it per type is waste. Trimming keeps a
+          sample from each depth so the tree still has its shape.
+        */}
+        <label className="mt-2 flex items-start gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={trimLists}
+            onChange={e => setTrimLists(e.target.checked)}
+            className="mt-0.5 shrink-0"
+          />
+          <span className="text-help text-ink-secondary">
+            Trim huge option lists
+            <span className="block text-ink-help">
+              Keeps a sample from every depth instead of all 3,000+ menu parents.
+            </span>
+          </span>
+        </label>
         <label className="mt-2 flex items-start gap-2 cursor-pointer">
           <input
             type="checkbox"

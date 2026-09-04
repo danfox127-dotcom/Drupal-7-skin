@@ -913,6 +913,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       sourceUrl: window.location.href,
       capturedOn: new Date().toISOString().slice(0, 10),
       keepValues: Boolean(message.keepValues),
+      trimLargeSelects: Boolean(message.trimLargeSelects),
     }));
   }
   return false;
