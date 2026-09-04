@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "playwright test --project=chromium && playwright test --project=extension --no-deps --workers=1",
     "test:unit": "playwright test --project=chromium",
-    "test:extension": "playwright test --project=extension --no-deps --workers=1"
+    "test:extension": "playwright test --project=extension --no-deps --workers=1",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
