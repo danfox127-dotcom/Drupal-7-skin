@@ -470,7 +470,7 @@ export function App() {
         {/*
           On by default. The menu parent select is the same 3,333 options on every content
           type and 77% of a capture's bytes; one full copy already exists in
-          node-add-page-real.html, so repeating it per type is waste. Trimming keeps a
+          node-add-page-bigmenu.html, so repeating it per type is waste. Trimming keeps a
           sample from each depth so the tree still has its shape.
         */}
         <label className="mt-2 flex items-start gap-2 cursor-pointer">

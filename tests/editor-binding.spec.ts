@@ -585,7 +585,7 @@ test.describe('against the real captured Page form', () => {
    * silently did.
    */
   test('publish reaches the publish button on the real form', async ({ page }) => {
-    await open(page, 'node-add-page-real.html');
+    await open(page, 'captured/page.html');
     const clicked = await page.evaluate(() => {
       const api = (window as any).Editor;
       const schema = api.discoverSchema(document, { pathname: '/node/add/page' });
@@ -604,7 +604,7 @@ test.describe('against the real captured Page form', () => {
   test('the real form is read despite the Title module renaming the title field', async ({ page }) => {
     // The captured form has no `title` at all — it is title_field[und][0][value], which
     // no fixture had. Matching on the LABEL is what survives that, and this pins it.
-    await open(page, 'node-add-page-real.html');
+    await open(page, 'captured/page.html');
     const found = await page.evaluate(() => {
       const api = (window as any).Editor;
       const schema = api.discoverSchema(document, { pathname: '/node/add/page' });
@@ -626,5 +626,108 @@ test.describe('against the real captured Page form', () => {
     expect(found.summaryName).toBe('field_summary[und][0][value]');
     expect(found.summaryRequired).toBe(true);
     expect(found.hasBodySummary).toBe(false);
+  });
+});
+
+test.describe('against every captured content type', () => {
+  /**
+   * The Publish bug was not a Page problem. It was every content type.
+   *
+   * Page, Specialty and News all render `edit-submit` = "Save as draft" plus a separate
+   * `edit-submit-publish`. NONE of the hand-authored fixtures had that shape — every one
+   * of them had a single `edit-submit` = "Save", which is precisely the markup that makes
+   * the old `#edit-submit`-first selector look correct. Three fixtures, three
+   * endorsements of the same bug.
+   */
+  for (const [fixture, path_] of [
+    ['captured/page.html', '/node/add/page'],
+    ['captured/specialty.html', '/node/add/specialty'],
+    ['captured/news.html', '/node/add/news'],
+  ] as const) {
+    test(`publish reaches the publish button on ${fixture}`, async ({ page }) => {
+      await open(page, fixture);
+      const clicked = await page.evaluate(p => {
+        const api = (window as any).Editor;
+        const schema = api.discoverSchema(document, { pathname: p });
+        const seen: string[] = [];
+        schema.form.addEventListener('submit', (e: Event) => e.preventDefault());
+        schema.form.querySelectorAll('input[type=submit]').forEach((b: HTMLInputElement) => {
+          b.addEventListener('click', () => seen.push(b.id));
+        });
+        api.submitForm(schema.form, { publish: true });
+        api.submitForm(schema.form, { publish: false });
+        return seen;
+      }, path_);
+      expect(clicked).toEqual(['edit-submit-publish', 'edit-submit']);
+    });
+  }
+
+  test('the body summary is folded out, so the summary lands on the real field', async ({ page }) => {
+    /**
+     * What actually resolves the collision on real markup — and it is not what I assumed.
+     *
+     * The Specialty form has TWO controls labelled "Summary": core's
+     * body[und][0][summary], which is not required and comes FIRST in the document, and
+     * field_summary, which is required. My first version of this test asserted the
+     * required-field tiebreak in findTarget was doing the work, and it PASSED with that
+     * tiebreak disabled — because foldTextWidgetParts has already removed the body summary
+     * from the schema (the body carries a rich editor), so findTarget only ever sees one
+     * candidate.
+     *
+     * So the fold is load-bearing here and the tiebreak is not. The tiebreak still earns
+     * its place as defence for a form whose body has no rich editor, where the summary
+     * survives folding and does collide — but that is not this form, and claiming
+     * otherwise put the credit in the wrong place.
+     *
+     * Also absent: field_specialty_summary. The hand-authored fixture had it, the real
+     * form does not, and an afternoon went into reasoning about a three-way label
+     * collision that was really two.
+     */
+    await open(page, 'captured/specialty.html');
+    const found = await page.evaluate(() => {
+      const api = (window as any).Editor;
+      const schema = api.discoverSchema(document, { pathname: '/node/add/specialty' });
+      const labelled = schema.fields.filter((f: any) => /^summary$/i.test(f.label));
+      return {
+        inDom: document.querySelectorAll(
+          '[name="body[und][0][summary]"], [name="field_summary[und][0][value]"]').length,
+        bodySummaryFirstInDom: (() => {
+          const bs = document.querySelector('[name="body[und][0][summary]"]');
+          const fs = document.querySelector('[name="field_summary[und][0][value]"]');
+          return bs && fs
+            ? Boolean(bs.compareDocumentPosition(fs) & Node.DOCUMENT_POSITION_FOLLOWING)
+            : null;
+        })(),
+        schemaCandidates: labelled.map((f: any) => f.machineName),
+        hasInventedField: Boolean(document.querySelector('[name^="field_specialty_summary"]')),
+      };
+    });
+
+    // Both are in the markup, non-required one first — the collision is real on the page.
+    expect(found.inDom).toBe(2);
+    expect(found.bodySummaryFirstInDom).toBe(true);
+
+    // The fold resolves it before any tiebreak is consulted.
+    expect(found.schemaCandidates).toEqual(['field_summary[und][0][value]']);
+    expect(found.hasInventedField).toBe(false);
+  });
+
+  test('the Title module renames the title field on every type', async ({ page }) => {
+    // Not a Specialty quirk: Page, Specialty and News all use title_field. Every
+    // hand-authored fixture except the Specialty ones had a plain `title`, so matching on
+    // the LABEL is the only reason the extension works on this site at all.
+    for (const [fixture, path_] of [
+      ['captured/page.html', '/node/add/page'],
+      ['captured/specialty.html', '/node/add/specialty'],
+      ['captured/news.html', '/node/add/news'],
+    ] as const) {
+      await open(page, fixture);
+      const name = await page.evaluate(p => {
+        const api = (window as any).Editor;
+        const schema = api.discoverSchema(document, { pathname: p });
+        return schema.fields.find((f: any) => /^title$/i.test(f.label))?.machineName ?? null;
+      }, path_);
+      expect(name, fixture).toBe('title_field[und][0][value]');
+    }
   });
 });
