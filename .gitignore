@@ -38,3 +38,6 @@ Thumbs.db
 
 # Release artefacts
 d7-studio-extension-*.zip
+
+# Local list of strings that must not be committed (see .capture-identity.example)
+.capture-identity

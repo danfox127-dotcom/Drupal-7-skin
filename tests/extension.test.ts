@@ -140,6 +140,30 @@ export const test = base.extend<{
   },
 });
 
+/**
+ * How long to wait for the overlay to appear.
+ *
+ * Was 15s, and it flaked five times in one day — always under load, always passing in
+ * isolation. The overlay mounts in well under a second when the machine is idle, so a
+ * higher ceiling costs nothing while things are healthy and only matters when something
+ * else is competing for CPU. A genuine mount failure still fails; it just takes longer
+ * to say so, which is the right trade against a false alarm that sends someone hunting a
+ * regression that is not there.
+ */
+const OVERLAY_MOUNT_TIMEOUT = 30000;
+
+/**
+ * CKEditor is slower than the overlay and slower still under load: it fetches its config
+ * and plugins before firing instanceReady, so this is several network hops even locally.
+ */
+const RICH_EDITOR_TIMEOUT = 30000;
+
+/**
+ * The service worker's update check does a real fetch to raw.githubusercontent.com, so
+ * this one waits on the network rather than on local work.
+ */
+const UPDATE_CHECK_TIMEOUT = 30000;
+
 /** The shadow-root host every injected component lives in. */
 const UI = '.d7-proxy-ui-container';
 
@@ -1025,12 +1049,12 @@ test.describe('Feature 5: the body keeps Drupal\'s real rich text editor', () =>
    */
   const openBody = async (page: import('@playwright/test').Page) => {
     await page.goto(`${HOST}/node/add/news-ckeditor`);
-    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: OVERLAY_MOUNT_TIMEOUT });
     // The rebuild is bracketed by two async hops through the service worker.
     await page.waitForFunction(
       () => !!document.querySelector('.cke'),
       undefined,
-      { timeout: 15000 }
+      { timeout: RICH_EDITOR_TIMEOUT }
     );
   };
 
@@ -1151,7 +1175,7 @@ test.describe('Feature 5: a chosen image shows as selected', () => {
   const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
     await settings({ nodeEditor: true, combobox: false, htmlExport: false });
     await page.goto(`${HOST}/node/add/news-media`);
-    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: OVERLAY_MOUNT_TIMEOUT });
   };
 
   test('the whole widget moves, including the ajax wrapper and the hidden fid', async ({ page, settings }) => {
@@ -1256,7 +1280,7 @@ test.describe('Feature 5: an existing article can still change its image', () =>
   const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
     await settings({ nodeEditor: true, combobox: false, htmlExport: false, debugSchema: true });
     await page.goto(`${HOST}/node/18948/edit`);
-    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: OVERLAY_MOUNT_TIMEOUT });
     await expandAll(page);
   };
 
@@ -1350,7 +1374,7 @@ test.describe('Feature 5: a content type other than News', () => {
   const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
     await settings({ nodeEditor: true, combobox: false, htmlExport: false });
     await page.goto(`${HOST}/node/17176/edit`);
-    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: OVERLAY_MOUNT_TIMEOUT });
   };
 
   test('only one Summary claims to be the meta description', async ({ page, settings }) => {
@@ -1421,8 +1445,8 @@ test.describe('Feature 5: the body owns its editor and its summary', () => {
     page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
     await settings({ nodeEditor: true, combobox: false, htmlExport: false, debugSchema: true });
     await page.goto(`${HOST}/node/17176/edit`);
-    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
-    await page.waitForFunction(() => !!document.querySelector('.cke'), undefined, { timeout: 15000 });
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: OVERLAY_MOUNT_TIMEOUT });
+    await page.waitForFunction(() => !!document.querySelector('.cke'), undefined, { timeout: RICH_EDITOR_TIMEOUT });
     return errors;
   };
 
@@ -1567,7 +1591,7 @@ test.describe('Feature 5: the description is findable and the Titles are disting
   const open = async (page: import('@playwright/test').Page, settings: (v: Record<string, unknown>) => Promise<void>) => {
     await settings({ nodeEditor: true, combobox: false, htmlExport: false });
     await page.goto(`${HOST}/node/17176/edit`);
-    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: 15000 });
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: OVERLAY_MOUNT_TIMEOUT });
   };
 
   const railText = (page: import('@playwright/test').Page) => page.evaluate(() => {
@@ -2244,7 +2268,7 @@ test.describe('the update notifier', () => {
       const r = await new Promise<Record<string, unknown>>(
         res => chrome.storage.local.get({ updateState: null }, res));
       return r.updateState !== null;
-    }), { timeout: 15000 }).toBe(true);
+    }), { timeout: UPDATE_CHECK_TIMEOUT }).toBe(true);
 
     await page.evaluate(
       v => new Promise<void>(res => chrome.storage.local.set({ updateState: v }, () => res())),
@@ -2305,3 +2329,62 @@ test.describe('the update notifier', () => {
   });
 });
 
+
+test.describe('capturing a real form as a fixture', () => {
+  /**
+   * The wiring, not the scrubbing.
+   *
+   * captureFixture's rules are covered in tests/capture-fixture.spec.ts. What this checks
+   * is that the content script actually answers the popup's request on a real page with
+   * the extension loaded — the path that turns "hand-authored fixture" into "captured
+   * fixture", and the reason every bug this project has had was invisible until someone
+   * hit it in production.
+   */
+  test('the content script returns a scrubbed, usable fixture', async ({ page, context, extensionId }) => {
+    await page.goto(`${HOST}/node/add/page`);
+    await expect(page.locator('#edit-title')).toBeVisible();
+
+    // Ask exactly as the popup does, from an extension page.
+    const asker = await context.newPage();
+    await asker.goto(`chrome-extension://${extensionId}/index.html`);
+    const result = await asker.evaluate(async () => {
+      const tabs = await chrome.tabs.query({});
+      const target = tabs.find(t => (t.url ?? '').includes('/node/add/page'));
+      if (!target?.id) return { error: 'no target tab' };
+      return new Promise(resolve => {
+        chrome.tabs.sendMessage(target.id!, { type: 'captureFixture' }, r =>
+          resolve(r ?? { error: chrome.runtime.lastError?.message ?? 'no response' }));
+      });
+    }) as { html?: string; report?: Record<string, unknown>; error?: string };
+    await asker.close();
+
+    expect(result.error).toBeUndefined();
+    const html = result.html!;
+
+    // Scrubbed: the security fields are gone as elements.
+    expect(html).not.toContain('name="form_token"');
+    expect(html).not.toContain('name="form_build_id"');
+
+    // Usable: the structure the tests read survives, and it is a standalone document.
+    expect(html.startsWith('<!DOCTYPE html>')).toBe(true);
+    expect(html).toContain('node-type-page');
+    expect(html).toContain('name="title"');
+    expect(html).toContain('name="menu[parent]"');
+    expect(html).toContain('/node/add/page');
+
+    // And it says what it stripped, so a human can review before committing.
+    expect(html).toContain('Removed:');
+    expect(result.report!.removedFields).toContain('form_token');
+  });
+
+  test('the popup offers the capture action', async ({ page, extensionId }) => {
+    /*
+      Minimal on purpose. The scrubbing is covered by unit tests and the content-script
+      answer by the test above; what is NOT covered anywhere is the popup's clipboard
+      write, which needs the popup's own focus and gesture and is verified by hand. This
+      at least fails if the button disappears.
+    */
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await expect(page.locator('text=Copy this form as a test fixture')).toBeVisible();
+  });
+});

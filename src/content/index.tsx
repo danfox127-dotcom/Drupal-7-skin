@@ -24,6 +24,7 @@ import {
 import { discoverSchema, explainSchema, isNodeFormPath } from '../lib/formSchema';
 import { hasRichEditor } from '../lib/fieldBinding';
 import { getPendingImport } from '../lib/import/pending';
+import { captureFixture } from '../lib/captureFixture';
 import { maybeShowImportReview } from './importFlow';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
 
@@ -895,3 +896,25 @@ if (document.readyState === 'loading') {
 } else {
   init();
 }
+
+/**
+ * Hands the current node form back as a committable fixture.
+ *
+ * Lives in the content script because only it can see the page. The popup asks, copies
+ * the result to the clipboard, and shows what was stripped — it cannot read the DOM, and
+ * the clipboard needs the popup's focus and user gesture anyway.
+ *
+ * Synchronous on purpose: captureFixture is pure string work, so there is no reason to
+ * hold the message channel open.
+ */
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'captureFixture') {
+    sendResponse(captureFixture(document, {
+      sourceUrl: window.location.href,
+      capturedOn: new Date().toISOString().slice(0, 10),
+      keepValues: Boolean(message.keepValues),
+      trimLargeSelects: Boolean(message.trimLargeSelects),
+    }));
+  }
+  return false;
+});

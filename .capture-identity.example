@@ -1,0 +1,11 @@
+# Strings that must never appear in a committed fixture.
+# Copy to .capture-identity (gitignored) and add your own.
+#
+# Git identity is checked automatically, but that is often a personal address while the
+# thing that leaks is a work username — a real Columbia UNI sat in six fixtures in this
+# repo and no git-identity check could have matched it.
+#
+# One per line. Four characters minimum, so short strings cannot match half the file.
+#
+# df2832
+# yourname@columbia.edu

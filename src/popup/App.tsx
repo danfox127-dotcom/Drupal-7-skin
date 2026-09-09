@@ -1,12 +1,13 @@
 import React, { useEffect, useState } from 'react';
 import {
   LayoutList, FilePlus, GitBranch, Tags, Users, Settings,
-  ExternalLink, Layers, Wifi, WifiOff, X, Command, ArrowDownToLine, RefreshCw,
+  ExternalLink, Layers, Wifi, WifiOff, X, Command, ArrowDownToLine, RefreshCw, ClipboardCopy,
 } from 'lucide-react';
 import { useSettings, Settings as SettingsShape } from './useSettings';
 import { useImportQueue, displayUrl } from './useImportQueue';
 import { requestOriginAccess, setPendingImport, importTarget } from '../lib/import/pending';
 import { UPDATE_STATE_KEY, UpdateState } from '../lib/updateCheck';
+import { Capture } from '../lib/captureFixture';
 
 interface QuickLink {
   label: string;
@@ -61,6 +62,73 @@ export function App() {
   const [tabOrigin, setTabOrigin] = useState<string | null>(null);
   const [updateInfo, setUpdateInfo] = useState<UpdateState | null>(null);
   const [rechecking, setRechecking] = useState(false);
+  const [captureNote, setCaptureNote] = useState<string | null>(null);
+  const [keepText, setKeepText] = useState(false);
+  const [trimLists, setTrimLists] = useState(true);
+
+  /**
+   * Copy the current node form as a test fixture.
+   *
+   * The scrubbing happens in the content script (captureFixture); this only moves the
+   * result to the clipboard, which needs the popup's own focus and gesture. The report is
+   * shown rather than hidden because the output is destined for a PUBLIC repository and
+   * someone has to read it before committing.
+   */
+  const captureForm = () => {
+    setCaptureNote('Reading the form…');
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      if (!tab?.id) { setCaptureNote('No active tab.'); return; }
+      chrome.tabs.sendMessage(tab.id, { type: 'captureFixture', keepValues: keepText, trimLargeSelects: trimLists }, async (result: Capture | null) => {
+        if (chrome.runtime.lastError || result === undefined) {
+          setCaptureNote('The extension is not running on this page.');
+          return;
+        }
+        if (result === null) {
+          setCaptureNote('No node form on this page — open one for editing first.');
+          return;
+        }
+        /**
+         * Downloaded to a file, AND copied to the clipboard.
+         *
+         * The clipboard alone was a trap: retrieving the capture means running a command,
+         * and copying that command overwrites the clipboard with the command itself. A
+         * file does not have that failure mode.
+         *
+         * An <a download> works from a popup with no extra permission, unlike
+         * chrome.downloads. The clipboard copy stays as a convenience and is allowed to
+         * fail silently — the file is the reliable path.
+         */
+        const slug = (result.report.contentType || 'form').replace(/[^a-z0-9]+/gi, '-');
+        try {
+          const url = URL.createObjectURL(new Blob([result.html], { type: 'text/html' }));
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `capture-${slug}.html`;
+          a.click();
+          URL.revokeObjectURL(url);
+        } catch {
+          setCaptureNote('Could not save the file.');
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(result.html);
+        } catch { /* the file is what matters */ }
+        const r = result.report;
+        const big = r.largeSelects.length
+          ? ` ${r.largeSelects.length} large option list${r.largeSelects.length === 1 ? '' : 's'} kept in full — check the size.`
+          : '';
+        setCaptureNote(
+          `Saved to Downloads as capture-${slug}.html. ` +
+          `Removed ${[...new Set(r.removedFields)].length} security field(s), ` +
+          (r.valuesKept
+            ? 'KEPT this page\'s text — check for anything unpublished before committing.'
+            : `blanked ${r.blankedValues} value(s),`) +
+          ` dropped ${r.scriptsRemoved} script(s).${big}` +
+          (r.valuesKept ? '' : ' Read it before committing.')
+        );
+      });
+    });
+  };
 
   /**
    * Read whatever the service worker last wrote. The popup does not fetch: the worker
@@ -374,6 +442,68 @@ export function App() {
               </li>
             ))}
           </ul>
+        )}
+      </div>
+
+      {/*
+        Fixture capture — a developer action, deliberately plain and last.
+
+        Every significant bug in this extension came from a hand-authored fixture that
+        disagreed with the real form. This turns a real form into a test fixture so that
+        stops being the default.
+      */}
+      <div className="px-4 py-3">
+        <button
+          type="button"
+          onClick={captureForm}
+          className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-white border border-rule-control rounded text-control font-semibold text-ink hover:bg-legacy-200 transition-colors duration-200 ease-studio"
+        >
+          <ClipboardCopy size={13} />
+          Copy this form as a test fixture
+        </button>
+        {/*
+          Off by default. Blanking is the safe default for a public repo, but a bug that
+          needs realistic text otherwise means hand-typing it back in — which is the manual
+          work this whole action exists to remove. Security fields and usernames are
+          stripped either way.
+        */}
+        {/*
+          On by default. The menu parent select is the same 3,333 options on every content
+          type and 77% of a capture's bytes; one full copy already exists in
+          node-add-page-bigmenu.html, so repeating it per type is waste. Trimming keeps a
+          sample from each depth so the tree still has its shape.
+        */}
+        <label className="mt-2 flex items-start gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={trimLists}
+            onChange={e => setTrimLists(e.target.checked)}
+            className="mt-0.5 shrink-0"
+          />
+          <span className="text-help text-ink-secondary">
+            Trim huge option lists
+            <span className="block text-ink-help">
+              Keeps a sample from every depth instead of all 3,000+ menu parents.
+            </span>
+          </span>
+        </label>
+        <label className="mt-2 flex items-start gap-2 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={keepText}
+            onChange={e => setKeepText(e.target.checked)}
+            className="mt-0.5 shrink-0"
+          />
+          <span className="text-help text-ink-secondary">
+            Keep this page’s text
+            <span className="block text-ink-help">
+              For bugs that need real content. Tokens and usernames are removed either way —
+              but check for unpublished text before committing.
+            </span>
+          </span>
+        </label>
+        {captureNote && (
+          <p data-capture-note className="mt-2 text-help text-ink-secondary">{captureNote}</p>
         )}
       </div>
 
