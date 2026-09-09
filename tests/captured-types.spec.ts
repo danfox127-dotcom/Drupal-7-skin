@@ -40,7 +40,7 @@ let bundle: string;
 test.beforeAll(async () => {
   const entry = path.join(__dirname, 'fixtures', '.captured-entry.ts');
   fs.writeFileSync(entry, `
-    export { discoverSchema } from '../../src/lib/formSchema';
+    export { discoverSchema, displayLabelFor } from '../../src/lib/formSchema';
     export { findTarget } from '../../src/lib/import/targets';
     export { submitForm, writeValue, readValue } from '../../src/lib/fieldBinding';
   `);
@@ -134,6 +134,32 @@ for (const type of TYPES) {
 
       expect(problems.unclaimed).toEqual([]);
       expect(problems.unlabelled).toEqual([]);
+    });
+
+    test('no two fields in a section show the same label', async ({ page }) => {
+      /**
+       * Two boxes reading the same thing tell an editor nothing about which one they are
+       * filling in. Drupal gets away with it because its tabs supply the context; the
+       * overlay removes the tabs, so it has to put the context back.
+       *
+       * The captures found three real duplicates that no hand-authored fixture had:
+       * menu[options][attributes] and menu[options][item_attributes] render identical
+       * labels for class, style and data-nid, and they govern different elements — the
+       * link versus the list item wrapping it.
+       */
+      await load(page, type);
+      const dups = await page.evaluate(t => {
+        const api = (window as any).S;
+        const s = api.discoverSchema(document, { pathname: `/node/add/${t}` });
+        const shown: Record<string, string[]> = {};
+        for (const f of s.fields) {
+          const key = `${f.section} / ${api.displayLabelFor(f)}`;
+          (shown[key] ??= []).push(f.machineName);
+        }
+        return Object.entries(shown).filter(([, v]) => (v as string[]).length > 1);
+      }, type);
+
+      expect(dups).toEqual([]);
     });
   });
 }

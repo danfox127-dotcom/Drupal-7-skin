@@ -657,23 +657,16 @@ test.describe('labels that would otherwise appear twice', () => {
       }));
     }, pathname);
 
-  test('two Summaries become distinguishable, and only one is renamed', async ({ page }) => {
-    await open(page, 'node-edit-specialty.html');
-    const fields = await labelsIn(page, '/node/17176/edit');
-
-    const meta = fields.find((f: any) => f.name.startsWith('field_summary'));
-    const other = fields.find((f: any) => f.name.startsWith('field_specialty_summary'));
-
-    // The required one — the default meta description — keeps Drupal's wording, so anyone
-    // who knows the native form still recognises it.
-    expect(meta.shown).toBe('Summary');
-    expect(meta.relabelled).toBe(false);
-    // The other takes the one token that distinguishes its machine name.
-    expect(other.shown).toBe('Specialty summary');
-    expect(other.relabelled).toBe(true);
-    expect(other.qualified).toBe('Specialty summary');
-    expect(meta.qualified).toBeNull();
-  });
+  /**
+   * The two label tests that used to live here are now in tests/display-labels.spec.ts.
+   *
+   * They exercised the derived-qualifier fallback through `field_specialty_summary` in
+   * node-edit-specialty.html — a field the captured forms proved does not exist. Testing
+   * an unanticipated-collision fallback with an invented field, in a fixture that claims
+   * to be real markup, gets it wrong twice: the fixture lies about the site, and the
+   * coverage of the fallback is incidental to it. They are now direct unit tests over
+   * obviously-constructed input.
+   */
 
   test('no two fields in a section end up showing the same label', async ({ page }) => {
     await open(page, 'node-edit-specialty.html');
@@ -690,15 +683,6 @@ test.describe('labels that would otherwise appear twice', () => {
     expect(collisions).toEqual([]);
   });
 
-  test('Drupal\'s own label is preserved for rule matching and diagnostics', async ({ page }) => {
-    await open(page, 'node-edit-specialty.html');
-    const fields = await labelsIn(page, '/node/17176/edit');
-    const other = fields.find((f: any) => f.name.startsWith('field_specialty_summary'));
-    // `label` is what the section rules match on and what the schema dump reports; only
-    // the shown label changes. Overwriting it would silently reroute the field.
-    expect(other.label).toBe('Summary');
-  });
-
   test('a label that is already unique is never qualified', async ({ page }) => {
     await open(page, 'node-add-news-live.html');
     const fields = await labelsIn(page, '/node/add/news');
@@ -709,12 +693,19 @@ test.describe('labels that would otherwise appear twice', () => {
   });
 
   test('the diagnostic prints both labels when they differ', async ({ page }) => {
-    await open(page, 'node-edit-specialty.html');
+    // Captured markup, because the relabelling this asserts is one the real form causes.
+    await open(page, 'captured/specialty.html');
     const dump = await page.evaluate(() => {
       const api = (window as any).FormSchema;
-      return api.explainSchema(api.discoverSchema(document, { pathname: '/node/17176/edit' }));
+      return api.explainSchema(api.discoverSchema(document, { pathname: '/node/add/specialty' }));
     });
-    // So a misfiled field can still be traced back to what Drupal called it.
-    expect(dump).toContain('Specialty summary (Drupal: Summary)');
+    /**
+     * A real relabelling, not an invented one: Drupal labels
+     * menu[options][attributes][title] simply "Title", and the overlay shows it as
+     * "Link tooltip" because three other fields on the form are also called Title.
+     *
+     * So a misfiled field can still be traced back to what Drupal called it.
+     */
+    expect(dump).toContain('Link tooltip (Drupal: Title)');
   });
 });

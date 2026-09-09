@@ -117,15 +117,24 @@ async function target(page: import('@playwright/test').Page, html: string, key: 
 }
 
 test.describe('where an approved proposal lands', () => {
-  test('the summary goes to the REQUIRED Summary field, not the first one', async ({ page }) => {
+  /**
+   * The Specialty-based version of this test is gone, and its own guard is why.
+   *
+   * It asserted "the required Summary wins over the first one" against
+   * node-edit-specialty.html, which carried field_specialty_summary — a field the captured
+   * forms proved does not exist. Removing the invention left one field labelled Summary,
+   * and the guard-the-guard line fired: "fixture must carry more than one field labelled
+   * Summary for this to mean anything". Without that line the test would have gone on
+   * passing while testing nothing at all.
+   *
+   * The rule is still covered, and better, by 'a non-required Summary earlier in the form
+   * does not win' below: that fixture puts the non-required field FIRST, so document order
+   * and requiredness actually disagree. On Specialty they happened to agree, which is why
+   * that test passed before the tiebreak existed.
+   */
+
+  test('the summary resolves on the real Specialty form', async ({ page }) => {
     const t = await target(page, specialty, 'summary');
-
-    // Guard the guard: if the fixture stops having an ambiguity, this test proves nothing.
-    expect(
-      (t.candidates ?? []).length,
-      'fixture must carry more than one field labelled Summary for this to mean anything'
-    ).toBeGreaterThan(1);
-
     expect(t.error).toBeUndefined();
     expect(t.baseName).toBe('field_summary');
     expect(t.required).toBe(true);

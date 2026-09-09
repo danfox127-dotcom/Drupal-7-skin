@@ -38,6 +38,27 @@ const OVERRIDES: [RegExp, string][] = [
   [/^menu\[options\]\[attributes\]\[name\]/, 'Link name attribute'],
   [/^menu\[options\]\[attributes\]\[id\]/, 'Link ID attribute'],
   [/^menu\[options\]\[item_attributes\]\[id\]/, 'Menu item ID attribute'],
+
+  /**
+   * The rest of the attributes / item_attributes pairs.
+   *
+   * Drupal renders both sets with identical labels — "Classes", "Style", "Modal: NID" —
+   * and they are different things: `attributes` goes on the link itself, `item_attributes`
+   * on the list item wrapping it. The captured Specialty and Page forms showed three of
+   * these pairs displaying the same text, so the overlay offered two boxes both reading
+   * "Menu style" with nothing to choose between them.
+   *
+   * Handled here rather than by the generic qualifier because the qualifier cannot help:
+   * it derives a distinguishing token from the machine name, and `attributes` has no token
+   * that `item_attributes` lacks — one name is a subset of the other. Naming what each one
+   * actually governs is more use to an editor than any derived token would be.
+   */
+  [/^menu\[options\]\[attributes\]\[class\]/, 'Link classes'],
+  [/^menu\[options\]\[item_attributes\]\[class\]/, 'Menu item classes'],
+  [/^menu\[options\]\[attributes\]\[style\]/, 'Link style'],
+  [/^menu\[options\]\[item_attributes\]\[style\]/, 'Menu item style'],
+  [/^menu\[options\]\[attributes\]\[data-nid\]/, 'Link modal node ID'],
+  [/^menu\[options\]\[item_attributes\]\[data-nid\]/, 'Menu item modal node ID'],
 ];
 
 type Labelled = Pick<FieldDescriptor, 'label' | 'machineName'> & { displayLabel?: string };

@@ -1387,14 +1387,22 @@ test.describe('Feature 5: a content type other than News', () => {
     expect(claims).toBe(1);
   });
 
-  test('the second Summary is still present and editable, just not as the summary', async ({ page, settings }) => {
+  test('a summary folded out of the overlay is still present and editable', async ({ page, settings }) => {
+    /**
+     * Dropping a field would be worse than mislabelling it: it would be unreachable.
+     *
+     * This used to assert it of field_specialty_summary, which the captured forms proved
+     * does not exist. The principle is unchanged and the real subject is core's
+     * body[und][0][summary]: foldTextWidgetParts removes it from the SCHEMA because the
+     * body carries a rich editor, and the form must still carry and submit it.
+     */
     await open(page, settings);
-    // Dropping it would be worse than mislabelling it: the field would be unreachable.
-    const second = await page.evaluate(() => {
-      const el = document.querySelector('textarea[name="field_specialty_summary[und][0][value]"]') as HTMLTextAreaElement | null;
+    const folded = await page.evaluate(() => {
+      const el = document.querySelector(
+        'textarea[name="body[und][0][summary]"]') as HTMLTextAreaElement | null;
       return { present: !!el, disabled: el?.disabled ?? null };
     });
-    expect(second).toEqual({ present: true, disabled: false });
+    expect(folded).toEqual({ present: true, disabled: false });
   });
 
   test('the SEO section forms on this content type too', async ({ page, settings }) => {
@@ -1664,23 +1672,15 @@ test.describe('Feature 5: the description is findable and the Titles are disting
     expect(text).toContain('Menu link title');
   });
 
-  test('the two Summary boxes are told apart on screen', async ({ page, settings }) => {
-    await open(page, settings);
-    // Reported: two boxes both reading "Summary", one of them the meta description.
-    const summaries = await page.evaluate(() => {
-      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
-      const labels = Array.from(sr.querySelectorAll('label, p, span'))
-        .map(el => (el.textContent || '').trim())
-        .filter(t => /summary$/i.test(t));
-      return {
-        plain: labels.filter(t => /^summary$/i.test(t)).length,
-        qualified: labels.filter(t => /^specialty summary$/i.test(t)).length,
-      };
-    });
-    // Exactly one keeps the bare name; the other says which summary it is.
-    expect(summaries.plain).toBe(1);
-    expect(summaries.qualified).toBe(1);
-  });
+  /**
+   * 'the two Summary boxes are told apart on screen' has moved.
+   *
+   * It asserted that two colliding "Summary" labels are disambiguated, using
+   * field_specialty_summary — a field the captured forms proved does not exist. The same
+   * property is now checked in captured-types.spec.ts across all nine real content types
+   * ('no two fields in a section show the same label'), which found three genuine
+   * duplicates this one never could: the attributes / item_attributes pairs.
+   */
 
   test('a relabelled field still says what Drupal calls it', async ({ page, settings }) => {
     await open(page, settings);
@@ -1891,9 +1891,9 @@ test.describe('Feature 5: a rich editor that loads late is still found', () => {
     // summary box on the form. Same root cause, different symptom.
     //
     // Asserted as the exact SET of summary labels, not by searching for "Body summary":
-    // which of the three claims the summary role depends on DOM order, so that string is
-    // not guaranteed to appear even when the bug is present. Without the fix this list has
-    // three entries — verified by disabling the wait and re-running.
+    // which one claims the summary role depends on DOM order, so that string is not
+    // guaranteed to appear even when the bug is present. Without the fix the folded
+    // Edit-summary shows up as an extra entry — verified by disabling the wait.
     const summary = await page.evaluate(() => {
       const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
       return {
@@ -1904,7 +1904,7 @@ test.describe('Feature 5: a rich editor that loads late is still found', () => {
           .get('body[und][0][summary]'),
       };
     });
-    expect(summary.labels).toEqual(['Summary', 'Specialty summary']);
+    expect(summary.labels).toEqual(['Summary']);
     // Folded from the overlay, still submitted by the form.
     expect(summary.stillSubmits).toBe('Existing teaser summary.');
   });

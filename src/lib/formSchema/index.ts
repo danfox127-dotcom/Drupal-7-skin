@@ -1,5 +1,6 @@
 import { FormSchema } from './types';
 import { buildSchema, findNodeForm } from './walkForm';
+import { displayLabelFor } from './displayLabels';
 
 export * from './types';
 export { walkForm, findNodeForm, readVerticalTabs, baseNameOf } from './walkForm';
@@ -95,10 +96,20 @@ export function explainSchema(schema: FormSchema): string {
         field.multiValue ? 'multi' : null,
         field.options ? `${field.options.length} options` : null,
       ].filter(Boolean).join(', ');
-      // Both labels when they differ: the shown one is what the editor is looking at,
-      // Drupal's is what they will find if they open the native form to compare.
-      const shown = field.displayLabel && field.displayLabel !== field.label
-        ? `${field.displayLabel} (Drupal: ${field.label})`
+      /**
+       * Both labels when they differ: the shown one is what the editor is looking at,
+       * Drupal's is what they will find if they open the native form to compare.
+       *
+       * Via displayLabelFor, not field.displayLabel. Only collision-derived labels are
+       * stored on the field; the OVERRIDES table is applied at read time. Reading the
+       * property directly meant the diagnostic silently omitted every override — so a
+       * field Drupal calls "Title" and the overlay shows as "Link tooltip" appeared in the
+       * dump as plain "Title", which is exactly the trace someone needs when a field looks
+       * misfiled.
+       */
+      const display = displayLabelFor(field);
+      const shown = display !== field.label
+        ? `${display} (Drupal: ${field.label})`
         : field.label;
       lines.push(
         `  ${shown} — ${field.kind}${flags ? ` (${flags})` : ''}` +
