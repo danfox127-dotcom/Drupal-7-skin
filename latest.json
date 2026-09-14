@@ -1,5 +1,5 @@
 {
-  "version": "0.2.0",
-  "notes": "Publish now really publishes. Menu placement holds, and imports fill the Summary field.",
-  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.2.0/d7-studio-extension-0.2.0.zip"
+  "version": "0.2.1",
+  "notes": "Adds the capture-form button to the popup. Fixes duplicate menu field labels. New install guide, and loading the wrong folder now says so instead of failing silently.",
+  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.2.1/d7-studio-extension-0.2.1.zip"
 }
