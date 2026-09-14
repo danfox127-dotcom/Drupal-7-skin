@@ -22,11 +22,32 @@ To add a site on a different domain, add two patterns to both `host_permissions`
 per-site configuration — it reads the rendered form, so any Drupal 7 site with the same
 admin markup works as-is. The **Log Form Schema** toggle prints what a new site parses.
 
-## Loading the extension in Chrome
+## Installing it
+
+**If you just want to use the extension, see [docs/INSTALL.md](docs/INSTALL.md).** The
+short version:
+
+1. Open **[the latest release](../../releases/latest)**
+2. Under **Assets**, download `d7-studio-extension-<version>.zip`
+3. Unzip it
+4. Go to `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and
+   select the unzipped folder
+
+> **Do not use the green "Code → Download ZIP" button.** That gives you the source, which
+> has no `dist/` folder and a manifest pointing at TypeScript. Chrome accepts it, shows the
+> extension as enabled, registers no service worker, and does nothing at all — no error
+> message to tell you why. If you have an extension installed that is named
+> **"DO NOT LOAD"**, that is what happened: remove it and download the release asset.
+
+## Building it from source
+
+Only needed to develop, or to run a build that has not been released yet.
 
 The `manifest.json` in the repo root is a **source** manifest for `@crxjs/vite-plugin`.
-Chrome cannot load it directly — it points at `.tsx` files. You must build first and
-load the generated `dist/` folder.
+Chrome cannot load it — it points at `.ts` and `.tsx` files. Its `name` is deliberately
+`"DO NOT LOAD - build first, then load dist/"` so that loading the wrong folder says so;
+`vite.config.ts` reattaches the real name to the built manifest. Change the shipped name
+there, not here.
 
 ```bash
 npm install
