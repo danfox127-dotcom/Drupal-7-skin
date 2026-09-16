@@ -1,6 +1,6 @@
 import React from 'react';
 import { injectComponent, injectOverlay, injectInsideForm, relocateWidget } from './inject';
-import { TaxonomyCombobox } from '../components/TaxonomyCombobox';
+import { MenuParentField } from '../components/MenuParentField';
 import { HtmlExport } from '../components/HtmlExport';
 import { MenuTree, MenuItem } from '../components/MenuTree';
 import { MenuSearch } from '../components/MenuSearch';
@@ -747,7 +747,16 @@ const init = async () => {
       parentSelect.style.display = 'none';
 
       injectComponent(parentSelect, (
-        <TaxonomyCombobox
+        /**
+         * MenuParentField, not TaxonomyCombobox directly.
+         *
+         * Setting menu[parent] alone was not enough: Drupal gates the whole menu
+         * fieldset on menu[enabled], and menu_node_save() discards the parent while it
+         * is unticked — silently, which is how placements made through this widget were
+         * lost. The wrapper runs the shared rule in src/lib/menuLink.ts, the same one
+         * the two-pane editor uses, and reports what it changed.
+         */
+        <MenuParentField
           options={options}
           defaultValue={defaultValue}
           onSelect={(value) => {

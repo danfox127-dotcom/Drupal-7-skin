@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { Search, ChevronDown, Check } from 'lucide-react';
 
-interface Option {
+export interface Option {
   value: string;
   label: string;
   originalLabel: string;

@@ -93,6 +93,152 @@ test.describe('the built extension', () => {
   });
 });
 
+test.describe('Chrome Web Store readiness', () => {
+  const DIST = path.join(ROOT, 'dist');
+
+  test.skip(() => !fs.existsSync(path.join(DIST, 'manifest.json')),
+    'no dist/ — run npm run build');
+
+  /**
+   * The store rejects a submission with no 128px icon, and Chrome falls back to a grey
+   * letter tile without one. This extension shipped for two releases with no `icons` key
+   * and no image file anywhere in the repo, which nobody noticed because the fallback
+   * looks like a deliberate choice.
+   */
+  test('declares every icon size, in both places Chrome reads them', () => {
+    const manifest = readJson(path.join(DIST, 'manifest.json'));
+    for (const size of ['16', '32', '48', '128']) {
+      expect(manifest.icons?.[size], `icons.${size} missing`).toBeTruthy();
+      expect(manifest.action?.default_icon?.[size], `action.default_icon.${size} missing`)
+        .toBeTruthy();
+    }
+  });
+
+  test('every declared icon exists in the build at its stated size', async () => {
+    /**
+     * Declaring a path is not the same as shipping the file. The icons live in public/,
+     * which Vite copies to the extension root — a build change that dropped publicDir
+     * would leave the manifest pointing at four missing files, and Chrome reports that
+     * only as a silent fallback to the grey tile.
+     *
+     * The dimensions are read from the PNG header rather than trusted: a 128px file
+     * named icon-16.png would pass an existence check and fail review.
+     */
+    const manifest = readJson(path.join(DIST, 'manifest.json'));
+    for (const [size, rel] of Object.entries(manifest.icons as Record<string, string>)) {
+      const file = path.join(DIST, rel);
+      expect(fs.existsSync(file), `${rel} is declared but missing`).toBe(true);
+      // PNG: width and height are big-endian uint32 at byte offsets 16 and 20.
+      const header = fs.readFileSync(file).subarray(0, 24);
+      expect(header.subarray(1, 4).toString(), `${rel} is not a PNG`).toBe('PNG');
+      expect(header.readUInt32BE(16), `${rel} width`).toBe(Number(size));
+      expect(header.readUInt32BE(20), `${rel} height`).toBe(Number(size));
+    }
+  });
+
+  test('the content script asks for no broader access than the admin paths', () => {
+    /**
+     * The file:// match was removed for the store submission: it handed the content
+     * script every local file on the machine, for a feature normal use never touches.
+     * (Written out in prose rather than as the literal pattern, because the pattern
+     * contains the sequence that ends a block comment — which is exactly how this test
+     * file first failed to parse at all.)
+     *
+     * Asserted rather than trusted, because a broad match pattern is the single easiest
+     * thing to reintroduce while debugging and the hardest to notice afterwards — and
+     * here it would be a permission escalation shipped to every installed copy.
+     */
+    const manifest = readJson(path.join(DIST, 'manifest.json'));
+    const matches: string[] = manifest.content_scripts.flatMap(
+      (cs: { matches: string[] }) => cs.matches);
+
+    expect(matches).not.toContain('file://*/*');
+    for (const pattern of matches) {
+      expect(pattern, `${pattern} is not an http(s) pattern`).toMatch(/^\*:\/\//);
+      expect(pattern, `${pattern} does not restrict the path`)
+        .toMatch(/\/(admin|node)\/\*$/);
+    }
+  });
+
+  test('requests no host permission beyond the two Columbia domains', () => {
+    // The always-granted set. The importer's *://*/* is OPTIONAL and requested at
+    // runtime per origin, which is the distinction a reviewer cares about.
+    const manifest = readJson(path.join(DIST, 'manifest.json'));
+    for (const pattern of manifest.host_permissions as string[]) {
+      expect(pattern).toMatch(/columbia\.edu|columbiadoctors\.org/);
+    }
+    expect(manifest.optional_host_permissions).toContain('*://*/*');
+    expect(manifest.host_permissions).not.toContain('*://*/*');
+  });
+
+  test('bundles all its code, since the store rejects remotely hosted code', () => {
+    /**
+     * A <script src> pointing off-origin is an automatic rejection under the store's
+     * remote-code policy. Everything here is bundled by Vite, and this asserts it stays
+     * that way.
+     */
+    const html = fs.readFileSync(path.join(DIST, 'index.html'), 'utf8');
+    const external = [...html.matchAll(/<script[^>]+src=["']([^"']+)["']/gi)]
+      .map(m => m[1])
+      .filter(src => /^(https?:)?\/\//.test(src));
+    expect(external, 'the popup loads a remote script').toEqual([]);
+  });
+});
+
+test.describe('the store submission document', () => {
+  /**
+   * The dashboard demands a written justification per permission, and a missing or vague
+   * one is the most common cause of a slow review. Adding a permission is easy;
+   * remembering to justify it two months later is not — so the document is held to the
+   * manifest rather than trusted to stay in step with it.
+   */
+  const doc = () => fs.readFileSync(path.join(ROOT, 'docs', 'CHROME-WEB-STORE.md'), 'utf8');
+
+  test('justifies every permission the manifest actually requests', () => {
+    const manifest = readJson(path.join(ROOT, 'manifest.json'));
+    const text = doc();
+    const required = [
+      ...manifest.permissions,
+      ...manifest.host_permissions,
+      ...manifest.optional_host_permissions,
+    ];
+    const undocumented = required.filter((p: string) => !text.includes(p));
+    expect(undocumented, 'these are requested but not justified for review').toEqual([]);
+  });
+
+  test('does not justify permissions the manifest no longer requests', () => {
+    /**
+     * The other direction, which matters just as much: a justification for a permission
+     * that has been dropped tells a reviewer the submission was not read before sending,
+     * and invites a question about why it was ever needed.
+     */
+    const manifest = readJson(path.join(ROOT, 'manifest.json'));
+    const text = doc();
+    const granted = new Set<string>([
+      ...manifest.permissions,
+      ...manifest.host_permissions,
+      ...manifest.optional_host_permissions,
+    ]);
+    // Only checks permissions this project has actually used, so the test does not
+    // become a list of every Chrome permission in existence.
+    const retired = ['downloads', 'cookies', 'webNavigation', 'activeTab', 'alarms']
+      .filter(p => !granted.has(p))
+      .filter(p => text.includes('**`' + p + '`**'));
+    expect(retired, 'justified but not requested').toEqual([]);
+  });
+
+  test('states the two things that block submission rather than implying readiness', () => {
+    /**
+     * Screenshots and a privacy policy are both mandatory and neither exists yet. A
+     * submission guide that reads as complete when it is not wastes the one sitting that
+     * someone sets aside to do this.
+     */
+    const text = doc();
+    expect(text).toMatch(/NOT YET MADE/);
+    expect(text).toMatch(/no policy yet|Privacy policy URL/i);
+  });
+});
+
 test.describe('the install instructions', () => {
   /**
    * Documentation, asserted, because the wrong-zip download was a documentation failure

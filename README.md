@@ -83,6 +83,12 @@ of downloading one:
 CHROME_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" npm test
 ```
 
-The `file://*/*` content-script match lets the extension run on local HTML files; the
-tests no longer need it. To use it manually, enable **Allow access to file URLs** on the
-extension's details page.
+The content script used to also match `file://*/*`, so it would run on local HTML files.
+That was removed when the extension was prepared for the Chrome Web Store: it granted
+access to every file on the machine for a capability normal use never touches, and no test
+needed it — the suite serves fixtures over https at Drupal-shaped URLs. The chromium-project
+specs still open fixtures over `file://`, but they inject the bundle with `addScriptTag`
+rather than loading the extension, so they are unaffected.
+
+`tests/packaging.spec.ts` asserts the pattern stays out, and that every content-script
+match is restricted to an `/admin/*` or `/node/*` path.
