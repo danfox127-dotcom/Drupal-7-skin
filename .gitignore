@@ -41,3 +41,6 @@ d7-studio-extension-*.zip
 
 # Local list of strings that must not be committed (see .capture-identity.example)
 .capture-identity
+
+# Marker for an interrupted release; see scripts/release.mjs
+.release-lock.json
