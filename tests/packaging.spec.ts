@@ -227,15 +227,103 @@ test.describe('the store submission document', () => {
     expect(retired, 'justified but not requested').toEqual([]);
   });
 
-  test('states the two things that block submission rather than implying readiness', () => {
+  test('still says screenshots are missing, because they are', () => {
     /**
-     * Screenshots and a privacy policy are both mandatory and neither exists yet. A
-     * submission guide that reads as complete when it is not wastes the one sitting that
-     * someone sets aside to do this.
+     * A submission guide that reads as complete when it is not wastes the one sitting
+     * someone sets aside to do this. Screenshots have to be captured from a real admin
+     * page, so they cannot be produced here — the doc must keep saying so until they
+     * exist.
      */
+    expect(doc()).toMatch(/NOT YET MADE/);
+  });
+
+  test('links the privacy policy, which the store requires', () => {
+    // Mandatory because the submission declares that the extension reads website
+    // content. A listing cannot be submitted without a reachable policy URL.
     const text = doc();
-    expect(text).toMatch(/NOT YET MADE/);
-    expect(text).toMatch(/no policy yet|Privacy policy URL/i);
+    expect(fs.existsSync(path.join(ROOT, 'docs', 'PRIVACY.md'))).toBe(true);
+    expect(text).toMatch(/PRIVACY\.md/);
+  });
+});
+
+test.describe('the privacy policy', () => {
+  /**
+   * A privacy policy is a factual claim about what the code does, and it is the one
+   * document where being out of date is a misrepresentation rather than an
+   * inconvenience. So it is checked against the source rather than trusted.
+   */
+  const policy = () => fs.readFileSync(path.join(ROOT, 'docs', 'PRIVACY.md'), 'utf8');
+
+  /** Every remote host the shipped source contacts, read out of the code. */
+  function hostsInSource(): string[] {
+    const found = new Set<string>();
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) { walk(full); continue; }
+        if (!/\.(ts|tsx)$/.test(entry.name)) continue;
+        const text = fs.readFileSync(full, 'utf8');
+        // Require a dot and a TLD, so template literals like `https://${origin}` and
+        // prose like "https://news" are not mistaken for hosts.
+        for (const m of text.matchAll(/https?:\/\/([a-z0-9][a-z0-9.-]*\.[a-z]{2,})/gi)) {
+          found.add(m[1].toLowerCase());
+        }
+      }
+    };
+    walk(path.join(ROOT, 'src'));
+    return [...found];
+  }
+
+  test('names every remote host the extension actually contacts', () => {
+    /**
+     * The failure this prevents: someone adds a fetch to a new service, and the policy
+     * still says the only outbound request is the update check. That is the kind of
+     * inaccuracy that gets an extension removed from the store.
+     */
+    const text = policy();
+    const undisclosed = hostsInSource().filter(h => !text.includes(h));
+    expect(undisclosed, 'contacted by the code but absent from the privacy policy')
+      .toEqual([]);
+  });
+
+  test('does not claim local-only storage while the code uses synced storage', () => {
+    /**
+     * The policy states that nothing is copied to the user's Google account, which is
+     * true only while storage stays on chrome.storage.local. A single switch to
+     * storage.sync would make that sentence false.
+     *
+     * The first version of this test gated the check on whether the policy mentioned
+     * "storage.sync" — and the policy mentions it in the very sentence that promises not
+     * to use it, so the guard skipped itself and passed with storage.sync live in the
+     * source. It was caught by reverting, which is the only reason it is not still
+     * sitting here looking like coverage. The check is now unconditional.
+     */
+    const files: string[] = [];
+    const walk = (dir: string) => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) { walk(full); continue; }
+        if (!/\.(ts|tsx)$/.test(e.name)) continue;
+        if (/chrome\.storage\.sync/.test(fs.readFileSync(full, 'utf8'))) files.push(full);
+      }
+    };
+    walk(path.join(ROOT, 'src'));
+
+    // Confirms the claim being guarded is actually in the policy, so this cannot pass
+    // because the sentence was quietly deleted.
+    expect(policy()).toMatch(/does not use `chrome\.storage\.sync`/);
+    expect(files, 'uses chrome.storage.sync, but the privacy policy promises local-only')
+      .toEqual([]);
+  });
+
+  test('discloses that drafts hold the content being edited', () => {
+    /**
+     * The most sensitive thing the extension stores. It is easy to describe a draft as
+     * a harmless convenience and omit that it contains unpublished text.
+     */
+    const text = policy();
+    expect(text).toMatch(/draft/i);
+    expect(text).toMatch(/unpublished/i);
   });
 });
 

@@ -181,10 +181,14 @@ Then certify all three:
 
     A faster administrative interface for Drupal 7 websites at Columbia University.
 
-**Privacy policy URL:** required whenever "Website content" is declared. There is no
-policy yet. The shortest honest route is a Markdown file in this repository stating that
-the extension transmits no data and stores only settings locally, linked by its raw URL.
-That must exist before submission.
+**Privacy policy URL:** required whenever "Website content" is declared. Written, and in
+the repository at `docs/PRIVACY.md`. Paste this URL into the dashboard:
+
+    https://github.com/danfox127-dotcom/Drupal-7-skin/blob/main/docs/PRIVACY.md
+
+It is checked against the source by `tests/packaging.spec.ts`: every remote host the code
+contacts must appear in the policy, the local-only storage claim fails if anything starts
+using `chrome.storage.sync`, and the draft disclosure must stay.
 
 ---
 
