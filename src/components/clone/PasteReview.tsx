@@ -3,6 +3,7 @@ import { FieldMatch, MatchTier } from '../../lib/clone/match';
 import { NodeSnapshot } from '../../lib/clone/types';
 import { Unmapped } from '../../lib/import/extract';
 import { SectionId } from '../../lib/formSchema';
+import { hasAttachment } from '../../lib/clone/media';
 import { ImageChecklist } from './ImageChecklist';
 
 /**
@@ -88,6 +89,12 @@ export const PasteReview = ({
   }, [rows]);
 
   const apply = useCallback(() => onApply(rows.filter(r => r.accepted)), [rows, onApply]);
+
+  /**
+   * Only the image fields the source actually filled. Via the shared helper, so the
+   * review and the post-apply banner cannot disagree about what counts as attached.
+   */
+  const attached = useMemo(() => snapshot.media.filter(hasAttachment), [snapshot.media]);
 
   const sourceName = snapshot.title || snapshot.sourceUrl;
   const crossType = Boolean(
@@ -278,10 +285,10 @@ export const PasteReview = ({
         {/* Images */}
         <section className="mt-6">
           <h2 className="text-eyebrow-wide font-semibold uppercase text-ink-secondary">
-            Images to attach yourself ({snapshot.media.filter(m => m.fid || m.url).length})
+            Images to attach yourself ({attached.length})
           </h2>
           <div className="mt-2">
-            <ImageChecklist images={snapshot.media.filter(m => m.fid || m.url)} />
+            <ImageChecklist images={attached} />
           </div>
         </section>
 

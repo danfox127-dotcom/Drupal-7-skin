@@ -359,6 +359,148 @@ test.describe('D7 Studio: command palette', () => {
   });
 });
 
+test.describe('D7 Studio: copying a page between sites', () => {
+  const OVERLAY = '.d7-proxy-ui-overlay';
+  const TITLE = 'Why Are Girls Starting Puberty Earlier?';
+
+  /**
+   * Opens the palette, waiting for the content script rather than for an injection.
+   *
+   * The other palette tests wait for `.d7-proxy-ui-container` first, which works where
+   * they run because the content list or the menu-parent combobox has mounted something.
+   * node-edit-media-populated.html has neither a `menu[parent]` select nor a
+   * `#page-title`, so nothing injects there and that wait can only time out — which is
+   * how three of these tests failed on their first run, all with "element(s) not found"
+   * rather than anything to do with copying.
+   *
+   * The palette needs no injection: it is a keydown listener registered at startup. So
+   * the readiness signal is the palette itself opening. It presses ONLY when the dialog
+   * is absent, because ⌘K toggles — a blind retry would close the dialog the previous
+   * press had just opened.
+   */
+  async function openPalette(page: import('@playwright/test').Page) {
+    const dialog = page.locator(`${OVERLAY} [role="dialog"]`);
+    await expect(async () => {
+      if (await dialog.count() === 0) await page.keyboard.press('ControlOrMeta+k');
+      await expect(dialog).toBeVisible({ timeout: 500 });
+    }).toPass({ timeout: 20000 });
+  }
+
+  const choose = (page: import('@playwright/test').Page, label: string) =>
+    page.locator(`${OVERLAY} >> text=${label}`).click();
+
+  /**
+   * The confirmation toast, by its ARIA role rather than by a container.
+   *
+   * It is rendered by the palette, which mounts through injectOverlay into
+   * `.d7-proxy-ui-overlay` — NOT `.d7-proxy-ui-container`, which is what
+   * injectComponent uses for the in-page widgets. Asserting against the container
+   * could never match, and because the toast unmounts the whole palette after six
+   * seconds the failure arrived as an empty page snapshot rather than as a wrong
+   * selector. role=status is what the toast is, wherever it gets mounted.
+   */
+  const toast = (page: import('@playwright/test').Page) => page.locator('[role="status"]');
+
+  /**
+   * The whole loop through the real extension: copy on one host, paste on another.
+   *
+   * Two different hosts deliberately. The copy travels through chrome.storage.local,
+   * which is shared across every site the extension runs on — doing this on one host
+   * would pass even if the copy were stored per-origin.
+   *
+   * It also exercises the label tier end to end, which is the case that matters most in
+   * a real migration. The source form names its title `title_field[und][0][value]` and
+   * the destination names it plain `title`, so no machine name matches and the paste has
+   * to recognise them by the label Drupal renders against each.
+   */
+  test('a page copied on one site fills a form on another', async ({ page }) => {
+    await page.goto(`${HOST}/node/18948/edit`);
+    await openPalette(page);
+    await choose(page, 'Copy this page for pasting');
+    await expect(toast(page)).toContainText('Page copied');
+
+    // A different Columbia host, matched only by the manifest's wildcard.
+    await page.goto(`${UNNAMED_HOST}/node/add/page`);
+    await openPalette(page);
+    await choose(page, 'Paste the copied page');
+
+    // The review opens, and the form is still untouched — the promise the whole
+    // product rests on.
+    await expect(page.locator(`${OVERLAY} >> text=Paste a page`).first()).toBeVisible();
+    /**
+     * The sticky bar names the page being pasted. Asserted there rather than on the
+     * Title row's box, because React drives that textarea by `value` and a text engine
+     * reads element text content, which a controlled textarea does not have.
+     */
+    await expect(page.locator(`${OVERLAY} >> text=${TITLE}`).first()).toBeVisible();
+
+    /**
+     * Pins WHICH tier matched, rather than just that something did.
+     *
+     * Revert-checking caught this: with the exact-label tier deleted the test still
+     * passed, because normalizeLabel('Title') also equals normalizeLabel('Title') and
+     * the weakest tier quietly picked it up. So the test proved "matched somehow", while
+     * its comment claimed it proved the label tier.
+     *
+     * The source here carries one matchable field, so the badge is unambiguous:
+     * "Matched by name" is the exact-label tier and "Best guess" is the normalized one.
+     * Deleting either tier now changes the badge and fails this.
+     */
+    await expect(page.locator(`${OVERLAY} >> text=Matched by name`).first()).toBeVisible();
+    await expect(page.locator(`${OVERLAY} >> text=Best guess`)).toHaveCount(0);
+
+    await expect(page.locator('input[name="title"]')).toHaveValue('');
+
+    await page.locator(`${OVERLAY} >> button:has-text("Fill this form")`).click();
+
+    await expect(page.locator(`${OVERLAY} >> text=Pasted`).first()).toBeVisible();
+    await expect(page.locator('input[name="title"]')).toHaveValue(TITLE);
+  });
+
+  test('Paste is not offered when nothing has been copied', async ({ page }) => {
+    /**
+     * Each test gets a fresh browser context, so storage starts empty here. The command
+     * must be absent rather than present-and-failing: a palette entry that opens an
+     * empty review is worse than no entry at all.
+     */
+    await page.goto(`${HOST}/node/add/page`);
+    await openPalette(page);
+    await expect(page.locator(`${OVERLAY} >> text=Paste the copied page`)).toHaveCount(0);
+  });
+
+  test('Copy is offered on an edit form but not on an add form', async ({ page }) => {
+    // An add form has nothing to copy, so offering it would store an empty snapshot and
+    // then report success.
+    await page.goto(`${HOST}/node/add/page`);
+    await openPalette(page);
+    await expect(page.locator(`${OVERLAY} >> text=Copy this page for pasting`)).toHaveCount(0);
+
+    await page.goto(`${HOST}/node/18948/edit`);
+    await openPalette(page);
+    await expect(page.locator(`${OVERLAY} >> text=Copy this page for pasting`)).toBeVisible();
+  });
+
+  test('the images the source page used are listed for re-attaching', async ({ page }) => {
+    /**
+     * The populated fixture has a teaser and a hero image. Neither can be copied — a
+     * file id belongs to one site's database — so the review has to name them, and the
+     * destination's own media widget has to be left alone.
+     */
+    await page.goto(`${HOST}/node/18948/edit`);
+    await openPalette(page);
+    await choose(page, 'Copy this page for pasting');
+    await expect(toast(page)).toContainText('Page copied');
+
+    await page.goto(`${UNNAMED_HOST}/node/add/page`);
+    await openPalette(page);
+    await choose(page, 'Paste the copied page');
+
+    await expect(page.locator(`${OVERLAY} >> text=Images to attach yourself`).first()).toBeVisible();
+    await expect(page.locator(`${OVERLAY} >> text=puberty-study-teaser.jpg`).first()).toBeVisible();
+    await expect(page.locator(`${OVERLAY} >> text=puberty-study-hero.jpg`).first()).toBeVisible();
+  });
+});
+
 test.describe('D7 Studio: host matching', () => {
   test('a columbia.edu subdomain the manifest never names still works', async ({ page }) => {
     await page.goto(`${UNNAMED_HOST}/node/123/edit`);
