@@ -1,6 +1,7 @@
 import { discoverSchema, isNodeFormPath } from '../formSchema';
 import { captureNode } from './snapshot';
 import { saveCopy } from './clipboard';
+import { noteCopySaved } from './pasteAction';
 
 /**
  * The "Copy this page" action behind the command palette.
@@ -35,5 +36,7 @@ export async function copyPage(): Promise<void> {
     throw new Error('No filled fields were found on this form, so nothing was copied.');
   }
 
-  await saveCopy(snapshot);
+  const { stored } = await saveCopy(snapshot);
+  // So the palette offers Paste straight away, without waiting for a page load.
+  noteCopySaved(stored);
 }

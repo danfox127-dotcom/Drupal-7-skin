@@ -26,6 +26,8 @@ import { hasRichEditor } from '../lib/fieldBinding';
 import { getPendingImport } from '../lib/import/pending';
 import { captureFixture } from '../lib/captureFixture';
 import { maybeShowImportReview } from './importFlow';
+import { pastePage } from './cloneFlow';
+import { refreshCopies, registerPasteHandler } from '../lib/clone/pasteAction';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
 
 const getSettings = (): Promise<Settings> =>
@@ -484,6 +486,18 @@ const init = async () => {
 
   if (settings.commandPalette) {
     registerCommandPalette();
+
+    /**
+     * Cross-site copy/paste is reached from the palette, so it is wired up with it.
+     *
+     * Both halves need setting up before anything can be typed into the palette:
+     * the handler, because commands.ts must stay free of React and therefore calls
+     * through a registry; and the copy count, because Command.isAvailable is
+     * synchronous and cannot await storage. Without the count, Paste would never be
+     * offered — the command would simply be missing, with nothing to explain why.
+     */
+    registerPasteHandler(() => pastePage());
+    void refreshCopies();
   }
 
   // Field discovery (Phase 4). Read-only for now: it does not change the page. The

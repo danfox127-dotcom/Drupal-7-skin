@@ -1,5 +1,6 @@
 import { canExportHere, copyPublicHtml } from './extractPublicHtml';
 import { canCopyHere, copyPage } from './clone/copyPage';
+import { canPasteHere, runPaste } from './clone/pasteAction';
 
 /**
  * The command registry behind the ⌘K palette.
@@ -70,6 +71,18 @@ export const COMMANDS: Command[] = [
     isAvailable: canCopyHere,
     run: () => copyPage(),
     toast: 'Page copied. Open a node form on the other site and press \u2318K \u2192 Paste.',
+  },
+  {
+    /**
+     * Only listed when a copy is actually waiting, so the palette never offers a paste
+     * that would open an empty review.
+     */
+    id: 'paste-page',
+    group: 'Run',
+    label: 'Paste the copied page into this form',
+    keys: '\u21e7\u2318V',
+    isAvailable: canPasteHere,
+    run: () => runPaste(),
   },
 ];
 
