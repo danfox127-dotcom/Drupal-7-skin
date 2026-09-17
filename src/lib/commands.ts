@@ -1,4 +1,5 @@
 import { canExportHere, copyPublicHtml } from './extractPublicHtml';
+import { canCopyHere, copyPage } from './clone/copyPage';
 
 /**
  * The command registry behind the ⌘K palette.
@@ -56,6 +57,19 @@ export const COMMANDS: Command[] = [
     isAvailable: canExportHere,
     run: () => copyPublicHtml(),
     toast: 'Public HTML copied to the clipboard.',
+  },
+  {
+    /**
+     * Cross-site duplication. Only offered on an edit form, because an add form has
+     * nothing on it to copy — see canCopyHere.
+     */
+    id: 'copy-page',
+    group: 'Run',
+    label: 'Copy this page for pasting on another site',
+    keys: '\u21e7\u2318D',
+    isAvailable: canCopyHere,
+    run: () => copyPage(),
+    toast: 'Page copied. Open a node form on the other site and press \u2318K \u2192 Paste.',
   },
 ];
 
