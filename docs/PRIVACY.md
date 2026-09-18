@@ -1,6 +1,6 @@
 # Privacy Policy — D7 Studio (D7 Admin Proxy UI)
 
-**Last updated:** 16 September 2026
+**Last updated:** 18 September 2026
 **Applies to:** the "D7 Admin Proxy UI" Chrome extension, all versions from 0.2.2
 
 ## The short version
@@ -46,6 +46,7 @@ Google account or to any other device.
 | A cached index of a site's menu items (titles and paths) | So searching a large menu does not re-fetch it every visit |
 | The result of the last update check | So the popup can tell you a new version exists |
 | **Local drafts of nodes you are editing** | See below |
+| **Pages you copied to paste onto another site** | See below |
 
 ### About drafts
 
@@ -63,14 +64,35 @@ Two things worth being clear about:
   removed. If you share a computer, treat them the way you would treat an unsaved
   document.
 
+### About copied pages
+
+The **Copy this page for pasting on another site** command reads the node edit form you
+have open and stores its field values locally, so you can fill in a form on a different
+Drupal site without retyping everything. The popup lists what is currently held, with a
+Clear button.
+
+The same cautions as drafts apply, and one more:
+
+- **A copied page contains that page's content**, which may include unpublished material.
+  Up to five copies are kept; a sixth pushes out the oldest. They stay in local storage
+  until you clear them, until they are pushed out, or until the extension is removed.
+- **Copies never leave this computer.** Pasting fills the form in front of you and
+  nothing more — you still press Save yourself, using Drupal's own button.
+- **Images are not copied.** The extension lists the source page's image filenames and
+  URLs so you can re-attach them, because an attached file is identified by a number that
+  only means something on the site it came from. No image file is downloaded, uploaded, or
+  stored by the extension.
+
 ## What leaves your computer
 
 Exactly three kinds of request, and no others:
 
 1. **Requests to the Drupal site you are already logged into**, to read a page's public
-   HTML or to load the full list of a menu's items. These go to the same site you are
-   already using, and are the same requests your browser would make if you visited those
-   pages yourself.
+   HTML, to load the full list of a menu's items, or — when pasting a copied page — to
+   ask that site whether it has a term or page being referenced, so a value it cannot
+   resolve is left blank instead of breaking the form. These go to the same site you are
+   already using, and are the same requests your browser would make if you used its own
+   autocomplete boxes. A request to any other site is refused.
 2. **A request to a page you asked to import**, only after you approved that specific
    site, and sent without cookies.
 3. **One request to check for updates**, to this fixed address:
@@ -85,6 +107,15 @@ Exactly three kinds of request, and no others:
 Nothing else is contacted. No data about you, your pages, your drafts, or your Drupal
 content is transmitted to the author of this extension or to anyone else. There is no
 server to transmit it to.
+
+### One link, which is not a request
+
+If you are running a hand-installed copy, the popup may offer a link to this
+extension's page on the Chrome Web Store, at `chromewebstore.google.com`. That is a
+link you click, not a request the extension makes: nothing is sent to that address
+unless you choose to follow it, and following it is an ordinary browser navigation.
+Copies installed from the store do not show it, and do not check for updates at all —
+Chrome keeps them current.
 
 ## Clipboard
 
@@ -101,7 +132,8 @@ websites at Columbia University.
 ## How to remove everything
 
 Removing the extension from `chrome://extensions` deletes all of its local storage,
-including settings, the import queue, cached menus, and any saved drafts. Nothing is left
+including settings, the import queue, cached menus, copied pages, and any saved drafts.
+Nothing is left
 behind, and nothing exists elsewhere to delete.
 
 ## Children

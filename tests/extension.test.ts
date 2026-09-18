@@ -105,6 +105,35 @@ export const test = base.extend<{
       ignoreHTTPSErrors: true,
     });
 
+    /**
+     * The update check's own network request, served locally.
+     *
+     * The service worker fetches latest.json from raw.githubusercontent.com on install.
+     * That is a live internet request inside the test suite, and it is the one thing here
+     * that can fail for reasons that have nothing to do with the extension — after six
+     * suite runs in a day it started timing out, failing "the popup survives never having
+     * checked" with a 30-second timeout. Confirmed pre-existing by stashing the change
+     * under test and reproducing it.
+     *
+     * Answered with a version OLDER than anything this project will ship, so the worker
+     * reaches the same verdict every time — not available — quickly and without leaving
+     * the machine. The seeding helper below waits for that verdict to be written, so a
+     * slow answer here stalls the whole describe block.
+     *
+     * Deliberately not `route.abort()`: a failed fetch reaches the same verdict, but
+     * through the catch branch, and a valid answer exercises parseLatest on the way.
+     */
+    await context.route('**raw.githubusercontent.com/**', route => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          version: '0.0.1',
+          notes: 'Stub answer from the test harness, deliberately ancient.',
+        }),
+      });
+    });
+
     await context.route(`**columbia.edu/**`, route => {
       const url = route.request().url();
       const match = ROUTES.find(([pattern]) => pattern.test(url));
@@ -356,6 +385,148 @@ test.describe('D7 Studio: command palette', () => {
     await expect(page.locator(`${UI}`).first()).toBeVisible();
     await page.keyboard.press('ControlOrMeta+k');
     await expect(page.locator(`${OVERLAY} >> text=Copy public HTML of this node`)).toBeVisible();
+  });
+});
+
+test.describe('D7 Studio: copying a page between sites', () => {
+  const OVERLAY = '.d7-proxy-ui-overlay';
+  const TITLE = 'Why Are Girls Starting Puberty Earlier?';
+
+  /**
+   * Opens the palette, waiting for the content script rather than for an injection.
+   *
+   * The other palette tests wait for `.d7-proxy-ui-container` first, which works where
+   * they run because the content list or the menu-parent combobox has mounted something.
+   * node-edit-media-populated.html has neither a `menu[parent]` select nor a
+   * `#page-title`, so nothing injects there and that wait can only time out — which is
+   * how three of these tests failed on their first run, all with "element(s) not found"
+   * rather than anything to do with copying.
+   *
+   * The palette needs no injection: it is a keydown listener registered at startup. So
+   * the readiness signal is the palette itself opening. It presses ONLY when the dialog
+   * is absent, because ⌘K toggles — a blind retry would close the dialog the previous
+   * press had just opened.
+   */
+  async function openPalette(page: import('@playwright/test').Page) {
+    const dialog = page.locator(`${OVERLAY} [role="dialog"]`);
+    await expect(async () => {
+      if (await dialog.count() === 0) await page.keyboard.press('ControlOrMeta+k');
+      await expect(dialog).toBeVisible({ timeout: 500 });
+    }).toPass({ timeout: 20000 });
+  }
+
+  const choose = (page: import('@playwright/test').Page, label: string) =>
+    page.locator(`${OVERLAY} >> text=${label}`).click();
+
+  /**
+   * The confirmation toast, by its ARIA role rather than by a container.
+   *
+   * It is rendered by the palette, which mounts through injectOverlay into
+   * `.d7-proxy-ui-overlay` — NOT `.d7-proxy-ui-container`, which is what
+   * injectComponent uses for the in-page widgets. Asserting against the container
+   * could never match, and because the toast unmounts the whole palette after six
+   * seconds the failure arrived as an empty page snapshot rather than as a wrong
+   * selector. role=status is what the toast is, wherever it gets mounted.
+   */
+  const toast = (page: import('@playwright/test').Page) => page.locator('[role="status"]');
+
+  /**
+   * The whole loop through the real extension: copy on one host, paste on another.
+   *
+   * Two different hosts deliberately. The copy travels through chrome.storage.local,
+   * which is shared across every site the extension runs on — doing this on one host
+   * would pass even if the copy were stored per-origin.
+   *
+   * It also exercises the label tier end to end, which is the case that matters most in
+   * a real migration. The source form names its title `title_field[und][0][value]` and
+   * the destination names it plain `title`, so no machine name matches and the paste has
+   * to recognise them by the label Drupal renders against each.
+   */
+  test('a page copied on one site fills a form on another', async ({ page }) => {
+    await page.goto(`${HOST}/node/18948/edit`);
+    await openPalette(page);
+    await choose(page, 'Copy this page for pasting');
+    await expect(toast(page)).toContainText('Page copied');
+
+    // A different Columbia host, matched only by the manifest's wildcard.
+    await page.goto(`${UNNAMED_HOST}/node/add/page`);
+    await openPalette(page);
+    await choose(page, 'Paste the copied page');
+
+    // The review opens, and the form is still untouched — the promise the whole
+    // product rests on.
+    await expect(page.locator(`${OVERLAY} >> text=Paste a page`).first()).toBeVisible();
+    /**
+     * The sticky bar names the page being pasted. Asserted there rather than on the
+     * Title row's box, because React drives that textarea by `value` and a text engine
+     * reads element text content, which a controlled textarea does not have.
+     */
+    await expect(page.locator(`${OVERLAY} >> text=${TITLE}`).first()).toBeVisible();
+
+    /**
+     * Pins WHICH tier matched, rather than just that something did.
+     *
+     * Revert-checking caught this: with the exact-label tier deleted the test still
+     * passed, because normalizeLabel('Title') also equals normalizeLabel('Title') and
+     * the weakest tier quietly picked it up. So the test proved "matched somehow", while
+     * its comment claimed it proved the label tier.
+     *
+     * The source here carries one matchable field, so the badge is unambiguous:
+     * "Matched by name" is the exact-label tier and "Best guess" is the normalized one.
+     * Deleting either tier now changes the badge and fails this.
+     */
+    await expect(page.locator(`${OVERLAY} >> text=Matched by name`).first()).toBeVisible();
+    await expect(page.locator(`${OVERLAY} >> text=Best guess`)).toHaveCount(0);
+
+    await expect(page.locator('input[name="title"]')).toHaveValue('');
+
+    await page.locator(`${OVERLAY} >> button:has-text("Fill this form")`).click();
+
+    await expect(page.locator(`${OVERLAY} >> text=Pasted`).first()).toBeVisible();
+    await expect(page.locator('input[name="title"]')).toHaveValue(TITLE);
+  });
+
+  test('Paste is not offered when nothing has been copied', async ({ page }) => {
+    /**
+     * Each test gets a fresh browser context, so storage starts empty here. The command
+     * must be absent rather than present-and-failing: a palette entry that opens an
+     * empty review is worse than no entry at all.
+     */
+    await page.goto(`${HOST}/node/add/page`);
+    await openPalette(page);
+    await expect(page.locator(`${OVERLAY} >> text=Paste the copied page`)).toHaveCount(0);
+  });
+
+  test('Copy is offered on an edit form but not on an add form', async ({ page }) => {
+    // An add form has nothing to copy, so offering it would store an empty snapshot and
+    // then report success.
+    await page.goto(`${HOST}/node/add/page`);
+    await openPalette(page);
+    await expect(page.locator(`${OVERLAY} >> text=Copy this page for pasting`)).toHaveCount(0);
+
+    await page.goto(`${HOST}/node/18948/edit`);
+    await openPalette(page);
+    await expect(page.locator(`${OVERLAY} >> text=Copy this page for pasting`)).toBeVisible();
+  });
+
+  test('the images the source page used are listed for re-attaching', async ({ page }) => {
+    /**
+     * The populated fixture has a teaser and a hero image. Neither can be copied — a
+     * file id belongs to one site's database — so the review has to name them, and the
+     * destination's own media widget has to be left alone.
+     */
+    await page.goto(`${HOST}/node/18948/edit`);
+    await openPalette(page);
+    await choose(page, 'Copy this page for pasting');
+    await expect(toast(page)).toContainText('Page copied');
+
+    await page.goto(`${UNNAMED_HOST}/node/add/page`);
+    await openPalette(page);
+    await choose(page, 'Paste the copied page');
+
+    await expect(page.locator(`${OVERLAY} >> text=Images to attach yourself`).first()).toBeVisible();
+    await expect(page.locator(`${OVERLAY} >> text=puberty-study-teaser.jpg`).first()).toBeVisible();
+    await expect(page.locator(`${OVERLAY} >> text=puberty-study-hero.jpg`).first()).toBeVisible();
   });
 });
 
@@ -2292,6 +2463,9 @@ test.describe('the update notifier', () => {
       latest: '0.9.9',
       notes: 'Publish now really publishes.',
       download: 'https://github.com/example/releases/download/v0.9.9/ext.zip',
+      // What evaluateUpdate now writes alongside the zip. Seeded explicitly, because
+      // this test is about the banner and not about the evaluator.
+      storeUrl: 'https://chromewebstore.google.com/detail/ebooneiidohdlmcddhnlnnolhjehpcec',
       checkedAt: 1788000000000,
     });
 
@@ -2300,12 +2474,41 @@ test.describe('the update notifier', () => {
     await expect(banner).toContainText('0.9.9');
     await expect(banner).toContainText('You have 0.2.0');
     await expect(banner).toContainText('Publish now really publishes.');
-    // The instruction matters as much as the link: there is no automatic install.
-    await expect(banner).toContainText('reload the extension');
 
-    const link = banner.locator('a[href^="https://"]');
-    await expect(link).toHaveAttribute('href', /ext\.zip$/);
-    await expect(link).toHaveAttribute('rel', /noopener/);
+    /**
+     * The store link leads, and the zip is demoted to a fallback.
+     *
+     * This banner can now only reach a HAND-LOADED copy — a store install does not
+     * check at all — so the useful instruction is "stop hand-loading it", not "here is
+     * another zip". The zip is what produced a card that looked installed and did
+     * nothing, twice, by being the wrong folder.
+     */
+    const storeLink = banner.locator('a[href*="chromewebstore.google.com"]');
+    await expect(storeLink).toHaveAttribute('href', /ebooneiidohdlmcddhnlnnolhjehpcec/);
+    await expect(storeLink).toHaveAttribute('rel', /noopener/);
+    await expect(banner).toContainText('Remove the unpacked copy');
+
+    // Still offered, because someone mid-migration may need it.
+    const zipLink = banner.locator('a[href$="ext.zip"]');
+    await expect(zipLink).toHaveAttribute('rel', /noopener/);
+  });
+
+  test('a seeded state with no store link still renders, without an empty anchor', async ({ page, extensionId }) => {
+    /**
+     * State written by an older build has no storeUrl. The banner must degrade to the
+     * zip rather than render a link to nowhere — a state object outlives an extension
+     * update, so this is the shape that actually exists in the wild after upgrading.
+     */
+    await seedAfterWorkerCheck(page, extensionId, {
+      available: true, current: '0.2.0', latest: '0.9.9',
+      download: 'https://github.com/example/releases/download/v0.9.9/ext.zip',
+      checkedAt: 1788000000000,
+    });
+
+    const banner = page.locator('[data-update-banner]');
+    await expect(banner).toBeVisible();
+    await expect(banner.locator('a[href*="chromewebstore.google.com"]')).toHaveCount(0);
+    await expect(banner.locator('a[href$="ext.zip"]')).toHaveCount(1);
   });
 
   test('no banner when the running build is current', async ({ page, extensionId }) => {

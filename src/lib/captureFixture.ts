@@ -50,6 +50,12 @@ export interface CaptureReport {
   contentType: string | null;
   /** Selects big enough to be worth a second thought before committing. */
   largeSelects: { name: string; options: number; kept?: number }[];
+  /**
+   * Inputs whose value survived because it is structure rather than content — the
+   * autocomplete callback paths. Listed in the header so a reviewer can see exactly
+   * what was kept and check it carries nothing it should not.
+   */
+  keptStructuralValues: string[];
 }
 
 export interface Capture {
@@ -114,6 +120,28 @@ const ANONYMISE = new Map<RegExp, string>([
 /** Input types whose `value` is structure, not content, and so must survive. */
 const STRUCTURAL_TYPES = new Set(['checkbox', 'radio', 'submit', 'button', 'reset', 'image']);
 
+/**
+ * Inputs whose `value` is a URL the tests have to read, not page content.
+ *
+ * Drupal renders every autocomplete with a hidden sibling whose value is the callback
+ * path:
+ *
+ *   <input type="hidden" id="edit-field-conditions-und-0-target-id-autocomplete"
+ *          value="/entityreference/autocomplete/tags/field_conditions/..." disabled>
+ *
+ * Cross-site copying asks that endpoint whether this site has the thing being referenced
+ * — which is the only way to honour "leave a non-matching group blank" instead of
+ * writing a guess. Blanked, the fixtures can never cover that path, so the tests have to
+ * hand-build the markup and drift from the real thing. It is a public URL naming a field
+ * and an entity type, and carries no page content.
+ */
+const STRUCTURAL_VALUE_SELECTORS = ['input.autocomplete[id$="-autocomplete"]'];
+
+/** True when this element's `value` must survive scrubbing. */
+function holdsStructuralValue(field: Element): boolean {
+  return STRUCTURAL_VALUE_SELECTORS.some(selector => field.matches(selector));
+}
+
 /** Above this, a select is worth flagging: the live menu parent list runs to 3,331. */
 const LARGE_SELECT = 200;
 
@@ -149,6 +177,7 @@ export function captureFixture(
       doc.body,
     ).contentType,
     largeSelects: [],
+    keptStructuralValues: [],
   };
 
   const clone = form.cloneNode(true) as HTMLFormElement;
@@ -228,6 +257,10 @@ export function captureFixture(
 
     const type = (attr(field, 'type') || 'text').toLowerCase();
     if (STRUCTURAL_TYPES.has(type)) continue;
+    if (holdsStructuralValue(field)) {
+      report.keptStructuralValues.push(name || attr(field, 'id') || '(unnamed)');
+      continue;
+    }
 
     const anonymised = [...ANONYMISE].find(([pattern]) => pattern.test(name));
     if (anonymised && attr(field, 'value')) {
@@ -276,6 +309,15 @@ export function captureFixture(
       `replaced ${report.anonymisedFields.length ? [...new Set(report.anonymisedFields)].join(', ') : 'nothing'}; ` +
       `dropped ${report.scriptsRemoved} script/style tag${report.scriptsRemoved === 1 ? '' : 's'}.`,
   );
+
+  if (report.keptStructuralValues.length) {
+    lines.push(
+      '',
+      'Kept these inputs\' values, because they are addresses rather than page content —',
+      'the autocomplete endpoints a cross-site paste asks "do you have this term?":',
+      ...[...new Set(report.keptStructuralValues)].map(name => `  ${name}`),
+    );
+  }
 
   if (report.largeSelects.length) {
     lines.push(

@@ -5,6 +5,8 @@ import {
 } from 'lucide-react';
 import { useSettings, Settings as SettingsShape } from './useSettings';
 import { useImportQueue, displayUrl } from './useImportQueue';
+import { useCopiedPages } from './useCopiedPages';
+import { formatAge } from '../lib/autosave';
 import { requestOriginAccess, setPendingImport, importTarget } from '../lib/import/pending';
 import { UPDATE_STATE_KEY, UpdateState } from '../lib/updateCheck';
 import { Capture } from '../lib/captureFixture';
@@ -152,6 +154,7 @@ export function App() {
   const [isActive, setIsActive] = useState(false);
   const { settings, update, loaded } = useSettings();
   const { queue, add, remove, loaded: queueLoaded } = useImportQueue();
+  const copied = useCopiedPages();
   const [draftUrl, setDraftUrl] = useState('');
   const [queueError, setQueueError] = useState<string | null>(null);
   const [importBusy, setImportBusy] = useState<string | null>(null);
@@ -292,9 +295,12 @@ export function App() {
         Update notice.
 
         Only rendered when there IS one — a permanent "you are up to date" row trains
-        people to ignore this area, which is the opposite of the point. The extension
-        cannot update itself (Chrome ignores update_url for an unpacked install), so this
-        states plainly what the person has to do.
+        people to ignore this area, which is the opposite of the point.
+
+        This can now only appear on a HAND-LOADED copy: the extension is on the Chrome
+        Web Store, a store install updates itself, and checkForUpdate returns early for
+        it. So the banner's job has changed from "fetch a zip" to "move to the store",
+        which also retires the folder-picking mistake the zip kept inviting.
       */}
       {updateInfo?.available && (
         <div data-update-banner className="px-4 py-3 bg-cu-tint">
@@ -310,21 +316,42 @@ export function App() {
               {updateInfo.notes && (
                 <p className="text-help text-ink-secondary mt-1">{updateInfo.notes}</p>
               )}
+              {/**
+                * The store first, and the zip only as a fallback.
+                *
+                * This banner only ever reaches a hand-loaded copy now — a store install
+                * does not check. So the useful instruction is "stop hand-loading it",
+                * not "here is another zip". The zip is exactly what produced a card that
+                * looked installed and did nothing, twice, by being the wrong folder.
+                */}
+              {updateInfo.storeUrl && (
+                <a
+                  href={updateInfo.storeUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="mt-2 inline-flex items-center gap-1.5 text-help font-semibold text-cu-blue hover:underline"
+                >
+                  Install it from the Chrome Web Store
+                  <ExternalLink size={11} />
+                </a>
+              )}
+              <p className="text-help text-ink-help mt-1.5">
+                Installing from the store replaces this hand-loaded copy and keeps itself
+                up to date, so this is the last time you have to do this. Remove the
+                unpacked copy at chrome://extensions afterwards, or you will be running
+                two at once.
+              </p>
               {updateInfo.download && (
                 <a
                   href={updateInfo.download}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="mt-2 inline-flex items-center gap-1.5 text-help font-semibold text-cu-blue hover:underline"
+                  className="mt-1.5 inline-flex items-center gap-1.5 text-help text-ink-help hover:underline"
                 >
-                  Download the new version
+                  Or download the zip, as before
                   <ExternalLink size={11} />
                 </a>
               )}
-              <p className="text-help text-ink-help mt-1.5">
-                Unzip it over your existing extension folder, then reload the extension at
-                chrome://extensions. Keep the folder in the same place.
-              </p>
             </div>
           </div>
         </div>
@@ -392,6 +419,69 @@ export function App() {
             {queue.length === 0
               ? 'Nothing queued. Paste URLs as you find them.'
               : `${queue.length} page${queue.length === 1 ? '' : 's'} waiting. One at a time — open a URL to review its mapping.`}
+          </p>
+        )}
+      </div>
+
+      {/* Copied pages, waiting to be pasted onto another site */}
+      <div className="pb-2 border-t border-rule-hair">
+        <div className="px-4 pt-3 pb-1 flex items-center gap-2">
+          <p className="text-eyebrow-wide font-semibold uppercase text-ink-secondary">
+            Copied Pages
+          </p>
+          <div className="flex-1" />
+          {copied.copies.length > 0 && (
+            <button
+              type="button"
+              onClick={() => void copied.forgetAll()}
+              className="text-help font-semibold text-cu-blue hover:underline"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+
+        {copied.copies.length > 0 && (
+          <ul>
+            {copied.copies.map(copy => (
+              <li
+                key={copy.sourceUrl}
+                className="flex items-center gap-2 px-4 py-1.5 hover:bg-rail transition-colors duration-200 ease-studio"
+              >
+                <div className="flex-1 min-w-0">
+                  <p className="text-control text-ink truncate" title={copy.sourceUrl}>
+                    {copy.title || displayUrl(copy.sourceUrl)}
+                  </p>
+                  <p className="text-help text-ink-help truncate">
+                    {copy.contentType ?? 'unknown type'} · {new URL(copy.sourceOrigin).host}
+                    {' · '}{formatAge(copy.capturedAt, Date.now())}
+                    {' · '}{copy.fields.length} field{copy.fields.length === 1 ? '' : 's'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void copied.forget(copy.sourceUrl)}
+                  aria-label={`Forget the copy of ${copy.title || copy.sourceUrl}`}
+                  className="shrink-0 p-0.5 text-ink-muted hover:text-burnt hover:bg-cu-tint rounded transition-colors duration-200 ease-studio"
+                >
+                  <X size={13} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {copied.loaded && (
+          <p className="px-4 pt-1.5 text-help text-ink-help">
+            {copied.copies.length === 0
+              ? 'Nothing copied. Open a page\u2019s edit form and press \u2318K \u2192 "Copy this page".'
+              : 'Open a node form on the other site and press \u2318K \u2192 "Paste the copied page".'}
+            {copied.refused > 0 && (
+              <>
+                {' '}{copied.refused} older cop{copied.refused === 1 ? 'y was' : 'ies were'}{' '}
+                discarded — made by a previous version of the extension. Copy the page again.
+              </>
+            )}
           </p>
         )}
       </div>

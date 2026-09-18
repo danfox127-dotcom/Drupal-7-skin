@@ -1,11 +1,32 @@
 # Installing D7 Studio
 
-For someone who has not used GitHub before. No terminal, no accounts, nothing to build.
-About five minutes.
+## Install it from the Chrome Web Store
 
-You need Google Chrome (or Edge — same steps). The extension is not in the Chrome Web
-Store, so it installs from a folder on your computer. That is normal and supported; it
-just takes a few more clicks.
+**This is the whole thing now:**
+
+**https://chromewebstore.google.com/detail/ebooneiidohdlmcddhnlnnolhjehpcec**
+
+Open that link in Chrome (or Edge) and press **Add to Chrome**. Done — no download, no
+unzipping, no folders, and it keeps itself up to date from then on.
+
+The listing is **unlisted**, which means it will never turn up if you search the store.
+That is deliberate: it is an internal tool for Columbia Drupal 7 sites. The link above is
+the only way in, and anyone with the link can install it — so pass the link on rather
+than a copy of the files.
+
+> **If you already installed it the old way**, from a zip and a folder, install from the
+> store and then **remove the old copy** at `chrome://extensions`. Leaving both installed
+> means two copies running on the same pages at once, which shows up as duplicated
+> overlays and a ⌘K that fights itself.
+
+---
+
+## The manual way — only if you are working on the code
+
+Everything below installs the extension from a folder on your computer. You want this
+**only** if you are building it yourself or testing an unreleased change. For ordinary
+use, the store link above is better in every way, and it avoids the mistake described in
+the box below, which has caught people twice.
 
 ---
 
@@ -87,6 +108,12 @@ extension to tabs that were already open.
 ---
 
 ## Keeping it up to date
+
+**If you installed from the Chrome Web Store, there is nothing to do.** Chrome updates it
+in the background, and the extension does not even check — it knows it is the store copy
+and stays quiet.
+
+The rest of this section applies only to a hand-installed copy.
 
 The extension checks for new versions on its own and tells you when one exists. Chrome
 cannot update a folder-installed extension automatically, so updating is manual — and it

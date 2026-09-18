@@ -379,3 +379,81 @@ test.describe('trimming huge option lists', () => {
     expect(r.report.contentType).toBe('specialty');
   });
 });
+
+test.describe('autocomplete endpoints survive, page content does not', () => {
+  /**
+   * The one exception to "blank every value".
+   *
+   * Cross-site copying asks a reference field's own endpoint whether this site has the
+   * term being referenced — the only way to honour "leave a non-matching group blank"
+   * rather than writing a guess. Drupal keeps that address in the value of a hidden
+   * sibling input, so blanking it means no fixture can ever cover that path and the
+   * tests must hand-build markup that drifts from the real form.
+   *
+   * Tested in BOTH directions, because an over-broad rule here leaks the page text this
+   * whole module exists to strip.
+   */
+  const FORM = `<!DOCTYPE html>
+  <html><body class="node-type-news">
+    <form class="node-form" id="news-node-form">
+      <input type="hidden" name="form_token" value="SECRET">
+      <div class="form-item">
+        <label for="edit-title">Title</label>
+        <input type="text" id="edit-title" name="title_field[und][0][value]"
+               value="An unpublished headline">
+      </div>
+      <div class="form-item">
+        <label for="edit-field-conditions-und-0-target-id">Conditions</label>
+        <input type="text" id="edit-field-conditions-und-0-target-id"
+               name="field_conditions[und][0][target_id]" class="form-text form-autocomplete"
+               value="IgA Nephropathy (8821)">
+        <input type="hidden" id="edit-field-conditions-und-0-target-id-autocomplete"
+               value="/entityreference/autocomplete/tags/field_conditions/node/news/NULL"
+               disabled="disabled" class="autocomplete">
+      </div>
+    </form>
+  </body></html>`;
+
+  const capture = (page: import('@playwright/test').Page) => page.evaluate(() =>
+    (window as any).Capture.captureFixture(document, {
+      sourceUrl: 'https://www.columbiadoctors.org/node/123/edit',
+      capturedOn: '2026-09-17',
+    }));
+
+  test('the callback path is kept', async ({ page }) => {
+    await page.setContent(FORM);
+    await page.addScriptTag({ content: bundle });
+    const result = await capture(page);
+
+    expect(result.html).toContain('/entityreference/autocomplete/tags/field_conditions/node/news/NULL');
+    expect(result.report.keptStructuralValues)
+      .toContain('edit-field-conditions-und-0-target-id-autocomplete');
+  });
+
+  test('the reference the editor typed is still blanked', async ({ page }) => {
+    /**
+     * The visible autocomplete holds real content — a node title, and on an unpublished
+     * page a title that is not public. Only its hidden address sibling is exempt.
+     */
+    await page.setContent(FORM);
+    await page.addScriptTag({ content: bundle });
+    const result = await capture(page);
+
+    expect(result.html).not.toContain('IgA Nephropathy (8821)');
+    expect(result.html).not.toContain('An unpublished headline');
+  });
+
+  test('the security token is still removed', async ({ page }) => {
+    await page.setContent(FORM);
+    await page.addScriptTag({ content: bundle });
+    const result = await capture(page);
+    expect(result.html).not.toContain('SECRET');
+  });
+
+  test('the header says what was kept, so a reviewer can check it', async ({ page }) => {
+    await page.setContent(FORM);
+    await page.addScriptTag({ content: bundle });
+    const result = await capture(page);
+    expect(result.html).toContain('addresses rather than page content');
+  });
+});

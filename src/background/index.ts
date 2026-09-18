@@ -14,7 +14,9 @@
  * script, which is why the popup asks and the worker only fetches.
  */
 
-import { LATEST_URL, UPDATE_STATE_KEY, evaluateUpdate } from '../lib/updateCheck';
+import {
+  LATEST_URL, UPDATE_STATE_KEY, evaluateUpdate, shouldCheckForUpdates,
+} from '../lib/updateCheck';
 
 /** Popup asking for a fresh check, so "Check again" reuses the worker's one fetch path. */
 export interface CheckForUpdateRequest {
@@ -360,6 +362,22 @@ chrome.runtime.onMessage.addListener((
  */
 async function checkForUpdate(): Promise<void> {
   const current = chrome.runtime.getManifest().version;
+
+  /**
+   * A store install never checks.
+   *
+   * Chrome keeps it current, so the only thing this could produce is a badge telling
+   * someone to go and do by hand what has already happened — and it would keep saying so
+   * until latest.json was pushed. Any state left from a previous hand-loaded copy in the
+   * same profile is cleared, so a stale badge does not outlive the migration.
+   */
+  if (!shouldCheckForUpdates(chrome.runtime.id)) {
+    await chrome.storage.local.set({
+      [UPDATE_STATE_KEY]: { available: false, current, checkedAt: Date.now() },
+    });
+    await chrome.action.setBadgeText({ text: '' });
+    return;
+  }
 
   let raw: unknown = null;
   try {

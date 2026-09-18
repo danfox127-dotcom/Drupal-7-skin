@@ -101,6 +101,59 @@ each. A byline it can't match to a real author defaults to *skipped*.
 
 Approving fills the form. **It writes nothing to Drupal** — you still press Save.
 
+### Copy and paste a whole page between sites — for migrations
+
+The bigger version of the same idea, for when the page you are duplicating already exists
+on another Columbia Drupal site.
+
+1. Open the old page's **edit** form. Press `⌘K` and choose
+   **"Copy this page for pasting on another site"**.
+2. Go to the new site, open the form you want to fill — `/node/add/page`, or any node
+   form. Press `⌘K` and choose **"Paste the copied page into this form"**.
+3. A review opens listing every field it can fill, with the value it proposes and how
+   confident it is. Everything is **accepted by default** — the point is to stop you
+   retyping — so read down it and skip anything that looks wrong. You can edit any value
+   before filling.
+4. Press **Fill this form**, check the result, then press Drupal's own **Save**.
+
+What it handles that plain copy-paste cannot:
+
+- **Topics and other term lists** are matched by the term's *name*, not its ID, so they
+  work even though the two sites number their terms differently. A term the new site does
+  not have is named and left out rather than guessed at.
+- **Related Conditions, Treatments and Specialties** are checked against the new site
+  before being written, using the site's own autocomplete. A reference it cannot confirm
+  is left out, so the form still saves.
+- **Groups** are matched by name, and left **blank** when there is no match.
+- Fields the new content type does not have are listed under **Left for you** with the
+  reason, rather than silently dropped.
+- **Structured content items** come across too, including `text` and `faq`. Each one is
+  recreated by asking Drupal to add an item of the right type and then filling it in, so
+  a Page with five content items arrives with five content items rather than five gaps.
+  There is no special handling per type — an item is just a set of fields — so the rarer
+  types come across as well whenever their fields are ordinary ones.
+
+  Two things to know about content items. The extension has to work out what *type* each
+  existing item is; where it has to infer that from the item's field names rather than
+  read it directly, the review says so and asks you to check. And a type the new site
+  does not offer at all cannot be recreated — those are listed with their values for you
+  to rebuild, which for the rare types is the honest outcome.
+
+What it deliberately leaves alone:
+
+- **Publish status.** A pasted page is never published. Save it as a draft, check it, then
+  press Publish.
+- **Menu placement**, because the new site's menu structure is different.
+- **The URL alias** and the original author and date.
+- **Images.** They cannot be copied: an attached file is identified by a number that only
+  means something on the site it came from, and these forms have no file-upload box to put
+  bytes into. Instead the review lists every image the old page used, with its filename and
+  a direct link, and a tick-box to track which you have re-attached. Attach them with
+  Drupal's own Browse button.
+
+The popup shows what you currently have copied, so a copy from last week does not surprise
+you. It keeps the last five.
+
 ---
 
 ## The settings
@@ -153,7 +206,12 @@ Worth knowing, so they don't look like faults:
 ## Known gaps
 
 - The editor has only been validated against News forms so far; Page is less tested
-- Imported images are listed and can be labelled, but aren't uploaded automatically
+- Images are never uploaded automatically, by either the importer or the page copier —
+  they are listed with their URLs for you to re-attach
+- Content items are recreated one at a time through Drupal's own "Add another item",
+  which is a request to the site per item — a page with ten of them takes a few seconds
+- A content item of a type the new site does not have cannot be recreated; it is listed
+  with its values so you can rebuild that one by hand
 - Import always targets News; to import into a Page, open a Page form first
 - Headings render in Georgia rather than EB Garamond until the font files are added
 
