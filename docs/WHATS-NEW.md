@@ -127,6 +127,17 @@ What it handles that plain copy-paste cannot:
 - **Groups** are matched by name, and left **blank** when there is no match.
 - Fields the new content type does not have are listed under **Left for you** with the
   reason, rather than silently dropped.
+- **Structured content items** come across too, including `text` and `faq`. Each one is
+  recreated by asking Drupal to add an item of the right type and then filling it in, so
+  a Page with five content items arrives with five content items rather than five gaps.
+  There is no special handling per type — an item is just a set of fields — so the rarer
+  types come across as well whenever their fields are ordinary ones.
+
+  Two things to know about content items. The extension has to work out what *type* each
+  existing item is; where it has to infer that from the item's field names rather than
+  read it directly, the review says so and asks you to check. And a type the new site
+  does not offer at all cannot be recreated — those are listed with their values for you
+  to rebuild, which for the rare types is the honest outcome.
 
 What it deliberately leaves alone:
 
@@ -197,9 +208,10 @@ Worth knowing, so they don't look like faults:
 - The editor has only been validated against News forms so far; Page is less tested
 - Images are never uploaded automatically, by either the importer or the page copier —
   they are listed with their URLs for you to re-attach
-- Copying a page does not yet bring over **content items (Paragraphs)**, which is where
-  Page and Landing keep most of their content. The review tells you how many the source
-  page had so you know what is left to rebuild
+- Content items are recreated one at a time through Drupal's own "Add another item",
+  which is a request to the site per item — a page with ten of them takes a few seconds
+- A content item of a type the new site does not have cannot be recreated; it is listed
+  with its values so you can rebuild that one by hand
 - Import always targets News; to import into a Page, open a Page form first
 - Headings render in Georgia rather than EB Garamond until the font files are added
 

@@ -96,6 +96,11 @@ export const PasteReview = ({
    */
   const attached = useMemo(() => snapshot.media.filter(hasAttachment), [snapshot.media]);
 
+  const itemCount = useMemo(
+    () => snapshot.paragraphs.reduce((total, widget) => total + widget.items.length, 0),
+    [snapshot.paragraphs]
+  );
+
   const sourceName = snapshot.title || snapshot.sourceUrl;
   const crossType = Boolean(
     snapshot.contentType && targetType && snapshot.contentType !== targetType
@@ -281,6 +286,64 @@ export const PasteReview = ({
             </ul>
           </section>
         ))}
+
+        {/* Structured content items */}
+        {itemCount > 0 && (
+          <section className="mt-6">
+            <h2 className="text-eyebrow-wide font-semibold uppercase text-ink-secondary">
+              Content items to rebuild ({itemCount})
+            </h2>
+            <p className="mt-1 text-help text-ink-help">
+              Each of these is added through Drupal’s own “Add another item”, one at a
+              time, after the fields above are filled. That is a request to the site per
+              item, so it takes a moment.
+            </p>
+
+            {snapshot.paragraphs.filter(w => w.items.length > 0).map(widget => (
+              <ul key={widget.baseName} className="mt-2">
+                {widget.items.map(item => (
+                  <li
+                    key={`${widget.baseName}-${item.delta}`}
+                    className="px-3 py-2 border-b border-rule-hair bg-white flex items-baseline gap-2 flex-wrap"
+                  >
+                    <span className="text-control font-semibold text-ink">
+                      {item.bundleLabel}
+                    </span>
+                    <span className="text-help text-ink-help">
+                      {item.fields.length} field{item.fields.length === 1 ? '' : 's'}
+                    </span>
+                    {/**
+                      * How the type was worked out, shown when it is a weaker claim than
+                      * reading Drupal's own record of it. An item recreated as the wrong
+                      * type is worse than one left alone, so the uncertainty is on screen
+                      * rather than averaged into a single confidence number.
+                      */}
+                    {item.bundleFrom === 'field-name' && (
+                      <span className="text-help text-burnt font-semibold">
+                        type guessed from its field names — check it
+                      </span>
+                    )}
+                    {item.bundleFrom === 'unknown' && (
+                      <span className="text-help text-burnt font-semibold">
+                        type unknown, so this one cannot be rebuilt — its values are below
+                      </span>
+                    )}
+                    {item.bundleFrom === 'unknown' && (
+                      <ul className="w-full mt-1 pl-3 border-l-2 border-rule">
+                        {item.fields.map(field => (
+                          <li key={field.machineName} className="text-help text-ink-secondary">
+                            <span className="font-semibold">{field.label || field.machineName}:</span>{' '}
+                            {String(field.value).slice(0, 200)}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ))}
+          </section>
+        )}
 
         {/* Images */}
         <section className="mt-6">

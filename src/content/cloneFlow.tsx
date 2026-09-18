@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { discoverSchema, FormSchema } from '../lib/formSchema';
 import { latestCopy } from '../lib/clone/clipboard';
 import { matchFields, FieldMatch } from '../lib/clone/match';
-import { applyMatches, CloneOutcome, summarise } from '../lib/clone/apply';
+import { applyMatches, CloneOutcome, summarise, paragraphProblems } from '../lib/clone/apply';
 import { NodeSnapshot } from '../lib/clone/types';
 import { Unmapped } from '../lib/import/extract';
 import { PasteReview } from '../components/clone/PasteReview';
@@ -26,6 +26,7 @@ const PastedBanner = ({
   onBack: () => void;
 }) => {
   const attention = [...outcome.failed, ...outcome.blanked, ...outcome.partial];
+  const itemProblems = paragraphProblems(outcome);
 
   return (
     <div className="fixed top-11 left-0 right-0 z-[2147483645] px-4 font-sans">
@@ -51,7 +52,7 @@ const PastedBanner = ({
           </button>
         </div>
 
-        {attention.length > 0 && (
+        {(attention.length > 0 || itemProblems.length > 0) && (
           <div className="mt-2 p-3 bg-white border border-burnt max-h-[40vh] overflow-auto">
             <p className="text-eyebrow font-semibold uppercase text-ink-secondary">
               Worth a look
@@ -62,6 +63,9 @@ const PastedBanner = ({
                   <span className="text-control font-semibold text-ink">{item.label}</span>
                   {item.note && <span className="text-help text-ink-help"> — {item.note}</span>}
                 </li>
+              ))}
+              {itemProblems.map((problem, index) => (
+                <li key={`item-${index}`} className="text-control text-ink">{problem}</li>
               ))}
             </ul>
           </div>
@@ -104,7 +108,7 @@ function CloneFlow({
        * review stays up until it finishes. Closing first would leave the editor looking
        * at a form filling itself a field at a time.
        */
-      const result = await applyMatches(accepted, snapshot.media);
+      const result = await applyMatches(accepted, snapshot.media, window.location, snapshot.paragraphs);
       setOutcome(result);
       setReviewing(false);
     } finally {

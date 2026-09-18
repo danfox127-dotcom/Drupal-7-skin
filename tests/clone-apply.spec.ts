@@ -335,6 +335,18 @@ test('the summary counts every outcome it is given', async ({ page }) => {
   await open(page, '<form class="node-form"></form>');
   const line = await page.evaluate(() => (window as any).A.summarise({
     filled: [1, 2, 3], partial: [1], blanked: [1, 2], failed: [], images: [1, 2],
+    paragraphs: [{ label: 'Page Paragraphs', items: [{ ok: true }, { ok: true }, { ok: false }] }],
   }));
-  expect(line).toBe('3 filled, 1 partly, 2 left blank, 2 images to attach');
+  expect(line).toBe(
+    '3 filled, 1 partly, 2 left blank, 2 content items rebuilt, 1 needing a look, 2 images to attach'
+  );
+});
+
+test('the summary says nothing about content items when there were none', async ({ page }) => {
+  // A Page with no content items should not read "0 content items rebuilt".
+  await open(page, '<form class="node-form"></form>');
+  const line = await page.evaluate(() => (window as any).A.summarise({
+    filled: [1], partial: [], blanked: [], failed: [], images: [], paragraphs: [],
+  }));
+  expect(line).toBe('1 filled');
 });

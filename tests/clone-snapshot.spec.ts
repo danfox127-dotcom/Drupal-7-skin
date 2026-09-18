@@ -215,31 +215,137 @@ test.describe('finding the Paragraphs widgets', () => {
     expect(deltas).toEqual([0, 1, 2]);
   });
 
-  test('a page with paragraph items says so instead of looking complete', async ({ page }) => {
+  test('paragraph items are captured with names relative to the item', async ({ page }) => {
+    /**
+     * Relative, not absolute. The destination renders this item at whatever delta it
+     * happens to get, so an absolute name would fill whichever item was already sitting
+     * at the source's delta.
+     */
     await load(page, 'captured/page.html');
     const snapshot = await page.evaluate(async () => {
       const api = (window as any).S;
       const form = document.querySelector('form.node-form, form[id$="-node-form"]') as HTMLFormElement;
       for (const delta of [0, 1]) {
-        const input = document.createElement('input');
-        input.type = 'text';
+        const input = document.createElement('textarea');
         input.name = `field_page_paragraphs[und][${delta}][field_text][und][0][value]`;
-        input.value = `item ${delta}`;
+        input.value = `<p>item ${delta}</p>`;
         form.appendChild(input);
       }
       const schema = api.discoverSchema(document, { pathname: '/node/add/page' });
       return api.captureNode(schema, {
-        href: 'https://source.example.edu/node/add/page',
-        origin: 'https://source.example.edu',
+        href: 'https://source.example.edu/node/add/page', origin: 'https://source.example.edu',
       });
     });
 
     expect(snapshot.paragraphs.length).toBe(1);
-    expect(snapshot.paragraphs[0].baseName).toBe('field_page_paragraphs');
+    const items = snapshot.paragraphs[0].items;
+    expect(items.length).toBe(2);
+    expect(items[0].delta).toBe(0);
+    expect(items[0].fields[0].machineName).toBe('field_text[und][0][value]');
+    expect(items[0].fields[0].value).toBe('<p>item 0</p>');
+    // Order is what the published page shows, so it is content rather than incidental.
+    expect(items[1].fields[0].value).toBe('<p>item 1</p>');
+  });
 
-    const note = snapshot.omitted.find((o: any) => /content item/i.test(o.reason));
-    expect(note, 'the paragraph items were dropped without telling anyone').toBeTruthy();
-    expect(note.reason).toContain('2 content items');
+  test('an item whose type cannot be told is still captured, and reported', async ({ page }) => {
+    /**
+     * It cannot be recreated, but its values can be shown. Dropping it would leave the
+     * review unable to say what was lost.
+     */
+    await load(page, 'captured/page.html');
+    const snapshot = await page.evaluate(async () => {
+      const api = (window as any).S;
+      const form = document.querySelector('form.node-form, form[id$="-node-form"]') as HTMLFormElement;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.name = 'field_page_paragraphs[und][0][field_mystery][und][0][value]';
+      input.value = 'something';
+      form.appendChild(input);
+      const schema = api.discoverSchema(document, { pathname: '/node/add/page' });
+      return api.captureNode(schema, {
+        href: 'https://source.example.edu/node/add/page', origin: 'https://source.example.edu',
+      });
+    });
+
+    const items = snapshot.paragraphs[0].items;
+    expect(items.length).toBe(1);
+    expect(items[0].bundleFrom).toBe('unknown');
+    expect(items[0].fields.length).toBe(1);
+
+    const note = snapshot.omitted.find((o: any) => /could not be identified by type/i.test(o.reason));
+    expect(note, 'an unidentifiable item was dropped without telling anyone').toBeTruthy();
+  });
+
+  test('a bundle recorded by Drupal is read rather than guessed', async ({ page }) => {
+    await load(page, 'captured/page.html');
+    const items = await page.evaluate(async () => {
+      const api = (window as any).S;
+      const form = document.querySelector('form.node-form, form[id$="-node-form"]') as HTMLFormElement;
+      const bundle = document.createElement('input');
+      bundle.type = 'hidden';
+      bundle.name = 'field_page_paragraphs[und][0][bundle]';
+      bundle.value = 'text';
+      form.appendChild(bundle);
+      const body = document.createElement('textarea');
+      body.name = 'field_page_paragraphs[und][0][field_body][und][0][value]';
+      body.value = '<p>prose</p>';
+      form.appendChild(body);
+
+      const schema = api.discoverSchema(document, { pathname: '/node/add/page' });
+      const snap = await api.captureNode(schema, {
+        href: 'https://source.example.edu/node/add/page', origin: 'https://source.example.edu',
+      });
+      return snap.paragraphs[0].items;
+    });
+
+    expect(items[0].bundle).toBe('text');
+    expect(items[0].bundleFrom).toBe('bundle-input');
+    expect(items[0].bundleLabel).toBe('Text');
+    // Drupal's own bookkeeping is not content and must not be written back as a field.
+    expect(items[0].fields.map((f: any) => f.machineName)).toEqual(['field_body[und][0][value]']);
+  });
+
+  test("an item's own remove flag is never captured as content", async ({ page }) => {
+    /**
+     * The case that makes the bookkeeping filter load-bearing.
+     *
+     * Drupal's hidden `[bundle]` input never reaches the field list anyway, because
+     * walkForm drops hidden inputs — so removing the filter changed nothing and the
+     * first version of this test proved nothing. Paragraphs also renders a VISIBLE
+     * remove checkbox, which does survive the walk. Carried across as a field value it
+     * would arrive ticked on the new item and mark it for deletion on save.
+     */
+    await load(page, 'captured/page.html');
+    const items = await page.evaluate(async () => {
+      const api = (window as any).S;
+      const form = document.querySelector('form.node-form, form[id$="-node-form"]') as HTMLFormElement;
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'paragraphs-subform paragraph-type-text';
+      wrapper.innerHTML = `
+        <div class="form-item">
+          <label for="pp-0-body">Body</label>
+          <textarea id="pp-0-body"
+            name="field_page_paragraphs[und][0][field_body][und][0][value]">kept</textarea>
+        </div>
+        <div class="form-item">
+          <input type="checkbox" id="pp-0-remove" checked
+            name="field_page_paragraphs[und][0][_remove]" value="1">
+          <label for="pp-0-remove">Remove</label>
+        </div>`;
+      form.appendChild(wrapper);
+
+      const schema = api.discoverSchema(document, { pathname: '/node/add/page' });
+      const snap = await api.captureNode(schema, {
+        href: 'https://source.example.edu/node/add/page', origin: 'https://source.example.edu',
+      });
+      return snap.paragraphs[0].items;
+    });
+
+    const names = items[0].fields.map((f: any) => f.machineName);
+    expect(names, 'the remove flag was captured and would delete the pasted item')
+      .not.toContain('_remove');
+    expect(names).toEqual(['field_body[und][0][value]']);
   });
 
   test('paragraph controls do not leak into the flat field list', async ({ page }) => {

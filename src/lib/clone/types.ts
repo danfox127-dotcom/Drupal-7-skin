@@ -64,6 +64,15 @@ export interface CapturedParagraph {
   bundle: string;
   /** What the add-more select called it, e.g. "Text". For the review. */
   bundleLabel: string;
+  /**
+   * How the type was determined — see BundleSource in paragraphs.ts.
+   *
+   * Carried through to the review because the markup of a populated subform has not been
+   * captured from a real site. An item whose type was INFERRED from its field names is a
+   * weaker claim than one that read Drupal's own record of it, and the difference has to
+   * be visible rather than averaged away.
+   */
+  bundleFrom: 'bundle-input' | 'subform-class' | 'field-name' | 'unknown';
   /** Position in the source widget, so order survives the rebuild. */
   delta: number;
   /**

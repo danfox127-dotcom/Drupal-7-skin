@@ -3,6 +3,8 @@ import { FieldMatch } from './match';
 import { MediaRef } from './types';
 import { hasAttachment } from './media';
 import { autocompletePathFor, resolveReference } from './references';
+import { rebuildParagraphs, ParagraphOutcome } from './paragraphs';
+import { NodeSnapshot } from './types';
 
 /**
  * Writing the approved matches into the form.
@@ -41,6 +43,11 @@ export interface CloneOutcome {
   failed: AppliedField[];
   /** Images the source had, for the checklist. Never written by this function. */
   images: MediaRef[];
+  /**
+   * Structured content items, recreated one at a time through Drupal's own
+   * "Add another item". Empty when the source had none.
+   */
+  paragraphs: ParagraphOutcome[];
 }
 
 const describe = (match: FieldMatch, note: string | null): AppliedField => ({
@@ -53,11 +60,13 @@ const describe = (match: FieldMatch, note: string | null): AppliedField => ({
 export async function applyMatches(
   matches: FieldMatch[],
   media: MediaRef[] = [],
-  location: Pick<Location, 'origin' | 'href'> = window.location
+  location: Pick<Location, 'origin' | 'href'> = window.location,
+  paragraphs: NodeSnapshot['paragraphs'] = []
 ): Promise<CloneOutcome> {
   const outcome: CloneOutcome = {
     filled: [], partial: [], blanked: [], failed: [],
     images: media.filter(hasAttachment),
+    paragraphs: [],
   };
 
   for (const match of matches) {
@@ -113,7 +122,29 @@ export async function applyMatches(
     outcome.filled.push(describe(match, note));
   }
 
+  /**
+   * Content items LAST, and after the plain fields are in.
+   *
+   * Each one is a server round-trip that re-renders the whole widget, and Drupal's AJAX
+   * replaces the wrapper — so every element reference into it goes stale. Doing this
+   * before the ordinary writes would mean writing through references the rebuild had
+   * already detached, which writeValue would report as failures for fields that were
+   * perfectly fine.
+   */
+  for (const widget of paragraphs) {
+    if (widget.items.length === 0) continue;
+    outcome.paragraphs.push(await rebuildParagraphs(widget));
+  }
+
   return outcome;
+}
+
+/** Items that could not be recreated, flattened for the banner. */
+export function paragraphProblems(outcome: CloneOutcome): string[] {
+  return outcome.paragraphs.flatMap(widget =>
+    widget.items
+      .filter(item => !item.ok)
+      .map(item => `${widget.label} — ${item.bundleLabel}: ${item.reason ?? 'not recreated'}`));
 }
 
 /** "18 filled, 2 partly, 1 left blank" — the line the banner shows. */
@@ -122,6 +153,10 @@ export function summarise(outcome: CloneOutcome): string {
   if (outcome.partial.length) parts.push(`${outcome.partial.length} partly`);
   if (outcome.blanked.length) parts.push(`${outcome.blanked.length} left blank`);
   if (outcome.failed.length) parts.push(`${outcome.failed.length} refused by the form`);
+  const items = outcome.paragraphs.flatMap(w => w.items);
+  const rebuilt = items.filter(item => item.ok).length;
+  if (rebuilt) parts.push(`${rebuilt} content item${rebuilt === 1 ? '' : 's'} rebuilt`);
+  if (items.length > rebuilt) parts.push(`${items.length - rebuilt} needing a look`);
   if (outcome.images.length) {
     parts.push(`${outcome.images.length} image${outcome.images.length === 1 ? '' : 's'} to attach`);
   }

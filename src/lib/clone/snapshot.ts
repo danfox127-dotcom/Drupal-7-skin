@@ -4,6 +4,7 @@ import { findTarget } from '../import/targets';
 import { denyReason } from './denyList';
 import { optionLabelsFor } from './values';
 import { describeMediaRefs } from './media';
+import { captureParagraphItems, relativeName } from './paragraphs';
 import {
   CapturedField, CapturedParagraphField, NodeSnapshot, SNAPSHOT_VERSION,
 } from './types';
@@ -89,10 +90,10 @@ function belongsToParagraph(field: FieldDescriptor, bases: string[]): boolean {
     field.machineName.startsWith(`${base}[`) || field.machineName.startsWith(`${base}_add_more`));
 }
 
-function captureField(field: FieldDescriptor): CapturedField {
+function captureField(field: FieldDescriptor, machineName = field.machineName): CapturedField {
   const value = readValue(field);
   return {
-    machineName: field.machineName,
+    machineName,
     baseName: field.baseName,
     label: field.label,
     kind: field.kind,
@@ -141,7 +142,8 @@ export async function captureNode(
   };
 
   for (const field of schema.fields) {
-    if (belongsToParagraph(field, paragraphBases)) continue;   // handled below
+    // Handled by captureParagraphItems below, as items rather than flat fields.
+    if (belongsToParagraph(field, paragraphBases)) continue;
 
     const denied = denyReason(field.machineName);
     if (denied) {
@@ -165,23 +167,35 @@ export async function captureNode(
   }
 
   /**
-   * Paragraph items are COUNTED here, not yet captured.
+   * Structured content items.
    *
-   * The rebuild needs the markup of a populated subform, and no such fixture exists —
-   * every serious bug in this project has come from a hand-authored fixture agreeing
-   * with broken code, so the structure is not being invented. Until then this reports
-   * how many items the source had, which is the difference between a paste that looks
-   * complete and one that tells the truth.
+   * Captured generically: an item's subform is just fields, so whatever fields it has
+   * are read and stored with names made RELATIVE to the item — no per-type code. That
+   * covers `text` and `faq`, the two that get real use and both backed by an HTML
+   * editor, without either being a special case.
+   *
+   * An item whose type could not be determined is still captured. It cannot be
+   * recreated, but its values can be shown, and dropping it here would mean the review
+   * could not even say what was lost.
    */
   const paragraphs: CapturedParagraphField[] = [];
   for (const widget of widgets) {
     if (widget.deltas.length === 0) continue;
-    paragraphs.push({ baseName: widget.baseName, label: widget.label, items: [] });
-    note(
-      widget.label,
-      `${widget.deltas.length} content item${widget.deltas.length === 1 ? '' : 's'} on the source page. `
-      + 'Copying these is not built yet, so they have to be rebuilt by hand for now.'
-    );
+
+    const items = captureParagraphItems(schema, widget,
+      (field, relative) => captureField(field, relative));
+
+    paragraphs.push({ baseName: widget.baseName, label: widget.label, items });
+
+    const unknown = items.filter(item => !item.bundle);
+    if (unknown.length) {
+      note(
+        widget.label,
+        `${unknown.length} of ${items.length} content item${items.length === 1 ? '' : 's'} `
+        + 'could not be identified by type, so they cannot be recreated automatically. '
+        + 'Their values are shown so you can rebuild them.'
+      );
+    }
   }
 
   const media = describeMediaRefs(schema.fields, location.href);
