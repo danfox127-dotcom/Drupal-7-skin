@@ -73,7 +73,12 @@ function ImportFlow({
   }
 
   return (
-    <div className="fixed top-11 left-0 right-0 z-[2147483645] px-4">
+    /**
+     * pointer-events-none, for the reason documented in cloneFlow.tsx: a full-width
+     * fixed strip holding a narrower panel swallows clicks on everything behind its
+     * empty margins, including Drupal's own Save buttons.
+     */
+    <div className="fixed top-11 left-0 right-0 z-[2147483645] px-4 pointer-events-none [&>*]:pointer-events-auto">
       <ImportedBanner
         sourceUrl={result.sourceUrl}
         onBack={() => setReviewing(true)}

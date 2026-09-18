@@ -19,18 +19,28 @@ import { injectOverlay } from './inject';
 
 /** What the editor sees once the form has been filled. */
 const PastedBanner = ({
-  snapshot, outcome, onBack,
+  snapshot, outcome, onBack, onDismiss,
 }: {
   snapshot: NodeSnapshot;
   outcome: CloneOutcome;
   onBack: () => void;
+  onDismiss: () => void;
 }) => {
   const attention = [...outcome.failed, ...outcome.blanked, ...outcome.partial];
   const itemProblems = paragraphProblems(outcome);
 
   return (
-    <div className="fixed top-11 left-0 right-0 z-[2147483645] px-4 font-sans">
-      <div className="max-w-[860px] mx-auto">
+    /**
+     * pointer-events-none on the full-width strip, auto on the panel inside it.
+     *
+     * This wrapper spans left-0 to right-0 while the panel it holds is 860px and
+     * centred, so its left and right thirds are invisible AND were still swallowing
+     * clicks. Drupal's own "Save draft to Drupal" and "Publish" buttons sit in that
+     * vertical band on a wide window, which made them unclickable — reported as "I can't
+     * save a draft of what I have", with nothing on screen to suggest why.
+     */
+    <div className="fixed top-11 left-0 right-0 z-[2147483645] px-4 font-sans pointer-events-none">
+      <div className="max-w-[860px] mx-auto pointer-events-auto">
         <div className="flex items-start gap-3 p-3 bg-cu-light border border-cu-blue">
           <div className="flex-1 min-w-0">
             <p className="text-eyebrow font-semibold uppercase text-cu-onLight">Pasted</p>
@@ -43,13 +53,28 @@ const PastedBanner = ({
               as a draft, and you publish it afterwards.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onBack}
-            className="shrink-0 px-3 py-1 bg-white border border-cu-blue text-cu-blue rounded text-help font-semibold hover:bg-cu-tint transition-colors duration-200 ease-studio"
-          >
-            Back to the review
-          </button>
+          <div className="shrink-0 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onBack}
+              className="px-3 py-1 bg-white border border-cu-blue text-cu-blue rounded text-help font-semibold hover:bg-cu-tint transition-colors duration-200 ease-studio"
+            >
+              Back to the review
+            </button>
+            {/**
+              * A way out. This banner sits over the form until the page is reloaded, and
+              * the images list under it can run to several rows — so without this it is
+              * something covering the work rather than something reporting on it.
+              */}
+            <button
+              type="button"
+              onClick={onDismiss}
+              aria-label="Dismiss this summary"
+              className="px-2 py-1 bg-white border border-rule-control text-ink-secondary rounded text-help font-semibold hover:bg-legacy-200 transition-colors duration-200 ease-studio"
+            >
+              Dismiss
+            </button>
+          </div>
         </div>
 
         {(attention.length > 0 || itemProblems.length > 0) && (
@@ -130,7 +155,14 @@ function CloneFlow({
   }
 
   return outcome
-    ? <PastedBanner snapshot={snapshot} outcome={outcome} onBack={() => setReviewing(true)} />
+    ? (
+      <PastedBanner
+        snapshot={snapshot}
+        outcome={outcome}
+        onBack={() => setReviewing(true)}
+        onDismiss={onDone}
+      />
+    )
     : null;
 }
 

@@ -138,6 +138,93 @@ test.describe('reading the widgets on a populated form', () => {
     expect(urls).toEqual([null, null]);
   });
 
+  /**
+   * Markup copied from the real captured add form, not invented.
+   *
+   * The first version of this fixture put the hidden fid OUTSIDE `.media-widget`, and
+   * widgetWrapper stops at `.media-widget` — so the fid was never found, `fid` came back
+   * null either way, and the test passed with the bug restored. It was caught by
+   * reverting. On a real form the fid lives INSIDE that div, as `<input class="fid">`
+   * alongside the upload input and the Browse button.
+   */
+  const emptyMediaWidget = (fidValue: string) => `
+    <form class="node-form">
+      <div class="field-type-image field-name-field-image-featured field-widget-media-generic form-wrapper"
+           id="edit-field-image-featured">
+        <div class="form-item form-type-media">
+          <label for="edit-ff-upload">Featured Image</label>
+          <div class="media-widget form-media clearfix" id="edit-ff-upload--widget">
+            <div class="preview"></div>
+            <input class="upload form-text" type="text" id="edit-ff-upload"
+                   name="media[field_image_featured_und_0]" value="" style="display: none;">
+            <a href="#" class="button browse">Browse</a>
+            <input class="fid" type="hidden"
+                   name="field_image_featured[und][0][fid]" value="${fidValue}">
+            <input type="hidden" name="field_image_featured[und][0][display]" value="">
+          </div>
+        </div>
+      </div>
+    </form>`;
+
+  for (const [label, value] of [['0', '0'], ['empty', '']] as const) {
+    test(`an unset image field (fid="${label}") is not mistaken for a file`, async ({ page }) => {
+      /**
+       * Reported from a real paste: "9 filled, 2 images to attach" where the source page
+       * had one. The second row showed no filename, no URL, and a red line telling the
+       * editor to open the source page and find it. There was nothing to find.
+       *
+       * Both spellings are covered because the captured add form writes `value=""` while
+       * Drupal's Form API default for the field is 0, and which one reaches the browser
+       * is not something to rely on.
+       */
+      await page.goto('data:text/html,<body></body>');
+      await page.setContent(emptyMediaWidget(value));
+      await page.addScriptTag({ content: bundle });
+
+      const refs = await page.evaluate(() => {
+        const api = (window as any).M;
+        const schema = api.discoverSchema(document, { pathname: '/node/1313/edit' });
+        return api.describeMediaRefs(schema.fields, 'https://source.example.edu/node/1313/edit')
+          .map((r: any) => ({ fid: r.fid, attached: api.hasAttachment(r) }));
+      });
+
+      expect(refs.length, 'the field itself should still be discovered').toBe(1);
+      expect(refs[0].fid, 'an unset fid must not be carried').toBeNull();
+      expect(refs[0].attached, 'an empty image field was reported as an attachment').toBe(false);
+    });
+  }
+
+  test('the fid really is reachable from the widget wrapper', async ({ page }) => {
+    /**
+     * Guards the assumption the two tests above depend on. If widgetWrapper ever stops
+     * reaching the fid, those tests would pass for the wrong reason — fid null because
+     * nothing was found rather than because the value was rejected.
+     */
+    await page.goto('data:text/html,<body></body>');
+    await page.setContent(emptyMediaWidget('44120'));
+    await page.addScriptTag({ content: bundle });
+
+    const refs = await page.evaluate(() => {
+      const api = (window as any).M;
+      const schema = api.discoverSchema(document, { pathname: '/node/1313/edit' });
+      return api.describeMediaRefs(schema.fields, 'https://source.example.edu/node/1313/edit');
+    });
+    expect(refs[0].fid, 'the fid was not found in this widget at all').toBe('44120');
+  });
+
+  test('a real file id is still carried', async ({ page }) => {
+    // The other direction, so the fix above cannot be "report nothing, ever".
+    await load(page, 'node-edit-media-populated.html');
+    const attached = await page.evaluate(() => {
+      const api = (window as any).M;
+      const schema = api.discoverSchema(document, { pathname: '/node/451/edit' });
+      return api.describeMediaRefs(schema.fields, 'https://example.edu/node/451/edit')
+        .filter((r: any) => api.hasAttachment(r))
+        .map((r: any) => r.fid);
+    });
+    expect(attached).toEqual(['44120', '44121']);
+  });
+
   test('an add form with no image attached reports the field as empty', async ({ page }) => {
     await load(page, 'captured/page.html');
     const refs = await page.evaluate(() => {

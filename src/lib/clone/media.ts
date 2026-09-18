@@ -111,7 +111,7 @@ export function describeMediaRefs(fields: FieldDescriptor[], baseUrl: string): M
     const fidInput = /\[fid\]$/.test((el as HTMLInputElement).name ?? '')
       ? (el as HTMLInputElement)
       : wrapper.querySelector<HTMLInputElement>('input[name$="[fid]"]');
-    const fid = (fidInput?.value ?? '').trim() || null;
+    const fid = realFid(fidInput?.value);
 
     const thumb = thumbnailIn(wrapper, baseUrl);
     const declared = (wrapper.querySelector('.filename')?.textContent ?? '').trim();
@@ -127,6 +127,21 @@ export function describeMediaRefs(fields: FieldDescriptor[], baseUrl: string): M
   }
 
   return refs;
+}
+
+/**
+ * Drupal's "no file here" value.
+ *
+ * An unset Media field does not render an EMPTY fid — it renders `value="0"`. As a
+ * string that is truthy, so an empty Featured Image counted as an attachment and the
+ * review listed a file that does not exist, with no filename and no URL and a red line
+ * telling the editor to go and find it on the source page. There was nothing to find.
+ * Reported from a real paste: "9 filled, 2 images to attach" where only one was real.
+ */
+function realFid(raw: string | null | undefined): string | null {
+  const value = (raw ?? '').trim();
+  if (!value || value === '0') return null;
+  return value;
 }
 
 /** True when the source actually had a file attached to this field. */
