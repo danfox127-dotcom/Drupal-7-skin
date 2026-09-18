@@ -1,5 +1,5 @@
 {
-  "version": "0.3.0",
-  "notes": "Copy and paste a whole page between Columbia Drupal 7 sites: terms matched by name, references checked against the destination before writing, content items rebuilt, images listed with their URLs. Install from the Chrome Web Store instead of a zip.",
-  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.3.0/d7-studio-extension-0.3.0.zip"
+  "version": "0.2.2",
+  "notes": "Adds an extension icon, ticks Provide a menu link so menu placement survives a save, and drops the file:// access the content script never needed.",
+  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.2.2/d7-studio-extension-0.2.2.zip"
 }
