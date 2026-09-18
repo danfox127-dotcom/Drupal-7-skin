@@ -105,6 +105,35 @@ export const test = base.extend<{
       ignoreHTTPSErrors: true,
     });
 
+    /**
+     * The update check's own network request, served locally.
+     *
+     * The service worker fetches latest.json from raw.githubusercontent.com on install.
+     * That is a live internet request inside the test suite, and it is the one thing here
+     * that can fail for reasons that have nothing to do with the extension — after six
+     * suite runs in a day it started timing out, failing "the popup survives never having
+     * checked" with a 30-second timeout. Confirmed pre-existing by stashing the change
+     * under test and reproducing it.
+     *
+     * Answered with a version OLDER than anything this project will ship, so the worker
+     * reaches the same verdict every time — not available — quickly and without leaving
+     * the machine. The seeding helper below waits for that verdict to be written, so a
+     * slow answer here stalls the whole describe block.
+     *
+     * Deliberately not `route.abort()`: a failed fetch reaches the same verdict, but
+     * through the catch branch, and a valid answer exercises parseLatest on the way.
+     */
+    await context.route('**raw.githubusercontent.com/**', route => {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          version: '0.0.1',
+          notes: 'Stub answer from the test harness, deliberately ancient.',
+        }),
+      });
+    });
+
     await context.route(`**columbia.edu/**`, route => {
       const url = route.request().url();
       const match = ROUTES.find(([pattern]) => pattern.test(url));
@@ -2434,6 +2463,9 @@ test.describe('the update notifier', () => {
       latest: '0.9.9',
       notes: 'Publish now really publishes.',
       download: 'https://github.com/example/releases/download/v0.9.9/ext.zip',
+      // What evaluateUpdate now writes alongside the zip. Seeded explicitly, because
+      // this test is about the banner and not about the evaluator.
+      storeUrl: 'https://chromewebstore.google.com/detail/ebooneiidohdlmcddhnlnnolhjehpcec',
       checkedAt: 1788000000000,
     });
 
@@ -2442,12 +2474,41 @@ test.describe('the update notifier', () => {
     await expect(banner).toContainText('0.9.9');
     await expect(banner).toContainText('You have 0.2.0');
     await expect(banner).toContainText('Publish now really publishes.');
-    // The instruction matters as much as the link: there is no automatic install.
-    await expect(banner).toContainText('reload the extension');
 
-    const link = banner.locator('a[href^="https://"]');
-    await expect(link).toHaveAttribute('href', /ext\.zip$/);
-    await expect(link).toHaveAttribute('rel', /noopener/);
+    /**
+     * The store link leads, and the zip is demoted to a fallback.
+     *
+     * This banner can now only reach a HAND-LOADED copy — a store install does not
+     * check at all — so the useful instruction is "stop hand-loading it", not "here is
+     * another zip". The zip is what produced a card that looked installed and did
+     * nothing, twice, by being the wrong folder.
+     */
+    const storeLink = banner.locator('a[href*="chromewebstore.google.com"]');
+    await expect(storeLink).toHaveAttribute('href', /ebooneiidohdlmcddhnlnnolhjehpcec/);
+    await expect(storeLink).toHaveAttribute('rel', /noopener/);
+    await expect(banner).toContainText('Remove the unpacked copy');
+
+    // Still offered, because someone mid-migration may need it.
+    const zipLink = banner.locator('a[href$="ext.zip"]');
+    await expect(zipLink).toHaveAttribute('rel', /noopener/);
+  });
+
+  test('a seeded state with no store link still renders, without an empty anchor', async ({ page, extensionId }) => {
+    /**
+     * State written by an older build has no storeUrl. The banner must degrade to the
+     * zip rather than render a link to nowhere — a state object outlives an extension
+     * update, so this is the shape that actually exists in the wild after upgrading.
+     */
+    await seedAfterWorkerCheck(page, extensionId, {
+      available: true, current: '0.2.0', latest: '0.9.9',
+      download: 'https://github.com/example/releases/download/v0.9.9/ext.zip',
+      checkedAt: 1788000000000,
+    });
+
+    const banner = page.locator('[data-update-banner]');
+    await expect(banner).toBeVisible();
+    await expect(banner.locator('a[href*="chromewebstore.google.com"]')).toHaveCount(0);
+    await expect(banner.locator('a[href$="ext.zip"]')).toHaveCount(1);
   });
 
   test('no banner when the running build is current', async ({ page, extensionId }) => {

@@ -8,8 +8,14 @@
  *
  * So the honest version of the feature is a notifier. It reads a small file published
  * alongside the source, compares it to the running build, and puts a badge on the
- * toolbar icon plus a line in the popup. The human still downloads and reloads — but
- * they find out, instead of quietly running a build from weeks ago.
+ * toolbar icon plus a line in the popup.
+ *
+ * SINCE PUBLICATION, this is a migration tool rather than a permanent fixture. The
+ * extension now lives on the Chrome Web Store (unlisted), where Chrome updates it
+ * automatically — so a store build does not check at all, and a hand-loaded copy is told
+ * to move to the store rather than to fetch another zip. The zip is what caused someone
+ * to load the wrong folder twice and get a card that looked installed and did nothing;
+ * pointing at it forever would keep that failure available.
  *
  * Deliberately requires no new permission. raw.githubusercontent.com serves
  * `access-control-allow-origin: *`, so a plain fetch from the extension's own context
@@ -33,6 +39,14 @@ export interface UpdateState {
   latest?: string;
   notes?: string;
   download?: string;
+  /**
+   * Where to get it properly — the store listing.
+   *
+   * Set whenever an update is available to a hand-loaded copy, because moving to the
+   * store is the fix for the whole class of problem the zip caused: the wrong folder,
+   * a stale folder, a folder that was moved, and a build nobody remembers loading.
+   */
+  storeUrl?: string;
   /** Epoch ms of the last successful check, for showing staleness. */
   checkedAt?: number;
 }
@@ -43,6 +57,42 @@ export const UPDATE_STATE_KEY = 'updateState';
 /** Where the published version lives. Public repo, so no auth and no rate limit. */
 export const LATEST_URL =
   'https://raw.githubusercontent.com/danfox127-dotcom/Drupal-7-skin/main/latest.json';
+
+/**
+ * The Chrome Web Store item, now that the extension is published there (unlisted).
+ *
+ * The id is how a build identifies ITSELF. Chrome assigns a store-installed extension
+ * this fixed id, and gives an unpacked one an id derived from its folder path — so
+ * comparing chrome.runtime.id against this is a reliable, permission-free answer to
+ * "am I the store build or a hand-loaded copy?". chrome.management.getSelf() would say
+ * the same thing and costs a permission.
+ */
+export const STORE_ID = 'ebooneiidohdlmcddhnlnnolhjehpcec';
+
+/**
+ * The listing. Unlisted, so it never appears in store search and this link is the only
+ * way in — which is exactly why it belongs in the code rather than in someone's notes.
+ */
+export const STORE_URL = `https://chromewebstore.google.com/detail/${STORE_ID}`;
+
+/** True when this build was installed from the Chrome Web Store. */
+export function isStoreInstall(extensionId: string | undefined): boolean {
+  return extensionId === STORE_ID;
+}
+
+/**
+ * Whether this build should poll for updates at all.
+ *
+ * A store install must NOT: Chrome updates it, so the notifier could only ever tell the
+ * user to go and do by hand something that has already happened — and it would keep
+ * saying so until latest.json was pushed, which is a lie with a badge on it.
+ *
+ * A hand-loaded copy still checks, because Chrome will never update it. What changed is
+ * what the notice SAYS: the way out is now the store, not another zip.
+ */
+export function shouldCheckForUpdates(extensionId: string | undefined): boolean {
+  return !isStoreInstall(extensionId);
+}
 
 /**
  * Chrome permits one to four dot-separated integers, each 0–65535.
@@ -135,5 +185,6 @@ export function evaluateUpdate(current: string, raw: unknown): UpdateState {
     latest: latest.version,
     notes: latest.notes,
     download: latest.download,
+    storeUrl: STORE_URL,
   };
 }

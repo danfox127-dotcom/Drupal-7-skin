@@ -1,5 +1,25 @@
 # Publishing to the Chrome Web Store (unlisted)
 
+## Published — live details
+
+| | |
+|---|---|
+| **Item ID** | `ebooneiidohdlmcddhnlnnolhjehpcec` |
+| **Listing** | https://chromewebstore.google.com/detail/ebooneiidohdlmcddhnlnnolhjehpcec |
+| **Visibility** | Unlisted — never appears in store search; the link above is the only way in |
+| **Version published** | 0.2.2 |
+| **Approved** | 17 September 2026 |
+
+The id is also in `src/lib/updateCheck.ts` as `STORE_ID`, where it does real work: a
+build compares `chrome.runtime.id` against it to know whether it is the store copy
+(which Chrome updates, and which therefore must not nag) or a hand-loaded one (which
+Chrome will never update, and which is told to migrate). Keep the two in step.
+
+**Do not run the store copy and an unpacked copy in the same Chrome profile.** They get
+different extension ids, so Chrome treats them as unrelated extensions — but both match
+the same Columbia hosts, so both content scripts inject. That means two overlays, two
+command palettes and two ⌘K handlers competing on every admin page.
+
 Everything the Developer Dashboard asks for, written out so submission is copy-and-paste
 rather than improvisation. Unlisted means the extension does not appear in search or
 category browsing — only people with the direct link can install it — but Chrome still

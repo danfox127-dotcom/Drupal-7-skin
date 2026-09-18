@@ -1,6 +1,6 @@
 # Privacy Policy — D7 Studio (D7 Admin Proxy UI)
 
-**Last updated:** 17 September 2026
+**Last updated:** 18 September 2026
 **Applies to:** the "D7 Admin Proxy UI" Chrome extension, all versions from 0.2.2
 
 ## The short version
@@ -107,6 +107,15 @@ Exactly three kinds of request, and no others:
 Nothing else is contacted. No data about you, your pages, your drafts, or your Drupal
 content is transmitted to the author of this extension or to anyone else. There is no
 server to transmit it to.
+
+### One link, which is not a request
+
+If you are running a hand-installed copy, the popup may offer a link to this
+extension's page on the Chrome Web Store, at `chromewebstore.google.com`. That is a
+link you click, not a request the extension makes: nothing is sent to that address
+unless you choose to follow it, and following it is an ordinary browser navigation.
+Copies installed from the store do not show it, and do not check for updates at all —
+Chrome keeps them current.
 
 ## Clipboard
 

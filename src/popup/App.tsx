@@ -295,9 +295,12 @@ export function App() {
         Update notice.
 
         Only rendered when there IS one — a permanent "you are up to date" row trains
-        people to ignore this area, which is the opposite of the point. The extension
-        cannot update itself (Chrome ignores update_url for an unpacked install), so this
-        states plainly what the person has to do.
+        people to ignore this area, which is the opposite of the point.
+
+        This can now only appear on a HAND-LOADED copy: the extension is on the Chrome
+        Web Store, a store install updates itself, and checkForUpdate returns early for
+        it. So the banner's job has changed from "fetch a zip" to "move to the store",
+        which also retires the folder-picking mistake the zip kept inviting.
       */}
       {updateInfo?.available && (
         <div data-update-banner className="px-4 py-3 bg-cu-tint">
@@ -313,21 +316,42 @@ export function App() {
               {updateInfo.notes && (
                 <p className="text-help text-ink-secondary mt-1">{updateInfo.notes}</p>
               )}
+              {/**
+                * The store first, and the zip only as a fallback.
+                *
+                * This banner only ever reaches a hand-loaded copy now — a store install
+                * does not check. So the useful instruction is "stop hand-loading it",
+                * not "here is another zip". The zip is exactly what produced a card that
+                * looked installed and did nothing, twice, by being the wrong folder.
+                */}
+              {updateInfo.storeUrl && (
+                <a
+                  href={updateInfo.storeUrl}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                  className="mt-2 inline-flex items-center gap-1.5 text-help font-semibold text-cu-blue hover:underline"
+                >
+                  Install it from the Chrome Web Store
+                  <ExternalLink size={11} />
+                </a>
+              )}
+              <p className="text-help text-ink-help mt-1.5">
+                Installing from the store replaces this hand-loaded copy and keeps itself
+                up to date, so this is the last time you have to do this. Remove the
+                unpacked copy at chrome://extensions afterwards, or you will be running
+                two at once.
+              </p>
               {updateInfo.download && (
                 <a
                   href={updateInfo.download}
                   target="_blank"
                   rel="noreferrer noopener"
-                  className="mt-2 inline-flex items-center gap-1.5 text-help font-semibold text-cu-blue hover:underline"
+                  className="mt-1.5 inline-flex items-center gap-1.5 text-help text-ink-help hover:underline"
                 >
-                  Download the new version
+                  Or download the zip, as before
                   <ExternalLink size={11} />
                 </a>
               )}
-              <p className="text-help text-ink-help mt-1.5">
-                Unzip it over your existing extension folder, then reload the extension at
-                chrome://extensions. Keep the folder in the same place.
-              </p>
             </div>
           </div>
         </div>

@@ -1,5 +1,13 @@
 import { test, expect } from '@playwright/test';
-import { isNewer, evaluateUpdate, parseLatest } from '../src/lib/updateCheck';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import {
+  isNewer, evaluateUpdate, parseLatest,
+  STORE_ID, STORE_URL, isStoreInstall, shouldCheckForUpdates,
+} from '../src/lib/updateCheck';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * Version comparison and the update decision.
@@ -113,5 +121,60 @@ test.describe('the update decision', () => {
 
   test('an unreadable payload is not an update', () => {
     expect(evaluateUpdate('0.1.0', null).available).toBe(false);
+  });
+});
+
+test.describe('now that the extension is on the Chrome Web Store', () => {
+  test('a store install does not check for updates at all', () => {
+    /**
+     * Chrome keeps a store install current, so the only thing a check could produce is a
+     * badge telling someone to do by hand what has already happened — and it would keep
+     * saying so until latest.json was pushed. That is a lie with a badge on it.
+     */
+    expect(shouldCheckForUpdates(STORE_ID)).toBe(false);
+    expect(isStoreInstall(STORE_ID)).toBe(true);
+  });
+
+  test('a hand-loaded copy still checks, because Chrome will never update it', () => {
+    // Chrome derives an unpacked extension's id from its folder path, so it is never
+    // the store id.
+    expect(shouldCheckForUpdates('abcdefghijklmnopabcdefghijklmnop')).toBe(true);
+    expect(isStoreInstall('abcdefghijklmnopabcdefghijklmnop')).toBe(false);
+  });
+
+  test('an undefined id is treated as not-the-store, so the check still runs', () => {
+    // Failing closed the other way would silence the notifier for everyone the moment
+    // chrome.runtime.id were unavailable.
+    expect(shouldCheckForUpdates(undefined)).toBe(true);
+  });
+
+  test('an available update carries the store link', () => {
+    const state = evaluateUpdate('0.2.2', { version: '0.3.0', notes: 'Copy and paste.' });
+    expect(state.available).toBe(true);
+    expect(state.storeUrl).toBe(STORE_URL);
+  });
+
+  test('a current build offers no link, because there is nothing to do', () => {
+    const state = evaluateUpdate('0.3.0', { version: '0.3.0' });
+    expect(state.available).toBe(false);
+    expect(state.storeUrl).toBeUndefined();
+  });
+
+  test('the listing URL is https and names the published item', () => {
+    expect(STORE_URL.startsWith('https://')).toBe(true);
+    expect(STORE_URL).toContain(STORE_ID);
+    // Chrome extension ids are 32 lowercase letters a–p.
+    expect(STORE_ID).toMatch(/^[a-p]{32}$/);
+  });
+
+  test('the id in the code matches the one recorded in the docs', () => {
+    /**
+     * Two places name the published item: the code, where it decides whether to nag, and
+     * docs/CHROME-WEB-STORE.md, where a human looks it up. Drift between them would
+     * either silence the notifier for store users or point a colleague at the wrong
+     * listing, and neither announces itself.
+     */
+    const doc = fs.readFileSync(path.join(ROOT, 'docs', 'CHROME-WEB-STORE.md'), 'utf8');
+    expect(doc, 'the store id in the docs does not match STORE_ID').toContain(STORE_ID);
   });
 });
