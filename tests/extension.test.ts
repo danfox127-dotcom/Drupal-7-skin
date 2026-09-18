@@ -530,6 +530,195 @@ test.describe('D7 Studio: copying a page between sites', () => {
   });
 });
 
+test.describe('D7 Studio: getting out of the paste summary', () => {
+  const OVERLAY = '.d7-proxy-ui-overlay';
+
+  async function openPalette(page: import('@playwright/test').Page) {
+    const dialog = page.locator(`${OVERLAY} [role="dialog"]`);
+    await expect(async () => {
+      if (await dialog.count() === 0) await page.keyboard.press('ControlOrMeta+k');
+      await expect(dialog).toBeVisible({ timeout: 500 });
+    }).toPass({ timeout: 20000 });
+  }
+
+  /** Copies a page, then pastes it, leaving the summary banner on screen. */
+  async function pasteAndLand(page: import('@playwright/test').Page) {
+    await page.goto(`${HOST}/node/18948/edit`);
+    await openPalette(page);
+    await page.locator(`${OVERLAY} >> text=Copy this page for pasting`).click();
+    await expect(page.locator('[role="status"]')).toContainText('Page copied');
+
+    await page.goto(`${UNNAMED_HOST}/node/add/page`);
+    await openPalette(page);
+    await page.locator(`${OVERLAY} >> text=Paste the copied page`).click();
+    await page.locator(`${OVERLAY} >> button:has-text("Fill this form")`).click();
+    await expect(page.locator(`${OVERLAY} >> text=Pasted`).first()).toBeVisible();
+  }
+
+  test('the summary does not swallow clicks on the form behind it', async ({ page }) => {
+    /**
+     * THE bug, and asserted where it actually lived rather than via whichever Drupal
+     * control happened to sit in the band.
+     *
+     * The summary's wrapper is `fixed left-0 right-0` — the full viewport — while the
+     * panel inside it is 860px and centred. Its left and right thirds were therefore
+     * invisible AND still swallowing clicks, and on a wide window Drupal's "Save draft
+     * to Drupal" and "Publish" sit in exactly that band. Reported as "I click and
+     * nothing happens".
+     *
+     * Two earlier versions of this test proved nothing, both caught before committing:
+     * one read the Save button wherever it happened to be, which on this form is below
+     * the fold, so elementFromPoint returned null either way; the next tried to scroll
+     * Save into the band and could not, and said so rather than passing.
+     *
+     * So this tests the strip itself: a point inside its band but out in the empty
+     * margin must reach the page, not the overlay. That is exactly what broke, it needs
+     * no scrolling, and the strip is always on screen.
+     */
+    await page.setViewportSize({ width: 1600, height: 900 });
+    await pasteAndLand(page);
+
+    const result = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-overlay');
+      const strip = host?.shadowRoot?.querySelector('.fixed') as HTMLElement | null;
+      const panel = strip?.firstElementChild as HTMLElement | null;
+      if (!strip || !panel) return { ok: false, why: 'the summary banner was not found' };
+
+      const band = strip.getBoundingClientRect();
+      const inner = panel.getBoundingClientRect();
+
+      // Out in the strip's left margin, clear of the panel, vertically mid-band.
+      const x = Math.max(4, inner.left / 2);
+      const y = band.top + band.height / 2;
+      if (x >= inner.left) return { ok: false, why: 'the panel fills the strip; no margin to test' };
+
+      const hit = document.elementFromPoint(x, y);
+      return {
+        ok: true,
+        stripEvents: getComputedStyle(strip).pointerEvents,
+        panelEvents: getComputedStyle(panel).pointerEvents,
+        // The failure signature: the overlay host is what the browser hands back.
+        hitsOverlay: hit ? hit.classList.contains('d7-proxy-ui-overlay') : false,
+        hit: hit ? `${hit.tagName}.${String(hit.className).slice(0, 60)}` : 'null',
+      };
+    });
+
+    expect(result.ok, result.why).toBe(true);
+    expect(result.stripEvents, 'the full-width strip must let clicks through').toBe('none');
+    expect(result.panelEvents, 'the panel itself must still be usable').toBe('auto');
+    expect(result.hitsOverlay, `the overlay is still intercepting: ${result.hit}`).toBe(false);
+  });
+
+  test('Escape closes the summary', async ({ page }) => {
+    await pasteAndLand(page);
+    await page.keyboard.press('Escape');
+    // Unmounted, not merely hidden — a fixed overlay left on someone else's page is
+    // exactly what made this feel like a trap.
+    await expect(page.locator(`${OVERLAY} >> text=Pasted`)).toHaveCount(0);
+  });
+
+  test('the Dismiss button closes the summary', async ({ page }) => {
+    // Three ways out, because the report was "I cannot exit the media review".
+    await pasteAndLand(page);
+    await page.locator(`${OVERLAY} >> button:has-text("Dismiss")`).click();
+    await expect(page.locator(`${OVERLAY} >> text=Pasted`)).toHaveCount(0);
+  });
+
+  test('the filled values survive dismissing the summary', async ({ page }) => {
+    // Closing the report must not undo the work it was reporting on.
+    await pasteAndLand(page);
+    await page.keyboard.press('Escape');
+    await expect(page.locator('input[name="title"]'))
+      .toHaveValue('Why Are Girls Starting Puberty Earlier?');
+  });
+});
+
+test.describe('D7 Studio: the popup offers copy and paste', () => {
+  test('Copy a Drupal Node is its own section, separate from the URL importer', async ({ page, extensionId }) => {
+    /**
+     * The two read as the same thing and are not: this one reads another site's node
+     * FORM, where every field's real value is available, while the importer scrapes a
+     * themed page and recovers title, summary and body. They were previously adjacent
+     * with nothing to tell them apart.
+     */
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    // Exact, because the importer's own "use Copy a Drupal Node above" cross-reference
+    // matches the same words — which is the point of it, and a strict-mode violation.
+    await expect(page.getByText('Copy a Drupal Node', { exact: true })).toBeVisible();
+    await expect(page.getByText('Import From a URL', { exact: true })).toBeVisible();
+    await expect(page.locator('text=use Copy a Drupal Node above')).toBeVisible();
+  });
+
+  test('the buttons are disabled away from a node form, rather than failing', async ({ page, extensionId }) => {
+    /**
+     * The popup's own tab is an extension page, so neither action is possible here —
+     * which is the state being asserted. A button that is enabled and then reports "the
+     * extension is not running on this page" teaches people to distrust it.
+     */
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await expect(page.locator('button:has-text("Copy this page")')).toBeDisabled();
+    await expect(page.locator('button:has-text("nothing copied yet")')).toBeDisabled();
+  });
+
+  test('a copy is named on the Paste button, not just counted', async ({ page, extensionId }) => {
+    // "Paste" alone does not say which of up to five copies is about to be applied.
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await page.evaluate(() => new Promise<void>(resolve => chrome.storage.local.set({
+      'clone:clipboard': [{
+        version: 1,
+        sourceUrl: 'https://www.neurology.columbia.edu/node/1313/edit',
+        sourceOrigin: 'https://www.neurology.columbia.edu',
+        contentType: 'program',
+        title: 'Ludwig Center for Research on Neurodegeneration',
+        capturedAt: Date.now(),
+        fields: [{ machineName: 'title_field[und][0][value]', baseName: 'title_field',
+          label: 'Title', kind: 'text', section: 'primary', required: true,
+          multiValue: false, value: 'Ludwig Center', optionLabels: null }],
+        paragraphs: [], omitted: [],
+        media: [{
+          baseName: 'field_image_teaser', label: 'Teaser Image', fid: '5566',
+          filename: 'kizil_lab_image_cuimc.jpg',
+          url: 'https://www.neurology.columbia.edu/sites/default/files/kizil_lab_image_cuimc.jpg',
+          thumbnailUrl: null,
+        }],
+      }],
+    }, () => resolve())));
+    await page.reload();
+
+    await expect(page.locator('text=Ludwig Center for Research on Neurodegeneration').first())
+      .toBeVisible();
+    await expect(page.locator('button:has-text("Paste")')).toContainText('Ludwig Center');
+  });
+
+  test("a copied page's image URLs survive in the popup", async ({ page, extensionId }) => {
+    /**
+     * The review's summary can be dismissed, and should be — it covers the form. Without
+     * a second home for these, dismissing it would throw away the only record of which
+     * images the old page used and where to get them, and the only route back would be
+     * pasting again over a form already filled in.
+     */
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await page.evaluate(() => new Promise<void>(resolve => chrome.storage.local.set({
+      'clone:clipboard': [{
+        version: 1, sourceUrl: 'https://www.neurology.columbia.edu/node/1313/edit',
+        sourceOrigin: 'https://www.neurology.columbia.edu', contentType: 'program',
+        title: 'Ludwig Center', capturedAt: Date.now(), fields: [], paragraphs: [], omitted: [],
+        media: [{
+          baseName: 'field_image_teaser', label: 'Teaser Image', fid: '5566',
+          filename: 'kizil_lab_image_cuimc.jpg',
+          url: 'https://www.neurology.columbia.edu/sites/default/files/kizil_lab_image_cuimc.jpg',
+          thumbnailUrl: null,
+        }],
+      }],
+    }, () => resolve())));
+    await page.reload();
+
+    await expect(page.locator('text=kizil_lab_image_cuimc.jpg')).toBeVisible();
+    const link = page.locator('a[href*="kizil_lab_image_cuimc.jpg"]');
+    await expect(link).toHaveAttribute('rel', /noopener/);
+  });
+});
+
 test.describe('D7 Studio: host matching', () => {
   test('a columbia.edu subdomain the manifest never names still works', async ({ page }) => {
     await page.goto(`${UNNAMED_HOST}/node/123/edit`);

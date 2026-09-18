@@ -132,6 +132,11 @@ export const CONTRAST_PAIRS = [
   [cu.blue, cu.tint, 'chip text on tint'],
   [cu.onLight, cu.light, 'text on Columbia Blue'],
   [cu.onLight, cu.tint, 'deep blue text on tint'],
+  // The "Copy a Drupal Node" panel in the popup, which sits on tint to separate it
+  // from the URL importer below it.
+  [ink.DEFAULT, cu.tint, 'body text on tint'],
+  [ink.secondary, cu.tint, 'secondary text on tint'],
+  [ink.help, cu.tint, 'help text on tint'],
   [ink.DEFAULT, cu.light, 'ink on Columbia Blue banner'],
   ['#FFFFFF', cu.blue, 'white on Primary Blue'],
   ['#FFFFFF', cu.navy, 'white on navy hover'],

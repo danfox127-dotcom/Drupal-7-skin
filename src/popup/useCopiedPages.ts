@@ -40,5 +40,5 @@ export function useCopiedPages() {
     await reload();
   }, [reload]);
 
-  return { copies, refused, loaded, forget, forgetAll };
+  return { copies, refused, loaded, reload, forget, forgetAll };
 }

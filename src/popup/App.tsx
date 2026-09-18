@@ -1,11 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import {
-  LayoutList, FilePlus, GitBranch, Tags, Users, Settings,
-  ExternalLink, Layers, Wifi, WifiOff, X, Command, ArrowDownToLine, RefreshCw, ClipboardCopy,
-} from 'lucide-react';
+import { ArrowDownToLine, ClipboardCopy, Command, Copy, ExternalLink, FilePlus, GitBranch, Layers, LayoutList, RefreshCw, Settings, Tags, Users, Wifi, WifiOff, X } from 'lucide-react';
 import { useSettings, Settings as SettingsShape } from './useSettings';
 import { useImportQueue, displayUrl } from './useImportQueue';
 import { useCopiedPages } from './useCopiedPages';
+import { canCopyFrom, canPasteInto, describeTarget } from '../lib/clone/whereAmI';
 import { formatAge } from '../lib/autosave';
 import { requestOriginAccess, setPendingImport, importTarget } from '../lib/import/pending';
 import { UPDATE_STATE_KEY, UpdateState } from '../lib/updateCheck';
@@ -155,6 +153,39 @@ export function App() {
   const { settings, update, loaded } = useSettings();
   const { queue, add, remove, loaded: queueLoaded } = useImportQueue();
   const copied = useCopiedPages();
+  const [cloneBusy, setCloneBusy] = useState(false);
+  const [cloneNote, setCloneNote] = useState<string | null>(null);
+
+  /**
+   * Copy and paste, asked of the content script.
+   *
+   * The popup cannot read the page, so it cannot do either itself — but it is where
+   * someone looks for a feature. Until now both lived only behind ⌘K, which made them
+   * undiscoverable to anyone who did not already know the shortcut.
+   */
+  const askPage = (type: 'clonePage' | 'clonePaste', onOk: () => void) => {
+    setCloneBusy(true);
+    setCloneNote(null);
+    chrome.tabs.query({ active: true, currentWindow: true }, ([tab]) => {
+      if (!tab?.id) {
+        setCloneBusy(false);
+        setCloneNote('No active tab.');
+        return;
+      }
+      chrome.tabs.sendMessage(tab.id, { type }, (result?: { ok: boolean; error?: string }) => {
+        setCloneBusy(false);
+        if (chrome.runtime.lastError || result === undefined) {
+          setCloneNote('The extension is not running on this page. Reload the page and try again.');
+          return;
+        }
+        if (!result.ok) {
+          setCloneNote(result.error ?? 'That did not work.');
+          return;
+        }
+        onOk();
+      });
+    });
+  };
   const [draftUrl, setDraftUrl] = useState('');
   const [queueError, setQueueError] = useState<string | null>(null);
   const [importBusy, setImportBusy] = useState<string | null>(null);
@@ -360,7 +391,17 @@ export function App() {
       {/* Import Queue */}
       <div className="pb-2">
         <p className="px-4 pt-3 pb-1 text-eyebrow-wide font-semibold uppercase text-ink-secondary">
-          Import Queue
+          Import From a URL
+        </p>
+        {/**
+          * One line on which tool to reach for. These two were previously adjacent with
+          * nothing to distinguish them, and the importer is the weaker of the pair for
+          * anything already on a Drupal site — it reads a themed page and recovers title,
+          * summary and body, where the copier reads the form and gets every field.
+          */}
+        <p className="px-4 pb-2 text-help text-ink-secondary">
+          For a page that is <strong>not</strong> on a Columbia Drupal site. For one that
+          is, use Copy a Drupal Node above.
         </p>
 
         <div className="px-4 flex items-center gap-2">
@@ -423,17 +464,26 @@ export function App() {
         )}
       </div>
 
-      {/* Copied pages, waiting to be pasted onto another site */}
-      <div className="pb-2 border-t border-rule-hair">
+      {/**
+        * Copy a Drupal node — its own tool, on its own surface.
+        *
+        * Deliberately separated from Import from URL and placed first. They read as the
+        * same thing and are not: this one reads another Drupal site's node FORM, where
+        * every field's real value is available, while the importer scrapes a themed page
+        * and can only recover title, summary and body. Sharing one heading invited
+        * picking the weaker tool for the job.
+        */}
+      <div className="border-t border-rule-hair bg-cu-tint border-l-2 border-l-cu-blue">
         <div className="px-4 pt-3 pb-1 flex items-center gap-2">
-          <p className="text-eyebrow-wide font-semibold uppercase text-ink-secondary">
-            Copied Pages
+          <Copy size={13} className="shrink-0 text-cu-onLight" />
+          <p className="text-eyebrow-wide font-semibold uppercase text-cu-onLight">
+            Copy a Drupal Node
           </p>
           <div className="flex-1" />
           {copied.copies.length > 0 && (
             <button
               type="button"
-              onClick={() => void copied.forgetAll()}
+              onClick={() => { void copied.forgetAll(); setCloneNote(null); }}
               className="text-help font-semibold text-cu-blue hover:underline"
             >
               Clear
@@ -441,45 +491,125 @@ export function App() {
           )}
         </div>
 
+        <p className="px-4 pb-2 text-help text-ink-secondary">
+          Duplicate a whole page from one Columbia Drupal site to another.
+        </p>
+
+        <div className="px-4 pb-2 flex flex-col gap-1.5">
+          <button
+            type="button"
+            disabled={cloneBusy || !canCopyFrom(tabPath)}
+            onClick={() => askPage('clonePage', () => {
+              void copied.reload();
+              setCloneNote('Copied. Open the form on the other site, then press Paste.');
+            })}
+            title={canCopyFrom(tabPath)
+              ? undefined
+              : 'Open the page you want to duplicate on its edit form first'}
+            className="px-3 py-1.5 bg-cu-blue hover:bg-cu-navy text-white rounded text-control font-semibold transition-colors duration-200 ease-studio disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {cloneBusy ? 'Working…' : 'Copy this page'}
+          </button>
+
+          {/**
+            * The paste button names what it will paste and where.
+            *
+            * "Paste" alone does not say which of five copies is about to be applied, and
+            * a paste fills a form the editor may already have work in.
+            */}
+          <button
+            type="button"
+            disabled={cloneBusy || !canPasteInto(tabPath) || copied.copies.length === 0}
+            onClick={() => askPage('clonePaste', () => window.close())}
+            title={copied.copies.length === 0
+              ? 'Nothing copied yet'
+              : canPasteInto(tabPath) ? undefined : 'Open a node form to paste into'}
+            className="px-3 py-1.5 bg-white border border-cu-blue text-cu-blue rounded text-control font-semibold hover:bg-white/60 transition-colors duration-200 ease-studio disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            {copied.copies.length === 0
+              ? 'Paste — nothing copied yet'
+              : `Paste “${copied.copies[0].title || 'the copied page'}”${
+                  describeTarget(tabPath) ? ` into this ${describeTarget(tabPath)}` : ''}`}
+          </button>
+        </div>
+
+        {cloneNote && (
+          <p className="px-4 pb-2 text-help text-cu-onLight">{cloneNote}</p>
+        )}
+
         {copied.copies.length > 0 && (
-          <ul>
-            {copied.copies.map(copy => (
-              <li
-                key={copy.sourceUrl}
-                className="flex items-center gap-2 px-4 py-1.5 hover:bg-rail transition-colors duration-200 ease-studio"
-              >
-                <div className="flex-1 min-w-0">
-                  <p className="text-control text-ink truncate" title={copy.sourceUrl}>
-                    {copy.title || displayUrl(copy.sourceUrl)}
-                  </p>
-                  <p className="text-help text-ink-help truncate">
-                    {copy.contentType ?? 'unknown type'} · {new URL(copy.sourceOrigin).host}
-                    {' · '}{formatAge(copy.capturedAt, Date.now())}
-                    {' · '}{copy.fields.length} field{copy.fields.length === 1 ? '' : 's'}
-                  </p>
+          <ul className="pb-1">
+            {copied.copies.map((copy, index) => (
+              <li key={copy.sourceUrl} className="px-4 py-1.5">
+                <div className="flex items-start gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-control text-ink truncate" title={copy.sourceUrl}>
+                      {index === 0 && copied.copies.length > 1 && (
+                        <span className="text-eyebrow font-semibold uppercase text-cu-onLight mr-1">
+                          newest
+                        </span>
+                      )}
+                      {copy.title || displayUrl(copy.sourceUrl)}
+                    </p>
+                    <p className="text-help text-ink-secondary truncate">
+                      {copy.contentType ?? 'unknown type'} · {new URL(copy.sourceOrigin).host}
+                      {' · '}{formatAge(copy.capturedAt, Date.now())}
+                      {' · '}{copy.fields.length} field{copy.fields.length === 1 ? '' : 's'}
+                      {copy.paragraphs.some(w => w.items.length > 0) && (() => {
+                        const items = copy.paragraphs.reduce((n, w) => n + w.items.length, 0);
+                        return ` · ${items} content item${items === 1 ? '' : 's'}`;
+                      })()}
+                    </p>
+
+                    {/**
+                      * The image URLs live here as well as in the review.
+                      *
+                      * The review's summary can be dismissed, and should be — it covers
+                      * the form. Without a second home, dismissing it would throw away
+                      * the only list of which images the old page used and where to get
+                      * them, and the only way back would be to paste again over a form
+                      * already filled in.
+                      */}
+                    {copy.media.filter(m => m.fid || m.url).map(image => (
+                      <div key={image.baseName} className="mt-1 flex items-center gap-2">
+                        <span className="text-help text-ink-help truncate flex-1 min-w-0">
+                          {image.label}: {image.filename || 'file'}
+                        </span>
+                        {image.url && (
+                          <a
+                            href={image.url}
+                            target="_blank"
+                            rel="noreferrer noopener"
+                            className="shrink-0 text-help font-semibold text-cu-blue hover:underline"
+                          >
+                            Open
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void copied.forget(copy.sourceUrl)}
+                    aria-label={`Forget the copy of ${copy.title || copy.sourceUrl}`}
+                    className="shrink-0 p-0.5 text-ink-muted hover:text-burnt rounded transition-colors duration-200 ease-studio"
+                  >
+                    <X size={13} />
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void copied.forget(copy.sourceUrl)}
-                  aria-label={`Forget the copy of ${copy.title || copy.sourceUrl}`}
-                  className="shrink-0 p-0.5 text-ink-muted hover:text-burnt hover:bg-cu-tint rounded transition-colors duration-200 ease-studio"
-                >
-                  <X size={13} />
-                </button>
               </li>
             ))}
           </ul>
         )}
 
-        {copied.loaded && (
-          <p className="px-4 pt-1.5 text-help text-ink-help">
-            {copied.copies.length === 0
-              ? 'Nothing copied. Open a page\u2019s edit form and press \u2318K \u2192 "Copy this page".'
-              : 'Open a node form on the other site and press \u2318K \u2192 "Paste the copied page".'}
+        {copied.loaded && copied.copies.length === 0 && (
+          <p className="px-4 pb-3 text-help text-ink-help">
+            Open the page you want to duplicate on its <strong>edit</strong> form, then
+            press Copy.
             {copied.refused > 0 && (
               <>
                 {' '}{copied.refused} older cop{copied.refused === 1 ? 'y was' : 'ies were'}{' '}
-                discarded — made by a previous version of the extension. Copy the page again.
+                discarded — made by a previous version of the extension.
               </>
             )}
           </p>

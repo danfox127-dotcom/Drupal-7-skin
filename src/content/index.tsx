@@ -28,6 +28,7 @@ import { captureFixture } from '../lib/captureFixture';
 import { maybeShowImportReview } from './importFlow';
 import { pastePage } from './cloneFlow';
 import { refreshCopies, registerPasteHandler } from '../lib/clone/pasteAction';
+import { copyPage } from '../lib/clone/copyPage';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
 
 const getSettings = (): Promise<Settings> =>
@@ -485,19 +486,33 @@ const init = async () => {
   const url = window.location.href;
 
   if (settings.commandPalette) {
+    /**
+     * Copy/paste is wired up BEFORE the palette, and the copy count is AWAITED.
+     *
+     * Command.isAvailable is synchronous and cannot read storage, so the count is
+     * cached — and the first version fired refreshCopies() without waiting, then
+     * registered the palette immediately. Open ⌘K quickly after a page load and Paste
+     * was simply missing, because the count was still 0 when the list was built; the
+     * palette computes its rows on render and nothing re-rendered it when the real
+     * count arrived, so it stayed missing until the palette was closed and reopened.
+     *
+     * Found as a 30-second timeout in an extension test that clicked a row which never
+     * appeared. It is a real bug and not a test artefact: the same few hundred
+     * milliseconds exist for a person.
+     */
+    registerPasteHandler(() => pastePage());
+    await refreshCopies();
     registerCommandPalette();
 
     /**
-     * Cross-site copy/paste is reached from the palette, so it is wired up with it.
+     * And keep the count honest afterwards.
      *
-     * Both halves need setting up before anything can be typed into the palette:
-     * the handler, because commands.ts must stay free of React and therefore calls
-     * through a registry; and the copy count, because Command.isAvailable is
-     * synchronous and cannot await storage. Without the count, Paste would never be
-     * offered — the command would simply be missing, with nothing to explain why.
+     * A copy made in another tab — which is the normal way this feature is used, one tab
+     * per site — would otherwise be invisible here until a reload.
      */
-    registerPasteHandler(() => pastePage());
-    void refreshCopies();
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes['clone:clipboard']) void refreshCopies();
+    });
   }
 
   // Field discovery (Phase 4). Read-only for now: it does not change the page. The
@@ -930,6 +945,52 @@ if (document.readyState === 'loading') {
  * Synchronous on purpose: captureFixture is pure string work, so there is no reason to
  * hold the message channel open.
  */
+/**
+ * Copy and paste, driven from the popup rather than only from the palette.
+ *
+ * The popup cannot read the page, so it asks the content script — the same channel
+ * captureFixture already uses. This exists because the feature was undiscoverable: it
+ * lived entirely behind ⌘K, and someone who does not already know the shortcut has no
+ * way to find it.
+ *
+ * Asynchronous, so these return true to hold the channel open. Failing to do that closes
+ * it immediately and the popup's callback receives undefined — indistinguishable from
+ * "the extension is not running on this page", which is a misleading thing to report.
+ */
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'clonePage') {
+    void (async () => {
+      try {
+        await copyPage();
+        sendResponse({ ok: true });
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : 'The page could not be copied.',
+        });
+      }
+    })();
+    return true;
+  }
+
+  if (message?.type === 'clonePaste') {
+    void (async () => {
+      try {
+        await pastePage();
+        sendResponse({ ok: true });
+      } catch (error) {
+        sendResponse({
+          ok: false,
+          error: error instanceof Error ? error.message : 'The paste could not start.',
+        });
+      }
+    })();
+    return true;
+  }
+
+  return false;
+});
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'captureFixture') {
     sendResponse(captureFixture(document, {

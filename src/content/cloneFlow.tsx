@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { X } from 'lucide-react';
 import { discoverSchema, FormSchema } from '../lib/formSchema';
 import { latestCopy } from '../lib/clone/clipboard';
 import { matchFields, FieldMatch } from '../lib/clone/match';
@@ -52,6 +53,10 @@ const PastedBanner = ({
               Nothing has been written to Drupal. Check the form, then press Save — it saves
               as a draft, and you publish it afterwards.
             </p>
+            <p className="text-help text-ink-help mt-0.5">
+              Press <kbd className="font-mono">Esc</kbd> or Dismiss to close this and get
+              back to the form.
+            </p>
           </div>
           <div className="shrink-0 flex items-center gap-2">
             <button
@@ -70,9 +75,10 @@ const PastedBanner = ({
               type="button"
               onClick={onDismiss}
               aria-label="Dismiss this summary"
-              className="px-2 py-1 bg-white border border-rule-control text-ink-secondary rounded text-help font-semibold hover:bg-legacy-200 transition-colors duration-200 ease-studio"
+              title="Dismiss (Esc)"
+              className="px-2 py-1 inline-flex items-center gap-1 bg-white border border-rule-control text-ink-secondary rounded text-help font-semibold hover:bg-legacy-200 transition-colors duration-200 ease-studio"
             >
-              Dismiss
+              <X size={12} aria-hidden="true" /> Dismiss
             </button>
           </div>
         </div>
@@ -123,6 +129,30 @@ function CloneFlow({
   const [reviewing, setReviewing] = useState(true);
   const [outcome, setOutcome] = useState<CloneOutcome | null>(null);
   const [busy, setBusy] = useState(false);
+
+  /**
+   * Escape closes whichever of the two screens is up.
+   *
+   * There were previously no keyboard route out and — because of the click-swallowing
+   * wrapper — no reliable mouse route either, which is how this came to be reported as
+   * "I cannot exit the media review" and "I click and nothing happens". A modal that
+   * covers someone's work needs more than one exit.
+   *
+   * Capture phase, for the same reason the command palette uses it: Drupal's own key
+   * handlers and CKEditor's bind plenty and would otherwise swallow the chord first.
+   * Not while a write is in flight, since abandoning halfway through would leave the
+   * form half-filled with nothing reporting on it.
+   */
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape' || busy) return;
+      event.preventDefault();
+      event.stopPropagation();
+      onDone();
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [busy, onDone]);
 
   const handleApply = async (accepted: FieldMatch[]) => {
     if (busy) return;
