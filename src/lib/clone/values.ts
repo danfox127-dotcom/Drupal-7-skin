@@ -134,7 +134,7 @@ export function valueForLabels(
     else resolved.push(match);
   }
 
-  const multi = field.kind === 'checkboxGroup';
+  const multi = field.kind === 'checkboxGroup' || field.kind === 'multiSelect';
   return {
     value: multi ? resolved : (resolved[0] ?? ''),
     missing,

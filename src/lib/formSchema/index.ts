@@ -3,7 +3,10 @@ import { buildSchema, findNodeForm } from './walkForm';
 import { displayLabelFor } from './displayLabels';
 
 export * from './types';
-export { walkForm, findNodeForm, readVerticalTabs, baseNameOf } from './walkForm';
+export {
+  walkForm, findNodeForm, readVerticalTabs, baseNameOf, isAddableParagraphsWidget,
+  preciseBaseName, belongsToPreciseBase,
+} from './walkForm';
 export { assignSection, SECTION_RULES } from './sectionRules';
 export { displayLabelFor, wasRelabelled, assignDisplayLabels } from './displayLabels';
 

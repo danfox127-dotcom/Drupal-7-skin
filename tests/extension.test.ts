@@ -40,6 +40,7 @@ const ROUTES: [RegExp, string][] = [
   [/\/node\/add\/page-bigmenu/, 'node-add-page-bigmenu.html'],
   [/\/node\/add\/page/, 'node-add-page.html'],
   [/\/node\/18948\/edit/, 'node-edit-media-populated.html'],
+  [/\/node\/23110\/edit/, 'captured/list-populated.html'],
   [/\/node\/17176\/edit/, 'node-edit-specialty.html'],
   // Same form, CKEditor attaching on a delay — see the fixture's own comment.
   [/\/node\/17177\/edit/, 'node-edit-specialty-async.html'],
@@ -2778,5 +2779,276 @@ test.describe('capturing a real form as a fixture', () => {
     */
     await page.goto(`chrome-extension://${extensionId}/index.html`);
     await expect(page.locator('text=Copy this form as a test fixture')).toBeVisible();
+  });
+});
+
+test.describe('D7 Studio: List filter fields and batch profile add', () => {
+  /**
+   * captured/list-populated.html is a real capture of vagelos.columbia.edu/node/23110/edit
+   * — a List whose Type and Display are already chosen, so the AJAX-rendered Filtered
+   * Profiles / Individual Profiles widgets are present. Served at that same origin,
+   * because the profile autocomplete callback baked into the capture points there —
+   * probeReference refuses a cross-origin lookup, same as it would refuse to follow one
+   * on a real site.
+   */
+  const VAGELOS = 'https://www.vagelos.columbia.edu';
+
+  /**
+   * The container's id (a fresh crypto.randomUUID() per mount) is a more reliable
+   * handle than filtering `.d7-proxy-ui-container` by text: this page injects several —
+   * one per multi-select, one for the batch adder — and `hasText` piercing every one of
+   * their shadow roots at once found controls belonging to OTHER widgets entirely.
+   * Locating by direct DOM adjacency (the container is inserted as the target's
+   * `previousElementSibling`) sidesteps that.
+   */
+  async function containerBefore(page: Page, targetSelector: string) {
+    const id = await page.waitForFunction((sel) => {
+      const target = document.querySelector(sel);
+      const container = target?.previousElementSibling as HTMLElement | null;
+      return container?.className.includes('d7-proxy-ui-container') ? container.id : null;
+    }, targetSelector, { timeout: OVERLAY_MOUNT_TIMEOUT }).then(h => h.jsonValue());
+    return page.locator(`#${id}`);
+  }
+
+  test('a multi-select filter is replaced by a searchable checklist, and the native select still holds the value', async ({ page }) => {
+    await page.goto(`${VAGELOS}/node/23110/edit`);
+
+    const nativeSelect = page.locator('#edit-field-generic-paragraphs-single-und-0-field-cups-specialties-raw-und');
+    await expect(nativeSelect).toBeHidden({ timeout: OVERLAY_MOUNT_TIMEOUT });
+
+    const checklist = await containerBefore(
+      page, '#edit-field-generic-paragraphs-single-und-0-field-cups-specialties-raw-und'
+    );
+    await expect(checklist).toBeVisible();
+
+    const search = checklist.locator('input[type="text"]');
+    await search.fill('Addiction');
+    await expect(checklist.locator('text=Addiction Medicine (Substance Use Disorder)')).toBeVisible();
+    await expect(checklist.locator('text=ABIM Board Certified Internal Medicine')).toHaveCount(0);
+
+    await checklist.locator('label', { hasText: 'Addiction Medicine (Substance Use Disorder)' }).click();
+
+    // The checkbox writes straight to the real, hidden native select — nothing about
+    // what Drupal submits changed, only how it is presented.
+    const selected = await nativeSelect.evaluate((el: HTMLSelectElement) =>
+      Array.from(el.selectedOptions).map(o => o.text.trim()));
+    expect(selected).toContain('Addiction Medicine (Substance Use Disorder)');
+  });
+
+  test('adding several profiles at once: a match gets a row, a miss is reported and adds nothing', async ({ page, context }) => {
+    // Single `*` in a Playwright route glob does not cross `/` — and the real callback
+    // path has several between "entityreference" and "cola_cups_profiles". `**` does.
+    await context.route('**vagelos.columbia.edu/index.php**cola_cups_profiles**', route => {
+      const url = route.request().url();
+      const body = /Jane(%20|\+)Smith/.test(url)
+        ? { 'Jane Smith (9001)': 'Jane Smith' }
+        : {};
+      route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+
+    await page.goto(`${VAGELOS}/node/23110/edit`);
+
+    /**
+     * captureFixture strips every <script>, so this page carries none of Drupal's own
+     * JS — no jQuery, no Drupal.ajax to intercept the "Add another item" submit. Left
+     * alone, clicking it is a genuine, unhandled form submission that navigates the
+     * page away and destroys everything this test is trying to observe.
+     *
+     * clone-paragraphs.spec.ts hits the identical gap for the Paragraphs add-more cycle
+     * and stubs it the same way: intercept the click, clone the last row into the next
+     * delta. Real Drupal answers with a server round trip; this answers with the DOM
+     * mutation addAnotherRow is actually waiting on, so the code under test — the
+     * component, the probe, addAnotherRow's own wait — runs for real.
+     */
+    const ROW_SELECTOR = '[name*="[field_cola_cups_profiles][und]"][name$="[target_id]"]';
+    await page.evaluate(() => {
+      const button = document.querySelector<HTMLInputElement>(
+        'input[name="field_generic_paragraphs_single_und_0_field_cola_cups_profiles_add_more"]'
+      );
+      const tbody = document.getElementById('field-cola-cups-profiles-values')?.querySelector('tbody');
+      if (!button || !tbody) return;
+      button.addEventListener('click', event => {
+        event.preventDefault();
+        setTimeout(() => {
+          const rows = Array.from(tbody.querySelectorAll<HTMLElement>('tr'));
+          const last = rows[rows.length - 1];
+          const nextDelta = rows.length; // rows start at delta 0
+          const row = last.cloneNode(true) as HTMLElement;
+          row.querySelectorAll('[name], [id]').forEach(el => {
+            el.setAttribute('name', (el.getAttribute('name') ?? '')
+              .replace(/\[field_cola_cups_profiles\]\[und\]\[\d+\]/, `[field_cola_cups_profiles][und][${nextDelta}]`));
+            el.setAttribute('id', (el.getAttribute('id') ?? '')
+              .replace(/field-cola-cups-profiles-und-\d+-/, `field-cola-cups-profiles-und-${nextDelta}-`));
+            // The autocomplete callback hint (`*-target-id-autocomplete`) is a structural
+            // address, the same for every row — Drupal renders it fresh on a real AJAX
+            // response, so a stub clone must carry it over rather than blank it. Blanking
+            // it here made autocompletePathFor find an empty value and report the row
+            // "could not check" instead of running the probe this test is exercising.
+            const isAutocompleteHint = (el.getAttribute('id') ?? '').endsWith('-autocomplete');
+            if (el.tagName === 'INPUT' && !isAutocompleteHint) (el as HTMLInputElement).value = '';
+          });
+          tbody.appendChild(row);
+        }, 50);
+      });
+    });
+
+    const adder = await containerBefore(
+      page, '#edit-field-generic-paragraphs-single-und-0-field-cola-cups-profiles'
+    );
+    await expect(adder).toBeVisible({ timeout: OVERLAY_MOUNT_TIMEOUT });
+
+    const rowsBefore = await page.locator(ROW_SELECTOR).count();
+
+    await adder.locator('textarea').fill('Jane Smith\nNobody Real');
+    await adder.locator('button', { hasText: 'Add all' }).click();
+
+    await expect(adder.locator('text=Added')).toBeVisible({ timeout: OVERLAY_MOUNT_TIMEOUT });
+    // Sequential, not parallel — every add-more is a server round trip that rebuilds
+    // the table, so this second row's probe only starts once the first has finished.
+    await expect(adder.locator('text=No match on this site')).toBeVisible({ timeout: OVERLAY_MOUNT_TIMEOUT });
+
+    // Exactly one new row — the miss must not have added one it then left blank.
+    expect(await page.locator(ROW_SELECTOR).count()).toBe(rowsBefore + 1);
+
+    // Playwright's own $$eval — runs the callback against matched elements inside the
+    // browser page, not a JS eval() of untrusted input.
+    const inputValues = await page.$$eval(
+      ROW_SELECTOR,
+      (els: HTMLInputElement[]) => els.map(el => el.value)
+    );
+    expect(inputValues).toContain('Jane Smith (9001)');
+  });
+});
+
+test.describe('D7 Studio: the Two-Pane Editor discovers List\'s AJAX-dependent fields, not just the ones present at first load', () => {
+  /**
+   * Reported directly: choosing a List Type left Display showing no options and no
+   * field to add a profile. Root cause was that the editor reads discoverSchema() ONCE,
+   * before Drupal's own dependent-select AJAX has run — List Type decides what Display
+   * offers, and Display in turn decides whether the filter/profile fields exist at all.
+   *
+   * This simulates that AJAX arriving, using the REAL markup Drupal actually sent —
+   * extracted from captured/list-populated.html, not invented — rather than a fixture
+   * that already has everything present, which is what every other List test uses and
+   * is exactly why this gap went unnoticed.
+   */
+  const VAGELOS = 'https://www.vagelos.columbia.edu';
+  const REAL = fs.readFileSync(path.join(FIXTURES, 'captured/list-populated.html'), 'utf8');
+
+  /** Finds the matching closing `</div>` for the div opened at `marker`, by counting. */
+  function extractDiv(html: string, marker: string): { start: number; end: number; text: string } {
+    const start = html.indexOf(marker);
+    if (start === -1) throw new Error(`marker not found: ${marker}`);
+    let pos = html.indexOf('>', start) + 1;
+    let depth = 1;
+    while (depth > 0) {
+      const nextOpen = html.indexOf('<div', pos);
+      const nextClose = html.indexOf('</div>', pos);
+      if (nextClose === -1) throw new Error('no matching closing div');
+      if (nextOpen !== -1 && nextOpen < nextClose) { depth++; pos = nextOpen + 4; }
+      else { depth--; pos = nextClose + 6; }
+    }
+    return { start, end: pos, text: html.slice(start, pos) };
+  }
+
+  /**
+   * The carrier `injectInsideForm`/`relocateWidget` wrapped around the profiles widget
+   * on an earlier, buggy capture (see the fixture's header) — its OWN content is the
+   * real "Filtered Profiles" + "Individual Profiles" markup Drupal renders, unrelated
+   * to the bug that wrapper shape came from. Stripped out here to build the "before"
+   * page, and its inner content re-used as the "AJAX response" the test injects back.
+   */
+  const PROFILES_CARRIER_MARKER =
+    '<div slot="field-field-generic-paragraphs-single-und--0--field-cola-cups-profiles--und--0--target-id-" class="d7-relocated-widget">';
+  const carrier = extractDiv(REAL, PROFILES_CARRIER_MARKER);
+  const innerStart = carrier.text.indexOf('>') + 1;
+  const FILTERS_AND_PROFILES_HTML = carrier.text.slice(innerStart, carrier.text.length - '</div>'.length);
+
+  const AFTER_DISPLAY_SELECT =
+    '<select id="edit-field-list-display-und" name="field_list_display[und]" class="form-select required ajax-processed"><option value="list" selected="selected">List</option></select>';
+  // Not itself captured — Drupal had not rendered a choice at this moment — but it is
+  // the same real element (id, name, classes), and the placeholder text is what the
+  // bug report's own screenshot showed on the live form before Display had a value.
+  const BEFORE_DISPLAY_SELECT =
+    '<select id="edit-field-list-display-und" name="field_list_display[und]" class="form-select required ajax-processed"><option value="">- Select a value -</option></select>';
+
+  // "Before": the real capture, minus the whole profiles carrier — Display's own AJAX
+  // has not even returned yet, so the filter/profile fields do not exist — and with
+  // Display's select back to unpopulated. The OTHER relocated carrier already baked
+  // into this fixture (og_group_ref's, the same earlier-capture leftover) is untouched:
+  // it is unrelated to List and this test does not depend on it either way.
+  const BEFORE_HTML =
+    REAL.slice(0, carrier.start)
+    + REAL.slice(carrier.end).replace(AFTER_DISPLAY_SELECT, BEFORE_DISPLAY_SELECT);
+
+  /** Rendered text anywhere in the page, piercing every open shadow root — the only
+   *  reliable way to check for a label that might live inside a nested shadow root
+   *  (the batch adder's own carrier), not just the editor's main one. */
+  async function shadowText(page: Page): Promise<string> {
+    return page.evaluate(() => {
+      function walk(node: Node): string {
+        let text = '';
+        if (node instanceof Element && node.shadowRoot) text += walk(node.shadowRoot);
+        node.childNodes.forEach(child => {
+          if (child.nodeType === Node.TEXT_NODE) text += child.textContent ?? '';
+          else text += walk(child);
+        });
+        return text;
+      }
+      return walk(document.body);
+    });
+  }
+
+  test('Display\'s real options and List\'s filter/profile fields appear once Drupal\'s AJAX actually renders them', async ({ page, context, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+
+    await context.route(`${VAGELOS}/node/23110/edit`, route =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: BEFORE_HTML }));
+
+    await page.goto(`${VAGELOS}/node/23110/edit`);
+    await expect(page.locator(UI).getByLabel('Title', { exact: true })).toBeVisible({ timeout: OVERLAY_MOUNT_TIMEOUT });
+
+    // Before Drupal's AJAX: Display has nothing to offer yet, and the fields that only
+    // exist once it does are not in the DOM at all.
+    const display = page.locator(UI).getByLabel('Display', { exact: true });
+    await expect(display).toHaveCount(1);
+    expect(await display.locator('option').count()).toBe(1);
+    expect(await shadowText(page)).not.toContain('Providers by specialties');
+
+    // Simulate Drupal's own AJAX response with the REAL markup it actually sends.
+    await page.evaluate(({ afterSelect, filtersHtml }) => {
+      const select = document.querySelector('#edit-field-list-display-und');
+      if (select) select.outerHTML = afterSelect;
+
+      const wrapper = document.createElement('div');
+      wrapper.innerHTML = filtersHtml;
+      document.querySelector('form')!.appendChild(wrapper.firstElementChild!);
+    }, { afterSelect: AFTER_DISPLAY_SELECT, filtersHtml: FILTERS_AND_PROFILES_HTML });
+
+    // Past the editor's 150ms debounce.
+    await page.waitForTimeout(600);
+    await expandAll(page);
+
+    // Display's mirrored control picked up the real option — not stuck on the
+    // pre-AJAX snapshot it was mounted with.
+    await expect(page.locator(UI).getByLabel('Display', { exact: true })).toHaveValue('list');
+
+    // The fields that only exist after Display was chosen are now discovered and
+    // rendered — this is "the field to add a faculty member" the report said was
+    // missing, alongside its filter checklists.
+    const text = await shadowText(page);
+    expect(text).toContain('Providers by specialties');
+    expect(text).toContain('Add several');
+
+    // And the filter checklist must NOT have been dragged into the SAME relocated
+    // carrier as the profiles widget — the sibling-collision bug the fix addresses.
+    // Before the fix, relocating the profiles widget swallowed the whole paragraph,
+    // filter selects included.
+    const specialtiesInsideProfilesCarrier = await page.evaluate(() => {
+      const carriers = Array.from(document.querySelectorAll('.d7-relocated-widget'));
+      return carriers.some(c =>
+        c.querySelector('#edit-field-generic-paragraphs-single-und-0-field-cups-specialties-raw-und'));
+    });
+    expect(specialtiesInsideProfilesCarrier).toBe(false);
   });
 });

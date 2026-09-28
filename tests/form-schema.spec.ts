@@ -709,3 +709,127 @@ test.describe('labels that would otherwise appear twice', () => {
     expect(dump).toContain('Link tooltip (Drupal: Title)');
   });
 });
+
+test.describe('List filter criteria — a real capture with the AJAX-rendered fields present', () => {
+  /**
+   * field_generic_paragraphs_single is genuinely a Paragraphs-module field, and every
+   * leaf inside it embeds that ancestor's name — which is "paragraphs" as a substring —
+   * so a name-only check would swallow all six of these into kind 'paragraphs' the same
+   * way match.ts refuses to write anything of that kind ("rebuilt, not written"). The
+   * fix is that this particular paragraph has no add-more affordance of any kind: one
+   * fixed item, cardinality 1, nothing to choose. Verified against a real capture rather
+   * than invented, because that is exactly the class of bug this project keeps finding
+   * in hand-authored fixtures.
+   */
+  test('multi-selects, the single select, and the profile autocomplete are their real kinds, not "paragraphs"', async ({ page }) => {
+    await open(page, 'captured/list-populated.html');
+    const { fields } = await schemaOf(page, '/node/23110/edit');
+
+    const byBase = (name: string) => fields.find((f: any) => f.machineName.includes(name));
+
+    expect(byBase('field_cups_specialties_raw')).toMatchObject({
+      kind: 'multiSelect', label: 'Providers by specialties',
+    });
+    expect(byBase('field_cups_expertise')).toMatchObject({
+      kind: 'multiSelect', label: 'Providers by clinical expertise',
+    });
+    expect(byBase('field_cups_sites')).toMatchObject({
+      kind: 'multiSelect', label: 'Profiles by groups',
+    });
+    expect(byBase('field_cups_departments_divisions')).toMatchObject({
+      kind: 'multiSelect', label: 'Profiles by departments/divisions',
+    });
+    expect(byBase('field_cups_work_status')).toMatchObject({
+      kind: 'select', label: 'Profiles by work status',
+    });
+    expect(byBase('field_cola_cups_profiles')).toMatchObject({
+      kind: 'autocomplete', label: 'Profile', multiValue: true,
+    });
+
+    // None of the six should have fallen into the opaque bucket.
+    for (const name of [
+      'field_cups_specialties_raw', 'field_cups_expertise', 'field_cups_sites',
+      'field_cups_departments_divisions', 'field_cups_work_status', 'field_cola_cups_profiles',
+    ]) {
+      expect(byBase(name).kind, `${name} was classified as 'paragraphs'`).not.toBe('paragraphs');
+    }
+  });
+
+  test('List Type and Display are plain selects, not swept in by the same fix', async ({ page }) => {
+    await open(page, 'captured/list-populated.html');
+    const { fields } = await schemaOf(page, '/node/23110/edit');
+    const listType = fields.find((f: any) => f.machineName === 'field_list_type[und]');
+    const listDisplay = fields.find((f: any) => f.machineName === 'field_list_display[und]');
+    expect(listType).toMatchObject({ kind: 'select', label: 'List Type' });
+    expect(listDisplay).toMatchObject({ kind: 'select', label: 'Display' });
+  });
+});
+
+test.describe('a genuinely repeatable Paragraphs field still classifies as paragraphs', () => {
+  /**
+   * The other half of the same fix, exercised through discoverSchema rather than just
+   * inspected in the markup. Built from classes copied out of the real page.html and
+   * specialty.html captures (field-widget-paragraphs-embed, paragraphs-add-more-submit,
+   * field-add-more-type) rather than invented ones — this project's history is full of
+   * hand-authored fixtures agreeing with broken code precisely because the class names
+   * were made up. No committed fixture has a POPULATED Page/Specialty paragraph item
+   * (every real capture is empty, "no items added yet"), so this is the only way to
+   * prove the add-more gate still lets a genuine item through.
+   */
+  async function withOneAddedItem(page: import('@playwright/test').Page) {
+    await page.setContent(`
+      <html><body class="node-type-page">
+        <form class="node-form" id="page-node-form">
+          <div class="field-type-paragraphs field-name-field-page-paragraphs field-widget-paragraphs-embed form-wrapper" id="edit-field-page-paragraphs">
+            <div class="form-item">
+              <label for="edit-field-page-paragraphs-und-0-field-text-und-0-value">Text</label>
+              <textarea id="edit-field-page-paragraphs-und-0-field-text-und-0-value"
+                name="field_page_paragraphs[und][0][field_text][und][0][value]" class="text-full"></textarea>
+            </div>
+            <div id="field-page-paragraphs-und-add-more">
+              <select class="field-add-more-type form-select" id="edit-field-page-paragraphs-und-add-more-type"
+                name="field_page_paragraphs_add_more_type">
+                <option value="text">Text</option>
+              </select>
+              <input class="field-add-more-submit paragraphs-add-more-submit form-submit" type="submit"
+                id="edit-field-page-paragraphs-und-add-more-add-more"
+                name="field_page_paragraphs_add_more_add_more" value="Add new Content Item">
+            </div>
+          </div>
+          <input type="submit" id="edit-submit" name="op" value="Save as draft">
+        </form>
+      </body></html>
+    `);
+  }
+
+  test('the added item classifies as paragraphs, not textarea', async ({ page }) => {
+    await withOneAddedItem(page);
+    await page.addScriptTag({ content: bundle });
+    const kind = await page.evaluate(() => {
+      const api = (window as any).FormSchema;
+      const schema = api.discoverSchema(document, { pathname: '/node/add/page' });
+      return schema.fields.find((f: any) =>
+        f.machineName === 'field_page_paragraphs[und][0][field_text][und][0][value]'
+      )?.kind ?? null;
+    });
+    expect(kind).toBe('paragraphs');
+  });
+
+  test('removing the add-more select and button (verifying the guard, not just the happy path) lets it fall through to its native kind', async ({ page }) => {
+    // Same markup, minus the add-more affordance — i.e. exactly List's shape. Proves the
+    // gate is actually doing the gating, not just agreeing with whatever the code does.
+    await withOneAddedItem(page);
+    await page.evaluate(() => {
+      document.getElementById('field-page-paragraphs-und-add-more')?.remove();
+    });
+    await page.addScriptTag({ content: bundle });
+    const kind = await page.evaluate(() => {
+      const api = (window as any).FormSchema;
+      const schema = api.discoverSchema(document, { pathname: '/node/add/page' });
+      return schema.fields.find((f: any) =>
+        f.machineName === 'field_page_paragraphs[und][0][field_text][und][0][value]'
+      )?.kind ?? null;
+    });
+    expect(kind).toBe('wysiwyg');
+  });
+});

@@ -212,6 +212,39 @@ export interface AddItemResult {
 }
 
 /**
+ * Clicks an add-more button and waits for a new delta to appear.
+ *
+ * Shared by addAnotherItem (which first has to choose a bundle) and addAnotherRow
+ * (which has none to choose) — everything after the button is found is identical.
+ */
+async function clickAddMoreAndWait(
+  button: HTMLInputElement,
+  form: HTMLFormElement,
+  baseName: string,
+  timeoutMs: number,
+  root: Document
+): Promise<AddItemResult> {
+  const before = new Set(deltasOf(form, baseName));
+  button.click();
+
+  const appeared = await waitFor(
+    () => deltasOf(form, baseName).some(delta => !before.has(delta)),
+    root.body ?? form,
+    timeoutMs
+  );
+
+  if (!appeared) {
+    return {
+      ok: false, delta: null,
+      reason: 'Drupal did not add the item in time — the site may be slow, or the request failed',
+    };
+  }
+
+  const added = deltasOf(form, baseName).filter(delta => !before.has(delta));
+  return { ok: true, delta: added[added.length - 1], reason: null };
+}
+
+/**
  * Asks Drupal to add one item of a given type, and waits for it to appear.
  *
  * The type select is set through Drupal's own control and change is dispatched, because
@@ -242,24 +275,53 @@ export async function addAnotherItem(
   );
   if (!button) return { ok: false, delta: null, reason: 'this form has no "Add another item" button' };
 
-  const before = new Set(deltasOf(form, baseName));
-  button.click();
+  return clickAddMoreAndWait(button, form, baseName, timeoutMs, root);
+}
 
-  const appeared = await waitFor(
-    () => deltasOf(form, baseName).some(delta => !before.has(delta)),
-    root.body ?? form,
-    timeoutMs
+/**
+ * The field's own "add more" base — the machine name up to and including its last
+ * `[und][N]` delta marker, stripped of the delta and everything after. Greedy on
+ * purpose: for a field nested inside a paragraph item, e.g.
+ * `field_generic_paragraphs_single[und][0][field_cola_cups_profiles][und][0][target_id]`,
+ * the greedy match backtracks to the LAST `[und][digit]` in the string, landing on
+ * `field_generic_paragraphs_single[und][0][field_cola_cups_profiles]` — the field's own
+ * delta container, not its paragraph ancestor's.
+ */
+export function widgetBaseName(machineName: string): string | null {
+  return machineName.match(/^(.+)\[und\]\[\d+\]/)?.[1] ?? null;
+}
+
+/**
+ * Adds another delta to a plain multi-value widget that has no bundle to choose —
+ * an ordinary "Add another item" field, such as a multi-value entityreference-
+ * autocomplete table. Verified against a real capture of List's "Individual Profiles"
+ * widget: it renders exactly this shape, with no `_add_more_type` select at all, because
+ * every item is the same kind of thing.
+ *
+ * `anyElement` is any control already known to belong to the widget — the caller has
+ * one from discovery, and locating the add-more button by walking up from it is more
+ * robust than reconstructing an id, because Drupal's id and name conventions diverge in
+ * exactly this case (button name strips brackets to underscores; the wrapper id does
+ * the same but the two are not always the mechanical inverse of each other).
+ */
+export async function addAnotherRow(
+  anyElement: HTMLElement,
+  baseName: string,
+  timeoutMs = 15000,
+  root: Document = document
+): Promise<AddItemResult> {
+  const form = root.querySelector<HTMLFormElement>('form.node-form, form[id$="-node-form"]');
+  if (!form) return { ok: false, delta: null, reason: 'the node form is no longer on the page' };
+
+  const widget = anyElement.closest<HTMLElement>('[class*="field-widget-"]');
+  if (!widget) return { ok: false, delta: null, reason: 'could not find this field’s own widget wrapper' };
+
+  const button = widget.querySelector<HTMLInputElement>(
+    'input[type="submit"].field-add-more-submit, input[type="submit"][name$="_add_more"]'
   );
+  if (!button) return { ok: false, delta: null, reason: 'this form has no "Add another item" button' };
 
-  if (!appeared) {
-    return {
-      ok: false, delta: null,
-      reason: 'Drupal did not add the item in time — the site may be slow, or the request failed',
-    };
-  }
-
-  const added = deltasOf(form, baseName).filter(delta => !before.has(delta));
-  return { ok: true, delta: added[added.length - 1], reason: null };
+  return clickAddMoreAndWait(button, form, baseName, timeoutMs, root);
 }
 
 export interface ItemOutcome {

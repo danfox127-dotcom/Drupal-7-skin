@@ -29,6 +29,7 @@ export type FieldKind =
   | 'textarea'
   | 'wysiwyg'
   | 'select'
+  | 'multiSelect'
   | 'checkbox'
   | 'checkboxGroup'
   | 'radioGroup'

@@ -63,7 +63,7 @@ export interface MatchResult {
 /** Widget shapes that can carry each other's values. */
 const KIND_FAMILY: Record<FieldKind, string> = {
   text: 'text', textarea: 'text', wysiwyg: 'text',
-  select: 'choice', radioGroup: 'choice', checkboxGroup: 'choice',
+  select: 'choice', multiSelect: 'choice', radioGroup: 'choice', checkboxGroup: 'choice',
   autocomplete: 'reference',
   checkbox: 'flag',
   date: 'date',

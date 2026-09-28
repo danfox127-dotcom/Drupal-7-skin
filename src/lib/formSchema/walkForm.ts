@@ -60,6 +60,63 @@ export function baseNameOf(name: string): string {
   return (bracket === -1 ? name : name.slice(0, bracket)).trim();
 }
 
+/**
+ * Normalizes a Drupal control name to a bracket-free identity, so a bracket-style name
+ * (`field_x[und][0][fid]`) and the underscore-joined form Drupal gives its OWN buttons
+ * (`field_x_und_0_add_more`) compare equal up to the point they actually diverge.
+ *
+ * Unwraps Media/managed-file's `media[x_und_N]` / `files[x_und_N]` shape first, the same
+ * way baseNameOf does — this has to apply here too, not just when computing a field's own
+ * base name: belongsToPreciseBase calls this on a CANDIDATE name, and the Media launcher's
+ * own name is one such candidate that must resolve the same way its sibling `fid` does.
+ */
+function canonicalName(name: string): string {
+  const wrapped = name.match(/^(?:files|media)\[(.+?)\]$/);
+  if (wrapped) return wrapped[1].replace(/_und(_\d+)?$/, '').trim();
+
+  return name
+    .replace(/\[(\w*)\]/g, '_$1')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '');
+}
+
+/**
+ * Like baseNameOf, but scoped to ONE field rather than collapsed to the outermost one.
+ *
+ * baseNameOf truncates at the first `[`, which is right for unifying Media's
+ * differently-shaped launcher name with its own hidden fid, but wrong the moment a
+ * field sits inside a Paragraphs item alongside SIBLING fields: `field_x[und][0]`
+ * wrapping both `field_y` and `field_z` gives both the SAME baseNameOf, "field_x" — so
+ * anything keyed on it cannot tell the two apart. This is what widgetWrapperFor's
+ * relocation climb needs instead: List's "Individual Profiles" table sits beside five
+ * unrelated filter selects inside the same fixed-config paragraph item, and relocating
+ * it by the loose base name dragged all five along with it.
+ *
+ * Strips back to the LAST `_und_<delta>` segment (after canonicalizing, which includes
+ * the Media/files unwrap above), which keeps every delta of THIS field — the multiple
+ * rows a multi-value table can have — while excluding a sibling field's own,
+ * differently-named subtree. Media's own launcher has no delta segment left after its
+ * unwrap strips it outright, so it falls through to the whole (already correct) result.
+ */
+export function preciseBaseName(name: string): string {
+  const canonical = canonicalName(name);
+  const deltaPattern = /_und_\d+/g;
+  let lastIndex = -1;
+  let match: RegExpExecArray | null;
+  while ((match = deltaPattern.exec(canonical))) {
+    lastIndex = match.index;
+  }
+  return lastIndex === -1 ? canonical : canonical.slice(0, lastIndex);
+}
+
+/** True when `name` belongs to the field whose precise base name is `ownBase` — an
+ *  exact match, or a continuation at an underscore boundary (never a bare substring,
+ *  which would let "field_x2" pass for "field_x"). */
+export function belongsToPreciseBase(name: string, ownBase: string): boolean {
+  const canonical = canonicalName(name);
+  return canonical === ownBase || canonical.startsWith(`${ownBase}_`);
+}
+
 /** Trailing segments Drupal uses for the parts of one date/time widget. */
 const DATE_PART = /\[(month|day|year|hour|minute|second|ampm)\]$/i;
 
@@ -76,6 +133,32 @@ function helpFor(wrapper: Element): string {
 }
 
 /**
+ * Whether an element sits inside a Paragraphs-module widget that actually offers a way
+ * to add another item — a bundle `<select>`, a `paragraphs-add-more-submit` button, or
+ * one of the per-bundle "Add X" buttons some sites render instead of a select.
+ *
+ * The distinction matters because a field nested inside a Paragraphs widget is claimed
+ * by paragraphs.ts's own capture/rebuild, not by writeValue — right for a REPEATABLE
+ * field (Page's FAQ/CTA items), wrong for a FIXED single-item configuration paragraph.
+ * Verified against a real capture of List's "Filtered Profiles" widget
+ * (field_generic_paragraphs_single, cardinality 1): Drupal renders exactly one item with
+ * no way to add another, so there is no bundle `<select>` and no
+ * `paragraphs-add-more-submit` button anywhere in the ancestor.
+ *
+ * Exported so listEnhancements.tsx can find the SAME fixed-config paragraph fields this
+ * gates into their real native kind, to scope the batch profile-adder to exactly them —
+ * one source of truth for "is this a real repeatable Paragraphs item", not two that can
+ * drift apart.
+ */
+export function isAddableParagraphsWidget(el: Element): boolean {
+  const paragraphsWidget = el.closest('.field-widget-paragraphs-embed');
+  if (!paragraphsWidget) return false;
+  return Boolean(paragraphsWidget.querySelector(
+    'select.field-add-more-type, input.paragraphs-add-more-submit, input[name*="_add_more_bundle_"]'
+  ));
+}
+
+/**
  * Classifies the widget.
  *
  * Autocomplete detection matters: Drupal marks these with `.form-autocomplete`
@@ -88,8 +171,9 @@ function classify(controls: HTMLElement[], wrapper: Element): FieldKind {
   const first = controls[0];
   const tag = first.tagName;
 
-  if (wrapper.querySelector('.paragraphs-subform, [class*="paragraph-type"]')
-    || /paragraph/i.test(first.getAttribute('name') ?? '')) {
+  if (isAddableParagraphsWidget(wrapper)
+    && (wrapper.querySelector('.paragraphs-subform, [class*="paragraph-type"]')
+      || /paragraph/i.test(first.getAttribute('name') ?? ''))) {
     return 'paragraphs';
   }
 
@@ -98,7 +182,7 @@ function classify(controls: HTMLElement[], wrapper: Element): FieldKind {
     if (wrapper.closest('.container-inline-date') || wrapper.querySelector('.date-no-float')) {
       return 'date';
     }
-    return 'select';
+    return (first as HTMLSelectElement).multiple ? 'multiSelect' : 'select';
   }
 
   if (tag === 'TEXTAREA') {

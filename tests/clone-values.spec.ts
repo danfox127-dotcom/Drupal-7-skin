@@ -138,6 +138,15 @@ test.describe('resolving labels onto another site', () => {
     expect(valueForLabels(single, ['A']).value).toBe('1');
   });
 
+  test('a multiSelect returns an array too, same as checkboxGroup', () => {
+    // The two are the same DATA in different widgets — a select rendered with
+    // `multiple` rather than one checkbox per option. Without this, List's "Providers
+    // by specialties" (a <select multiple>) would resolve to a single string and
+    // writeValue's multiSelect case would only ever receive one term.
+    const destination = field('multiSelect', opts([['1', 'A'], ['2', 'B']]));
+    expect(valueForLabels(destination, ['A', 'B']).value).toEqual(['1', '2']);
+  });
+
   test('nothing resolves to the placeholder option', () => {
     const destination = field('select', opts([['_none', '- Select -'], ['3', 'Real']]));
     expect(valueForLabels(destination, ['- Select -']).missing).toEqual(['- Select -']);

@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import stylesheet from '../styles/main.css?inline';
-import { baseNameOf } from '../lib/formSchema/walkForm';
+import { preciseBaseName, belongsToPreciseBase } from '../lib/formSchema/walkForm';
 
 /**
  * One parsed stylesheet shared by every shadow root via `adoptedStyleSheets`.
@@ -180,10 +180,13 @@ export function slotNameFor(machineName: string): string {
  * second — which is most of the point of the field.
  *
  * So it climbs while every control inside the candidate still belongs to this field, by
- * name prefix. That keeps the deltas, the row-weight selects and the add-more button
- * together, and stops before swallowing a neighbouring field.
+ * name. That keeps the deltas, the row-weight selects and the add-more button together,
+ * and stops before swallowing a neighbouring field.
+ *
+ * `preciseBase` MUST be `preciseBaseName(field.machineName)`, not the field's loose
+ * `baseName` — see belongsToPreciseBase for why the loose one is the wrong tool here.
  */
-function widgetWrapperFor(element: HTMLElement, baseName: string): HTMLElement | null {
+function widgetWrapperFor(element: HTMLElement, preciseBase: string): HTMLElement | null {
   let best = (element.closest<HTMLElement>('.form-item') ?? element.parentElement) as HTMLElement | null;
   if (!best) return null;
 
@@ -193,8 +196,8 @@ function widgetWrapperFor(element: HTMLElement, baseName: string): HTMLElement |
    * A plain prefix test is not enough, and getting it wrong is what made a chosen image
    * never appear. The Media module names its launcher `media[field_image_teaser_und_0]`
    * while its siblings — the hidden fid, the preview, the Remove button — are named
-   * `field_image_teaser[und][0][fid]`. Since baseName is `field_image_teaser`, the
-   * launcher's own name does not start with it, so the climb broke at the very first
+   * `field_image_teaser[und][0][fid]`. Since the loose base name is `field_image_teaser`,
+   * the launcher's own name does not start with it, so the climb broke at the very first
    * step and relocated only the innermost .form-item.
    *
    * Everything else stayed behind, INCLUDING Drupal's AJAX wrapper. So when Media
@@ -202,12 +205,15 @@ function widgetWrapperFor(element: HTMLElement, baseName: string): HTMLElement |
    * replacement landed in the part of the form we had hidden: the file attached and saved
    * correctly, and the editor simply never showed it as selected.
    *
-   * Normalising through baseNameOf makes `media[x_und_0]` and `x[und][0][fid]` both
-   * resolve to `x`, so they are recognised as the same field — while a neighbouring
-   * field still resolves differently and stops the climb.
+   * belongsToPreciseBase makes `media[x_und_0]` and `x[und][0][fid]` both resolve the
+   * same way, so they are recognised as the same field — while a SIBLING field nested in
+   * the same Paragraphs item (a different leaf under the same outer `field_x[und][0]`)
+   * resolves differently and stops the climb. That sibling case is exactly what a loose
+   * baseName equality gets wrong: List's "Individual Profiles" table and its five
+   * unrelated filter selects all share the same outer paragraph, so a loose base name
+   * cannot tell them apart and the climb swallowed all six into one relocated widget.
    */
-  const belongsToField = (name: string) =>
-    name.startsWith(baseName) || baseNameOf(name) === baseName;
+  const belongsToField = (name: string) => belongsToPreciseBase(name, preciseBase);
 
   let node = best.parentElement;
   while (node && node.tagName !== 'FORM' && !node.classList.contains('d7-proxy-ui-form-host')) {
@@ -227,10 +233,9 @@ function widgetWrapperFor(element: HTMLElement, baseName: string): HTMLElement |
 export function relocateWidget(
   host: HTMLElement,
   element: HTMLElement,
-  machineName: string,
-  baseName: string
+  machineName: string
 ): string | null {
-  const wrapper = widgetWrapperFor(element, baseName);
+  const wrapper = widgetWrapperFor(element, preciseBaseName(machineName));
   if (!wrapper || wrapper === host || host.contains(wrapper)) return null;
 
   const slot = slotNameFor(machineName);
@@ -257,6 +262,32 @@ export function relocateWidget(
   host.appendChild(carrier);
 
   return slot;
+}
+
+/**
+ * Mounts a component as a light-DOM child of `host`, carrying `slot`, so it projects into
+ * whichever shadow tree's `<slot name={slotName}>` claims it — the same projection
+ * relocateWidget uses for a moved native widget, but for a React-rendered addition
+ * instead. Appended, never inserted first: a widget for the same field relocated
+ * AFTERWARD lands later in `host`'s children and so renders below this one within the
+ * slot, which is what puts a batch-add control above the native table it feeds.
+ */
+export function injectIntoSlot(host: HTMLElement, slotName: string, component: React.ReactNode) {
+  const carrier = document.createElement('div');
+  carrier.setAttribute('slot', slotName);
+
+  const shadow = carrier.attachShadow({ mode: 'open' });
+  applyStyles(shadow);
+
+  const rootElement = document.createElement('div');
+  shadow.appendChild(rootElement);
+
+  host.appendChild(carrier);
+
+  const root = ReactDOM.createRoot(rootElement);
+  root.render(<React.StrictMode>{component}</React.StrictMode>);
+
+  return { carrier, root };
 }
 
 export function injectComponent(

@@ -121,6 +121,9 @@ export function readValue(field: FieldDescriptor): FieldValue {
         .filter(el => (el as HTMLInputElement).checked)
         .map(el => (el as HTMLInputElement).value);
 
+    case 'multiSelect':
+      return Array.from((els[0] as HTMLSelectElement).selectedOptions).map(opt => opt.value);
+
     case 'radioGroup': {
       const checked = els.find(el => (el as HTMLInputElement).checked);
       return checked ? (checked as HTMLInputElement).value : '';
@@ -197,6 +200,21 @@ export function writeValue(field: FieldDescriptor, value: FieldValue): boolean {
       if (!match) return false;
       (match as HTMLInputElement).checked = true;
       notify(match);
+      return true;
+    }
+
+    case 'multiSelect': {
+      const select = els[0] as HTMLSelectElement;
+      const wanted = new Set(Array.isArray(value) ? value.map(String) : [String(value)]);
+      for (const option of Array.from(select.options)) {
+        option.selected = wanted.has(option.value);
+      }
+      notify(select);
+      // Any requested value with no matching <option> is a failed write, same contract
+      // as checkboxGroup — silently keeping only the values that happened to exist would
+      // look like success while quietly dropping the rest.
+      const available = new Set(Array.from(select.options).map(opt => opt.value));
+      for (const v of wanted) if (!available.has(v)) return false;
       return true;
     }
 

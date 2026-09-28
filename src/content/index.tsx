@@ -1,5 +1,5 @@
 import React from 'react';
-import { injectComponent, injectOverlay, injectInsideForm, relocateWidget } from './inject';
+import { injectComponent, injectOverlay, injectInsideForm, injectIntoSlot, relocateWidget, slotNameFor } from './inject';
 import { MenuParentField } from '../components/MenuParentField';
 import { HtmlExport } from '../components/HtmlExport';
 import { MenuTree, MenuItem } from '../components/MenuTree';
@@ -28,6 +28,8 @@ import { captureFixture } from '../lib/captureFixture';
 import { maybeShowImportReview } from './importFlow';
 import { pastePage } from './cloneFlow';
 import { refreshCopies, registerPasteHandler } from '../lib/clone/pasteAction';
+import { enhanceListForm, isFixedConfigParagraphField } from './listEnhancements';
+import { DoctorBatchAdder } from '../components/editor/DoctorBatchAdder';
 import { copyPage } from '../lib/clone/copyPage';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
 
@@ -561,6 +563,19 @@ const init = async () => {
       );
     }
 
+    /**
+     * List content type: enhances the native form in place rather than replacing it.
+     *
+     * Independent of the schema computed above — it does its own discoverSchema() calls
+     * as Drupal's AJAX re-renders the filter fields, which do not exist on first load.
+     * Skipped when the Two-Pane Editor is on: that editor discovers and renders these
+     * same fields itself, via its own rescan below, and running both would mean two
+     * competing controls bound to the same native element.
+     */
+    if (!settings.nodeEditor) {
+      enhanceListForm();
+    }
+
     // Feature 5: two-pane node editor overlay.
     //
     // The native form is hidden rather than removed: every overlay control writes to
@@ -635,7 +650,7 @@ const init = async () => {
         if (!isRich && !RELOCATE_KINDS.has(field.kind)) continue;
         const element = field.elements[0];
         if (!element) continue;
-        if (relocateWidget(mount.container, element, field.machineName, field.baseName)) {
+        if (relocateWidget(mount.container, element, field.machineName)) {
           slotted.add(field.machineName);
         } else if (isRich) {
           // The move failed, so put the editor back rather than leaving it destroyed.
@@ -718,6 +733,61 @@ const init = async () => {
           }
         }
       }
+
+      /**
+       * Re-reads the form as Drupal's OWN AJAX changes it, and re-renders.
+       *
+       * The schema above is a single snapshot taken before any of that AJAX has run, so
+       * on a form with a dependent select — List Type choosing what Display offers, then
+       * Display revealing the filter and profile fields — the editor was stuck showing
+       * pre-AJAX options forever and never discovered fields that plain did not exist
+       * yet at that snapshot. Reported directly: choosing a List Type left Display
+       * showing no options and no field to add a profile.
+       *
+       * Debounced, mirroring listEnhancements.tsx's own observer, since Drupal's AJAX
+       * response touches many nodes in one batch. A field already relocated is skipped
+       * by name, so this settles after Drupal's response finishes rather than looping —
+       * moving a widget is itself a childList mutation the observer sees, but the next
+       * pass finds nothing left to move and produces no further mutation.
+       */
+      let rescanQueued = false;
+      const rescanEditor = () => {
+        const fresh = discoverSchema();
+        if (!fresh) return;
+
+        for (const field of fresh.fields) {
+          if (slotted.has(field.machineName)) continue;
+          const element = field.elements[0];
+          if (!element) continue;
+
+          // List's "Individual Profiles": only reachable through this rescan, since it
+          // does not exist until Display has been chosen.
+          if (field.kind === 'autocomplete' && field.multiValue && isFixedConfigParagraphField(field)) {
+            injectIntoSlot(
+              mount.container,
+              slotNameFor(field.machineName),
+              <DoctorBatchAdder anyElement={element} fieldLabel={field.label} />
+            );
+          }
+
+          if (RELOCATE_KINDS.has(field.kind) && relocateWidget(mount.container, element, field.machineName)) {
+            slotted.add(field.machineName);
+          }
+        }
+
+        mount.root.render(
+          <React.StrictMode>
+            <NodeEditor schema={fresh} slottedFields={new Set(slotted)} />
+          </React.StrictMode>
+        );
+      };
+
+      const formObserver = new MutationObserver(() => {
+        if (rescanQueued) return;
+        rescanQueued = true;
+        setTimeout(() => { rescanQueued = false; rescanEditor(); }, 150);
+      });
+      formObserver.observe(schema.form, { childList: true, subtree: true });
     }
 
   }

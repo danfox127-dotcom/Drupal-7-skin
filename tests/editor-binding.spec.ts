@@ -731,3 +731,84 @@ test.describe('against every captured content type', () => {
     }
   });
 });
+
+test.describe('multi-select write-back — real capture of List\'s Filtered Profiles', () => {
+  /**
+   * A plain <select multiple> was read and written as if it were single-value: readValue
+   * returned only the FIRST selected option, and writeValue's default branch assigned
+   * `.value` (which selects one option and leaves the rest as they were, or does nothing
+   * useful at all) rather than clearing and re-selecting. That silently dropped every
+   * selection past the first — real on Specialty's "Specialty Subpages" today, and it
+   * would have been real on List's "Providers by specialties" the moment kind stopped
+   * being misclassified as 'paragraphs'.
+   */
+  test('reading returns every selected option, not just the first', async ({ page }) => {
+    await open(page, 'captured/list-populated.html');
+    const result = await page.evaluate(() => {
+      const api = (window as any).Editor;
+      const schema = api.discoverSchema(document, { pathname: '/node/23110/edit' });
+      const field = schema.fields.find((f: any) =>
+        f.machineName.includes('field_cups_specialties_raw'));
+      const select = document.getElementById(
+        'edit-field-generic-paragraphs-single-und-0-field-cups-specialties-raw-und'
+      ) as HTMLSelectElement;
+      const labels = [
+        'ABIM Board Certified Internal Medicine', 'ABIM Board Certified Medical Oncology',
+        'Addiction Medicine (Substance Use Disorder)',
+      ];
+      const wantedValues = labels.map(label => {
+        const opt = Array.from(select.options).find(o => o.text.trim() === label)!;
+        opt.selected = true;
+        return opt.value;
+      });
+      return { kind: field.kind, value: api.readValue(field), wantedValues };
+    });
+    expect(result.kind).toBe('multiSelect');
+    // readValue works in raw option VALUES, same as checkboxGroup — label resolution is
+    // clone/values.ts's job, a layer up.
+    expect(new Set(result.value)).toEqual(new Set(result.wantedValues));
+    expect(result.value.length).toBe(3);
+  });
+
+  test('writing replaces the whole selection, clearing what is no longer wanted', async ({ page }) => {
+    await open(page, 'captured/list-populated.html');
+    const result = await page.evaluate(() => {
+      const api = (window as any).Editor;
+      const schema = api.discoverSchema(document, { pathname: '/node/23110/edit' });
+      const field = schema.fields.find((f: any) =>
+        f.machineName.includes('field_cups_departments_divisions'));
+      const select = document.getElementById(
+        'edit-field-generic-paragraphs-single-und-0-field-cups-departments-divisions-und'
+      ) as HTMLSelectElement;
+      // Pre-select something the new write should clear.
+      select.options[1].selected = true;
+
+      // Two targets, not one: `.value =` on a multi-select can accidentally select a
+      // single requested option even without real multiSelect support, so a one-target
+      // test would pass whether or not the fix exists. Two only pass through the real
+      // per-option selection logic.
+      const wanted = ['Department of Anesthesiology', 'College of Dental Medicine'];
+      const values = wanted.map(label =>
+        Array.from(select.options).find(o => o.text.trim() === label)!.value);
+      const ok = api.writeValue(field, values);
+      return {
+        ok,
+        selected: Array.from(select.selectedOptions).map((o: HTMLOptionElement) => o.text.trim()).sort(),
+      };
+    });
+    expect(result.ok).toBe(true);
+    expect(result.selected).toEqual(['College of Dental Medicine', 'Department of Anesthesiology']);
+  });
+
+  test('a value with no matching option is a failed write, same contract as checkboxGroup', async ({ page }) => {
+    await open(page, 'captured/list-populated.html');
+    const ok = await page.evaluate(() => {
+      const api = (window as any).Editor;
+      const schema = api.discoverSchema(document, { pathname: '/node/23110/edit' });
+      const field = schema.fields.find((f: any) =>
+        f.machineName.includes('field_cups_departments_divisions'));
+      return api.writeValue(field, ['Nothing this site has']);
+    });
+    expect(ok).toBe(false);
+  });
+});

@@ -3,6 +3,7 @@ import * as esbuild from 'esbuild';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { widgetBaseName } from '../src/lib/clone/paragraphs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES = path.join(__dirname, 'fixtures');
@@ -30,6 +31,7 @@ test.beforeAll(async () => {
     export { discoverSchema } from '../../src/lib/formSchema';
     export {
       relativeName, detectBundle, effectiveKind, addAnotherItem, rebuildParagraphs,
+      addAnotherRow, widgetBaseName,
     } from '../../src/lib/clone/paragraphs';
   `);
   const built = await esbuild.build({
@@ -64,7 +66,7 @@ async function openForm(
           <label for="edit-title">Title</label>
           <input type="text" id="edit-title" name="title_field[und][0][value]">
         </div>
-        <div id="edit-field-page-paragraphs">
+        <div id="edit-field-page-paragraphs" class="field-type-paragraphs field-name-field-page-paragraphs field-widget-paragraphs-embed form-wrapper">
           <label>Page Paragraphs</label>
           <div id="paragraph-items">${existing}</div>
           <div class="form-item">
@@ -457,5 +459,120 @@ test.describe('rebuilding a whole widget', () => {
 
     expect(outcome.items[0].ok).toBe(false);
     expect(outcome.items[0].problems).toEqual(['Caption']);
+  });
+});
+
+test.describe('widgetBaseName', () => {
+  test('strips the trailing delta and subfield, keeping everything before it', () => {
+    expect(widgetBaseName('field_page_paragraphs[und][2][field_text][und][0][value]'))
+      .toBe('field_page_paragraphs[und][2][field_text]');
+  });
+
+  test('a nested multi-value field inside a fixed paragraph item keeps its own delta container', () => {
+    // List's real shape: the greedy match must land on the LAST [und][N], which is the
+    // entityreference field's own container, not its paragraph ancestor's.
+    expect(widgetBaseName(
+      'field_generic_paragraphs_single[und][0][field_cola_cups_profiles][und][0][target_id]'
+    )).toBe('field_generic_paragraphs_single[und][0][field_cola_cups_profiles]');
+  });
+
+  test('a name with no delta marker returns null', () => {
+    expect(widgetBaseName('title_field[und][0][value]'.replace('[und][0]', ''))).toBeNull();
+  });
+});
+
+test.describe('adding a row to a plain multi-value widget with no bundle to choose', () => {
+  /**
+   * Real markup this time, not a stand-in — List's "Individual Profiles" table, which
+   * genuinely has no `_add_more_type` select at all: every item is the same shape, so
+   * there is nothing to pick. The stub only supplies what a live Drupal AJAX response
+   * would: appending the next delta's row into the SAME table, asynchronously.
+   */
+  async function openListForm(page: import('@playwright/test').Page, delayMs: number | null = 30) {
+    const html = fs.readFileSync(
+      path.join(FIXTURES, 'captured', 'list-populated.html'), 'utf8'
+    );
+    await page.goto('data:text/html,<body></body>');
+    await page.setContent(html);
+    await page.evaluate((delay) => {
+      const BASE = 'field_generic_paragraphs_single[und][0][field_cola_cups_profiles]';
+      const button = document.querySelector<HTMLInputElement>(
+        'input[name="field_generic_paragraphs_single_und_0_field_cola_cups_profiles_add_more"]'
+      )!;
+      const table = document.getElementById('field-cola-cups-profiles-values')!;
+      const tbody = table.querySelector('tbody')!;
+
+      button.addEventListener('click', event => {
+        event.preventDefault();
+        if (delay === null) return;   // models a request that never comes back
+        setTimeout(() => {
+          const row = tbody.querySelector('tr')!.cloneNode(true) as HTMLElement;
+          // The full name has the OUTER paragraph's own delta too
+          // (field_generic_paragraphs_single[und][0][...][und][0][target_id]) — replacing
+          // the first "[0]" would bump the wrong one. Only the field's own delta,
+          // immediately after its own name, is what a real add-more increments.
+          row.querySelectorAll('[name], [id]').forEach(el => {
+            el.setAttribute('name', (el.getAttribute('name') ?? '')
+              .replace('[field_cola_cups_profiles][und][0]', '[field_cola_cups_profiles][und][1]'));
+            el.setAttribute('id', (el.getAttribute('id') ?? '')
+              .replace('field-cola-cups-profiles-und-0-', 'field-cola-cups-profiles-und-1-'));
+            if (el.tagName === 'INPUT') (el as HTMLInputElement).value = '';
+          });
+          tbody.appendChild(row);
+        }, delay);
+      });
+    }, delayMs);
+
+    await page.addScriptTag({ content: bundle });
+  }
+
+  test('a new row appears, and the wait is on the DOM rather than a timer', async ({ page }) => {
+    await openListForm(page, 300);
+    const anyControl = await page.evaluate(() =>
+      document.querySelector('[name$="[target_id]"][name*="field_cola_cups_profiles"]')
+    );
+    const result = await page.evaluate(() => {
+      const anyEl = document.querySelector(
+        '[name$="[target_id]"][name*="field_cola_cups_profiles"]'
+      ) as HTMLElement;
+      return (window as any).P.addAnotherRow(
+        anyEl,
+        'field_generic_paragraphs_single[und][0][field_cola_cups_profiles]',
+        5000,
+        document
+      );
+    });
+    expect(result.ok).toBe(true);
+    expect(result.delta).toBe(1);
+  });
+
+  test('a request that never returns is reported, not waited on forever', async ({ page }) => {
+    await openListForm(page, null);
+    const result = await page.evaluate(() => {
+      const anyEl = document.querySelector(
+        '[name$="[target_id]"][name*="field_cola_cups_profiles"]'
+      ) as HTMLElement;
+      return (window as any).P.addAnotherRow(
+        anyEl,
+        'field_generic_paragraphs_single[und][0][field_cola_cups_profiles]',
+        400,
+        document
+      );
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('did not add the item in time');
+  });
+
+  test('an element with no "add another item" button in its widget is reported', async ({ page }) => {
+    await openListForm(page);
+    const result = await page.evaluate(() => {
+      // The single-value work-status select has no add-more button of its own.
+      const anyEl = document.getElementById(
+        'edit-field-generic-paragraphs-single-und-0-field-cups-work-status-und'
+      ) as HTMLElement;
+      return (window as any).P.addAnotherRow(anyEl, 'irrelevant', 500, document);
+    });
+    expect(result.ok).toBe(false);
+    expect(result.reason).toContain('Add another item');
   });
 });

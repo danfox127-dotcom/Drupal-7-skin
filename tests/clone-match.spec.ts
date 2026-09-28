@@ -213,6 +213,35 @@ test.describe('translating a value for this form', () => {
     expect(t.refusal).toBeNull();
   });
 
+  test('a multiSelect source translates onto a multiSelect target, same as checkboxGroup', () => {
+    // List's "Providers by specialties" is exactly this shape: a <select multiple>
+    // full of taxonomy term labels that must resolve to the destination's own ids.
+    const t = translate(
+      captured({
+        kind: 'multiSelect', value: ['1', '2'],
+        optionLabels: ['ABIM Board Certified Internal Medicine', 'Addiction Medicine'],
+      }),
+      field({ kind: 'multiSelect', options: opts([['9', 'ABIM Board Certified Internal Medicine']]) })
+    );
+    expect(t.value).toEqual(['9']);
+    expect(t.missing).toEqual(['Addiction Medicine']);
+  });
+
+  test('a checkboxGroup source still matches a multiSelect target — same family, different widget', () => {
+    const result = matchFields(
+      snapshot([captured({
+        machineName: 'field_specialties[und]', baseName: 'field_specialties', label: 'Specialties',
+        kind: 'checkboxGroup', value: ['1'], optionLabels: ['Cardiology'],
+      })]),
+      schema([field({
+        machineName: 'field_specialties[und][]', baseName: 'field_specialties', label: 'Specialties',
+        kind: 'multiSelect', options: opts([['9', 'Cardiology']]),
+      })])
+    );
+    expect(result.matches[0].tier).toBe('base-name');
+    expect(result.matches[0].value).toEqual(['9']);
+  });
+
   test('an entity reference carries the title and asks to be checked', () => {
     const t = translate(
       captured({ kind: 'autocomplete', value: 'IgA Nephropathy (8821)' }),

@@ -72,6 +72,12 @@ export const FieldControl = ({ field, error, dense, slotted: slottedProp, onChan
   const slotted = slottedProp ?? relocated.has(field.machineName);
 
   const [value, setValue] = useState<FieldValue>(() => readValue(field));
+  // Only rendered for kind 'multiSelect', but declared unconditionally per the rules of
+  // hooks. A plain <select multiple> forces ctrl-click-and-scroll over a list that can
+  // run into the hundreds (Providers by specialties); a filter box is what makes that
+  // usable, and it is the whole reason this gets a bespoke control instead of the raw
+  // native widget.
+  const [search, setSearch] = useState('');
 
   // Same reason as PrimaryField: the native field is the source of truth, and it can be
   // written to by something other than this control.
@@ -184,6 +190,56 @@ export const FieldControl = ({ field, error, dense, slotted: slottedProp, onChan
               <span className="text-control text-ink">{opt.label}</span>
             </label>
           ))}
+        </div>
+      );
+      break;
+    }
+
+    case 'multiSelect': {
+      const selected = new Set(Array.isArray(value) ? value : []);
+      const query = search.trim().toLowerCase();
+      const options = (field.options ?? []).filter(opt =>
+        !query || opt.label.toLowerCase().includes(query)
+      );
+      control = (
+        <div className="border border-rule-control rounded overflow-hidden">
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder={`Filter ${field.options?.length ?? 0} options…`}
+            className="w-full px-3 py-2 border-b border-rule text-input text-ink placeholder:text-ink-placeholder"
+          />
+          <div className="max-h-56 overflow-y-auto">
+            {options.map(opt => (
+              <label
+                key={opt.value}
+                className="flex items-center gap-2 px-2 py-1 hover:bg-cu-tint cursor-pointer transition-colors duration-200 ease-studio"
+                style={{ paddingLeft: 8 + opt.depth * 18 }}
+              >
+                <input
+                  type="checkbox"
+                  checked={selected.has(opt.value)}
+                  onChange={e => {
+                    const next = new Set(selected);
+                    if (e.target.checked) next.add(opt.value);
+                    else next.delete(opt.value);
+                    commit([...next]);
+                  }}
+                  className="shrink-0"
+                />
+                <span className="text-control text-ink">{opt.label}</span>
+              </label>
+            ))}
+            {options.length === 0 && (
+              <p className="px-2 py-2 text-help text-ink-secondary">No options match “{search}”.</p>
+            )}
+          </div>
+          {selected.size > 0 && (
+            <p className="px-2 py-1 text-help text-ink-secondary border-t border-rule">
+              {selected.size} selected
+            </p>
+          )}
         </div>
       );
       break;
