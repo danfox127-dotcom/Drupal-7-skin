@@ -21,7 +21,7 @@ import { NodeEditor, EXPAND_RAIL_EVENT } from '../components/editor/NodeEditor';
 import {
   findContentTable, parseContentList, currentUsername, diagnoseContentList, totalRowsInView,
 } from '../lib/parseContentList';
-import { discoverSchema, explainSchema, isNodeFormPath, keepFieldOrder, FieldDescriptor } from '../lib/formSchema';
+import { discoverSchema, explainSchema, findNodeForm, isNodeFormPath, keepFieldOrder, FieldDescriptor } from '../lib/formSchema';
 import { hasRichEditor } from '../lib/fieldBinding';
 import { getPendingImport } from '../lib/import/pending';
 import { captureFixture } from '../lib/captureFixture';
@@ -30,6 +30,7 @@ import { pastePage } from './cloneFlow';
 import { refreshCopies, registerPasteHandler } from '../lib/clone/pasteAction';
 import { enhanceListForm, isFixedConfigParagraphField } from './listEnhancements';
 import { anchorAutocompletePopups } from './autocompletePopups';
+import { mountSpanCleanup } from './spanCleanup';
 import { DoctorBatchAdder } from '../components/editor/DoctorBatchAdder';
 import { copyPage } from '../lib/clone/copyPage';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
@@ -937,6 +938,14 @@ const init = async () => {
       ), 'before');
     }
   }
+
+  /**
+   * "Remove span tags" under each formatted text field. After the editor has relocated
+   * the fields, and regardless of whether it is on: the button goes inside the field's own
+   * wrapper, wherever that wrapper now lives.
+   */
+  const nodeForm = findNodeForm();
+  if (settings.spanCleanup && nodeForm) mountSpanCleanup(nodeForm);
 
   // Feature 2: HTML Export
   if (!editorActive && settings.htmlExport && url.includes('/node/') && url.includes('/edit')) {

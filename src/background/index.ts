@@ -83,6 +83,19 @@ export interface RichEditorLifecycleRequest {
   op: 'detach' | 'attach' | 'sync' | 'probe';
 }
 
+/** Reads a field's HTML from its rich editor, which holds it until the form submits. */
+export interface ReadRichEditorRequest {
+  type: 'readRichEditor';
+  elementId: string;
+}
+
+export interface ReadRichEditorResponse {
+  ok: boolean;
+  /** 'none' when no editor is attached, and the textarea is the value. */
+  editor?: 'ckeditor' | 'tinymce' | 'none';
+  value?: string;
+}
+
 export interface SyncRichEditorRequest {
   type: 'syncRichEditor';
   elementId: string;
@@ -133,6 +146,33 @@ async function syncRichEditor(tabId: number, elementId: string, value: string): 
   } catch (err) {
     console.warn('[D7 Studio] Could not sync the rich text editor', err);
     return false;
+  }
+}
+
+/** The counterpart of syncRichEditor: the editor's current HTML, in the page's world. */
+async function readRichEditor(tabId: number, elementId: string): Promise<ReadRichEditorResponse> {
+  try {
+    const [result] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      args: [elementId],
+      func: (id: string) => {
+        const w = window as unknown as {
+          CKEDITOR?: { instances?: Record<string, { getData(): string }> };
+          tinyMCE?: { get(id: string): { getContent(): string } | null };
+        };
+        const ck = w.CKEDITOR?.instances?.[id];
+        if (ck) return { editor: 'ckeditor', value: ck.getData() };
+        const tiny = w.tinyMCE?.get(id);
+        if (tiny) return { editor: 'tinymce', value: tiny.getContent() };
+        return { editor: 'none' };
+      },
+    });
+    const read = result?.result as { editor: ReadRichEditorResponse['editor']; value?: string } | undefined;
+    return read ? { ok: true, ...read } : { ok: false };
+  } catch (err) {
+    console.warn('[D7 Studio] Could not read the rich text editor', err);
+    return { ok: false };
   }
 }
 
@@ -307,7 +347,7 @@ async function richEditorLifecycle(
 
 chrome.runtime.onMessage.addListener((
   message: FetchSourceRequest | SyncRichEditorRequest | RichEditorLifecycleRequest
-    | CheckForUpdateRequest,
+    | CheckForUpdateRequest | ReadRichEditorRequest,
   sender,
   sendResponse
 ) => {
@@ -325,6 +365,16 @@ chrome.runtime.onMessage.addListener((
     }
     void syncRichEditor(tabId, message.elementId, message.value)
       .then(ok => sendResponse({ ok }));
+    return true;
+  }
+
+  if (message?.type === 'readRichEditor') {
+    const tabId = sender.tab?.id;
+    if (tabId === undefined) {
+      sendResponse({ ok: false });
+      return false;
+    }
+    void readRichEditor(tabId, message.elementId).then(sendResponse);
     return true;
   }
 

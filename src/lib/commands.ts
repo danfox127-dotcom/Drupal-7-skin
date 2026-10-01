@@ -60,6 +60,15 @@ export const COMMANDS: Command[] = [
     toast: 'Public HTML copied to the clipboard.',
   },
   {
+    id: 'copy-html-no-spans',
+    group: 'Run',
+    label: 'Copy public HTML of this node, without span tags',
+    keys: '',
+    isAvailable: canExportHere,
+    run: () => copyPublicHtml(window.location, { stripSpans: true }),
+    toast: 'Public HTML copied to the clipboard, with its span tags removed.',
+  },
+  {
     /**
      * Cross-site duplication. Only offered on an edit form, because an add form has
      * nothing on it to copy — see canCopyHere.

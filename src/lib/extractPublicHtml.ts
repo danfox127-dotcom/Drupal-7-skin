@@ -20,6 +20,8 @@ const NOISE_SELECTORS = [
   '#skip-link', '.breadcrumb',
 ];
 
+import { stripSpans } from './stripSpans';
+
 /** Drupal-internal attributes that are meaningless outside the CMS. */
 const NOISE_ATTRIBUTES = ['data-drupal-selector', 'data-contextual-id'];
 
@@ -34,7 +36,15 @@ export function canExportHere(location: Location = window.location): boolean {
   return nodeIdFromPath(location.pathname) !== null;
 }
 
-export async function extractPublicHtml(location: Location = window.location): Promise<string> {
+export interface ExportOptions {
+  /** Unwrap every <span>, keeping its text. Off unless asked for. */
+  stripSpans?: boolean;
+}
+
+export async function extractPublicHtml(
+  location: Location = window.location,
+  options: ExportOptions = {}
+): Promise<string> {
   const nodeId = nodeIdFromPath(location.pathname);
   if (!nodeId) throw new Error('Could not determine Node ID from URL');
 
@@ -63,11 +73,15 @@ export async function extractPublicHtml(location: Location = window.location): P
     NOISE_ATTRIBUTES.forEach(attr => el.removeAttribute(attr));
   });
 
-  return mainContent.innerHTML.trim();
+  const html = mainContent.innerHTML.trim();
+  return options.stripSpans ? stripSpans(html, doc).html : html;
 }
 
 /** Fetch, sanitize, and put the result on the clipboard. */
-export async function copyPublicHtml(location: Location = window.location): Promise<void> {
-  const html = await extractPublicHtml(location);
+export async function copyPublicHtml(
+  location: Location = window.location,
+  options: ExportOptions = {}
+): Promise<void> {
+  const html = await extractPublicHtml(location, options);
   await navigator.clipboard.writeText(html);
 }

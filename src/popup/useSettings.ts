@@ -23,6 +23,8 @@ export interface Settings {
    * editor losing real work, which is not a default anyone should inherit.
    */
   nodeEditor: boolean;
+  /** "Remove span tags" button under each formatted text field. */
+  spanCleanup: boolean;
 }
 
 export const SETTING_DEFAULTS: Settings = {
@@ -33,6 +35,7 @@ export const SETTING_DEFAULTS: Settings = {
   contentList: true,
   debugSchema: false,
   nodeEditor: false,
+  spanCleanup: true,
 };
 
 export function useSettings() {

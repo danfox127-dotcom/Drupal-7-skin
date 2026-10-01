@@ -5,15 +5,17 @@ import { copyPublicHtml } from '../lib/extractPublicHtml';
 export const HtmlExport = () => {
   const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [errorMsg, setErrorMsg] = useState('');
+  const [withoutSpans, setWithoutSpans] = useState(false);
 
-  const handleExport = async () => {
+  const handleExport = async (stripSpans: boolean) => {
+    setWithoutSpans(stripSpans);
     setStatus('loading');
     setErrorMsg('');
 
     try {
       // Shared with the ⌘K "Copy public HTML of this node" command, so the two
       // paths cannot diverge. See src/lib/extractPublicHtml.ts.
-      await copyPublicHtml();
+      await copyPublicHtml(window.location, { stripSpans });
 
       setStatus('success');
       setTimeout(() => setStatus('idle'), 3000);
@@ -43,14 +45,30 @@ export const HtmlExport = () => {
           <div>
             <h3 className="font-serif text-heading-sm text-ink">Content Extraction Engine</h3>
             <p className="text-help text-ink-help">
-              {status === 'success' ? 'Copied to clipboard!' : 'Export sanitized public HTML'}
+              {status === 'success'
+                ? (withoutSpans ? 'Copied to clipboard, without span tags!' : 'Copied to clipboard!')
+                : 'Export sanitized public HTML'}
             </p>
           </div>
         </div>
 
+        <div className="flex items-center gap-3">
         <button
+          type="button"
           disabled={status === 'loading'}
-          onClick={handleExport}
+          onClick={() => void handleExport(true)}
+          data-export-without-spans
+          className={`px-4 py-2.5 rounded font-semibold text-control border transition-colors duration-200 ease-studio
+            ${status === 'loading' ? 'border-rule text-ink-muted cursor-not-allowed' :
+              'border-cu-blue text-cu-blue bg-white hover:bg-cu-tint'}
+          `}
+        >
+          Export without span tags
+        </button>
+        <button
+          type="button"
+          disabled={status === 'loading'}
+          onClick={() => void handleExport(false)}
           className={`px-6 py-2.5 rounded font-semibold text-control transition-colors duration-200 ease-studio flex items-center gap-2
             ${status === 'loading' ? 'bg-rule text-ink-muted cursor-not-allowed' :
               'bg-cu-blue text-white hover:bg-cu-navy'}
@@ -61,6 +79,7 @@ export const HtmlExport = () => {
            status === 'error' ? 'Retry' :
            'Export Raw HTML'}
         </button>
+        </div>
       </div>
 
       {status === 'error' && (

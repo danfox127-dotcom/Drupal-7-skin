@@ -465,7 +465,10 @@ test.describe('D7 Studio: command palette', () => {
     await page.goto(`${HOST}/node/123/edit`);
     await expect(page.locator(`${UI}`).first()).toBeVisible();
     await page.keyboard.press('ControlOrMeta+k');
-    await expect(page.locator(`${OVERLAY} >> text=Copy public HTML of this node`)).toBeVisible();
+    // Exact: the span-free variant's label starts with the same words.
+    await expect(page.locator(OVERLAY).getByText('Copy public HTML of this node', { exact: true })).toBeVisible();
+    await expect(page.locator(OVERLAY).getByText('Copy public HTML of this node, without span tags', { exact: true }))
+      .toBeVisible();
   });
 });
 
@@ -3474,5 +3477,94 @@ test.describe('D7 Studio: the Two-Pane Editor discovers List\'s AJAX-dependent f
         c.querySelector('#edit-field-generic-paragraphs-single-und-0-field-cups-specialties-raw-und'));
     });
     expect(specialtiesInsideProfilesCarrier).toBe(false);
+  });
+});
+
+
+test.describe('Remove span tags', () => {
+  /**
+   * Pasting from Word or Google Docs wraps every run of text in a styled <span>. The
+   * button under a formatted field unwraps them all, in whatever the EDITOR holds: CKEditor
+   * keeps its content to itself until submit, so cleaning the textarea alone would be
+   * thrown away on save.
+   */
+  const PASTED = '<p><span style="font-family: Calibri">Our clinic</span> opens at '
+    + '<span style="font-size: 11pt"><strong>9am</strong></span>.<span></span></p>';
+  const CLEAN = '<p>Our clinic opens at <strong>9am</strong>.</p>';
+
+  const editorData = (page: import('@playwright/test').Page) =>
+    page.evaluate(() => (window as any).CKEDITOR.instances['edit-body-und-0-value'].getData() as string);
+
+  const seed = async (page: import('@playwright/test').Page) => {
+    await page.waitForFunction(() => !!(window as any).CKEDITOR?.instances?.['edit-body-und-0-value'],
+      undefined, { timeout: RICH_EDITOR_TIMEOUT });
+    await page.evaluate(html => (window as any).CKEDITOR.instances['edit-body-und-0-value'].setData(html), PASTED);
+  };
+
+  test('on the native form, it cleans what the editor holds, and Undo puts it back', async ({ page, settings }) => {
+    await settings({ nodeEditor: false });
+    await page.goto(`${HOST}/node/17176/edit`);
+    await seed(page);
+
+    const button = page.locator('[data-d7-span-cleanup-button]');
+    // One per formatted field: the body, and not its plain-text summary.
+    await expect(button).toHaveCount(1);
+    await button.click();
+
+    await expect(page.locator('[data-d7-span-cleanup-status]')).toHaveText('Removed 3 span tags.');
+    expect(await editorData(page)).toBe(CLEAN);
+    // The textarea too, so the autosave and anything else reading it agree.
+    await expect(page.locator('#edit-body-und-0-value')).toHaveValue(CLEAN);
+
+    await page.locator('[data-d7-span-cleanup-undo]').click();
+    await expect(page.locator('[data-d7-span-cleanup-status]')).toHaveText('Span tags put back.');
+    expect(await editorData(page)).toBe(PASTED);
+  });
+
+  test('says so when there is nothing to remove, and changes nothing', async ({ page, settings }) => {
+    await settings({ nodeEditor: false });
+    await page.goto(`${HOST}/node/17176/edit`);
+    await page.waitForFunction(() => !!(window as any).CKEDITOR?.instances?.['edit-body-und-0-value'],
+      undefined, { timeout: RICH_EDITOR_TIMEOUT });
+    const before = await editorData(page);
+
+    await page.locator('[data-d7-span-cleanup-button]').click();
+    await expect(page.locator('[data-d7-span-cleanup-status]')).toHaveText('No span tags to remove.');
+    expect(await editorData(page)).toBe(before);
+    await expect(page.locator('[data-d7-span-cleanup-undo]')).toBeHidden();
+  });
+
+  test('in the two-pane editor, the button is under the body and works', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await page.goto(`${HOST}/node/17176/edit`);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: OVERLAY_MOUNT_TIMEOUT });
+    await page.waitForFunction(() => !!document.querySelector('.cke'), undefined, { timeout: RICH_EDITOR_TIMEOUT });
+    await seed(page);
+
+    const button = page.locator('[data-d7-span-cleanup-button]');
+    await expect(button).toBeVisible();
+    // Travelling with the relocated body, below its editor.
+    const placement = await page.evaluate(() => {
+      const b = document.querySelector('[data-d7-span-cleanup-button]')!;
+      const cke = document.querySelector('.cke_editor_edit-body-und-0-value')!;
+      return {
+        inBodyCarrier: b.closest('.d7-relocated-widget') === cke.closest('.d7-relocated-widget'),
+        below: b.getBoundingClientRect().top >= cke.getBoundingClientRect().bottom,
+      };
+    });
+    expect(placement).toEqual({ inBodyCarrier: true, below: true });
+
+    await button.click();
+    await expect(page.locator('[data-d7-span-cleanup-status]')).toHaveText('Removed 3 span tags.');
+    expect(await editorData(page)).toBe(CLEAN);
+  });
+
+  test('can be switched off in the popup', async ({ page, settings }) => {
+    await settings({ nodeEditor: false, spanCleanup: false });
+    await page.goto(`${HOST}/node/17176/edit`);
+    await page.waitForFunction(() => !!(window as any).CKEDITOR?.instances?.['edit-body-und-0-value'],
+      undefined, { timeout: RICH_EDITOR_TIMEOUT });
+    await page.waitForTimeout(500);
+    await expect(page.locator('[data-d7-span-cleanup-button]')).toHaveCount(0);
   });
 });
