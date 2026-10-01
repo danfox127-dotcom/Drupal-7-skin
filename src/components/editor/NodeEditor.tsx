@@ -3,7 +3,7 @@ import { ChevronUp, ChevronDown, AlertCircle } from 'lucide-react';
 import {
   FormSchema, FieldDescriptor, SectionId,
 } from '../../lib/formSchema';
-import { readAll, writeAll, submitForm, syncRichEditorsToDom } from '../../lib/fieldBinding';
+import { readAll, writeAll, submitForm, syncRichEditorsToDom, readValue } from '../../lib/fieldBinding';
 import {
   Draft, ConflictState, draftKey, readChangedStamp, loadDraft, saveDraft,
   clearDraft, assessDraft, formatAge,
@@ -12,7 +12,10 @@ import { readFormErrors, hasErrors, FormErrors } from '../../lib/validationError
 import { FieldControl, SlottedFieldsContext, EMPTY_SLOTTED } from './FieldControl';
 import { PrimaryField, primaryRole } from './PrimaryField';
 import { TopicsSection } from './TopicsSection';
-import { MenuSection } from './MenuSection';
+import { MenuSection, menuSummary } from './MenuSection';
+import { SearchSocialSection, searchSummary } from './SearchSocialSection';
+import { HelpAsTipContext } from './InfoTip';
+import { displayLabelFor } from '../../lib/formSchema/displayLabels';
 import { Toast } from '../Toast';
 
 /**
@@ -33,12 +36,12 @@ interface Props {
 const SECTION_META: Record<SectionId, { title: string; replaced?: string }> = {
   primary: { title: 'Content' },
   typeFields: { title: 'Details' },
-  topics: { title: 'Topics & Tags', replaced: 'the checkbox list and the separate Primary Topic select' },
+  topics: { title: 'Topics', replaced: 'the checkbox list and the separate Primary Topic select' },
   related: { title: 'Related Content', replaced: 'the Related Content and Groups tabs, where each field needed an exact title' },
   multimedia: { title: 'Multimedia', replaced: 'the Multimedia tab' },
   menu: { title: 'Menu Placement', replaced: 'the Menu settings vertical tab' },
-  display: { title: 'Display Template', replaced: 'a select buried in a vertical tab' },
-  search: { title: 'Search & Social Preview', replaced: 'two fields buried in the Meta tags tab' },
+  display: { title: 'Display template', replaced: 'a select buried in a vertical tab' },
+  search: { title: 'Search & Social', replaced: 'two fields buried in the Meta tags tab' },
   seo: { title: 'URL, SEO & Sitemap', replaced: 'the Meta tags, URL path and XML sitemap tabs' },
   groups: { title: 'Groups', replaced: 'the Groups tab' },
   revision: { title: 'Revision', replaced: 'the Revision information tab' },
@@ -66,19 +69,21 @@ const LEFT_ORDER: SectionId[] = ['multimedia'];
 const RAIL_PRIMARY: SectionId[] = ['search', 'topics', 'related', 'menu'];
 
 /**
- * Rail sections for the occasional save, behind one disclosure.
+ * Rail sections for the occasional save, listed flat inside one "More settings" panel.
  *
  * Ten stacked headers make the rail a wall to be scanned every time, and the ones that
- * matter get no more weight than Revision. These four are grouped rather than removed —
- * one extra click for a URL alias or a display template, and anything holding a validation
- * error forces the group open so a rejected save is never hidden.
+ * matter get no more weight than Revision. These are grouped rather than removed — one
+ * extra click for a display template — and anything holding a validation error forces the
+ * panel open so a rejected save is never hidden. URL, SEO & Sitemap used to be here too;
+ * it now folds into Search & Social, where the URL and sitemap are what a search result
+ * is made of.
  *
  * Menu Placement is deliberately NOT here. It is the section with the most machinery
  * behind it — a filterable parent picker over a menu thousands of items deep — and on the
  * Page type it is touched on most saves, so a disclosure in front of it costs more than it
  * saves.
  */
-const RAIL_SECONDARY: SectionId[] = ['display', 'seo', 'revision', 'other'];
+const RAIL_SECONDARY: SectionId[] = ['display', 'revision', 'other'];
 
 /**
  * Sections folded into another section's panel instead of getting their own.
@@ -88,22 +93,67 @@ const RAIL_SECONDARY: SectionId[] = ['display', 'seo', 'revision', 'other'];
  */
 const MERGED_INTO: Partial<Record<SectionId, SectionId>> = {
   groups: 'related',
+  seo: 'search',
 };
 
 const panelOf = (section: SectionId): SectionId => MERGED_INTO[section] ?? section;
 
 /**
- * Sections that start expanded.
+ * The one panel open when the page loads, before any remembered choice.
  *
- * Everything else stays collapsed by request — those sections are rarely touched — but a
- * field is only prominent if it is actually on screen when the page loads.
+ * Search & Social, so the description is on screen without a click — it was reported
+ * as buried when it sat ten fields deep. Page is the exception, as designed: a Page is
+ * placed in the menu on most saves, so Menu Placement opens instead. Only Page, not every
+ * type with a menu: Specialty and the rest are edited far more often than they are moved.
  */
-const OPEN_BY_DEFAULT: SectionId[] = ['search'];
+const defaultPanel = (panels: SectionId[], contentType: string | null): string =>
+  (contentType === 'page' && panels.includes('menu') ? 'menu' : 'search');
 
-const SECTION_STATE_KEY = 'railSections';
+/**
+ * Remembered open panel, per content type. Versioned because the rail used to allow
+ * several open at once, and a stored map from then would reopen all of them.
+ */
+const SECTION_STATE_KEY = 'railSections:v2';
+
+/**
+ * Opens every rail panel at once, overriding one-at-a-time until the next header click.
+ *
+ * One-at-a-time is the right behaviour for a person and the wrong one for anything that
+ * must see every field together: the debug slot check (which verifies every relocated
+ * widget has a <slot> once everything is open) and the extension tests. Clicking each
+ * header in turn would leave only the last one open, so they dispatch this instead.
+ */
+export const EXPAND_RAIL_EVENT = 'd7-studio:expand-rail';
 
 /** Open/closed key for the secondary rail group. Not a SectionId, so it cannot collide. */
 const MORE_KEY = '__more';
+
+const countOf = (fields: FieldDescriptor[]) =>
+  `${fields.length} field${fields.length === 1 ? '' : 's'}`;
+
+/** How many related items are filled in, across every related field and delta. */
+const linkedCount = (fields: FieldDescriptor[]) =>
+  fields.reduce((n, field) => {
+    const value = readValue(field);
+    if (Array.isArray(value)) return n + value.length;
+    return n + (typeof value === 'string' && value.trim() ? 1 : 0);
+  }, 0);
+
+/**
+ * "Sitewide News on", "Group off", plus a count of audience groups when there are any.
+ *
+ * The flag's own label is used because it differs per type and per site; there is no
+ * general name for it.
+ */
+const groupsSummary = (fields: FieldDescriptor[]) => {
+  const parts: string[] = [];
+  for (const flag of fields.filter(f => f.kind === 'checkbox')) {
+    parts.push(`${displayLabelFor(flag)} ${readValue(flag) === true ? 'on' : 'off'}`);
+  }
+  const audience = linkedCount(fields.filter(f => f.kind !== 'checkbox'));
+  if (audience) parts.push(`${audience} group${audience === 1 ? '' : 's'}`);
+  return parts.join(', ');
+};
 
 /**
  * A rail section's fields, with the rarely-used ones behind a disclosure.
@@ -180,15 +230,36 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
   const key = useMemo(() => draftKey(window.location), []);
   const baseChanged = useMemo(() => readChangedStamp(schema.form), [schema.form]);
 
-  const [open, setOpen] = useState<Record<string, boolean>>(
-    () => Object.fromEntries(OPEN_BY_DEFAULT.map(section => [section, true]))
-  );
+  /**
+   * The one rail panel the editor opened: undefined until chosen (the type's default
+   * applies), null once they close it. Panels holding a validation error are `forced`
+   * open on top of it, and EXPAND_RAIL_EVENT opens everything.
+   */
+  const [chosen, setChosen] = useState<string | null | undefined>(undefined);
+  const [forced, setForced] = useState<ReadonlySet<string>>(() => new Set());
+  const [expandAll, setExpandAll] = useState(false);
   const [savedAt, setSavedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [conflict, setConflict] = useState<ConflictState>({ kind: 'none' });
   const [errors, setErrors] = useState<FormErrors | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const dirtyRef = useRef(false);
+
+  /**
+   * Where the sticky rail starts: under the action bar, which is itself sticky at 44px
+   * and wraps to two lines when the draft banners or a long status line need it.
+   */
+  const barRef = useRef<HTMLDivElement>(null);
+  const [railTop, setRailTop] = useState(105);
+  useEffect(() => {
+    const bar = barRef.current;
+    if (!bar) return;
+    const measure = () => setRailTop(44 + bar.getBoundingClientRect().height);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, []);
 
   const fieldsBySection = useMemo(() => {
     const map = new Map<SectionId, FieldDescriptor[]>();
@@ -234,36 +305,56 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
 
     setErrors(found);
     // Auto-open the offending sections: the native fields are hidden, so a rejected
-    // save would otherwise point at something invisible.
-    setOpen(prev => {
-      const next = { ...prev };
-      // Through panelOf, or an error on a Groups field would open a panel that no longer
-      // exists while Related Content — where the field is actually drawn — stayed shut.
-      found.sections.forEach(section => { next[panelOf(section)] = true; });
-      return next;
-    });
+    // save would otherwise point at something invisible. Through panelOf, or an error on
+    // a Groups field would open a panel that no longer exists while Related Content —
+    // where the field is actually drawn — stayed shut. Several may open at once: an
+    // error outranks one-panel-at-a-time.
+    setForced(new Set(found.sections.map(section =>
+      RAIL_SECONDARY.includes(panelOf(section)) ? MORE_KEY : panelOf(section))));
   }, [schema.fields]);
 
-  // --- Section open/closed state, remembered per content type ------------
+  // --- Which panel is open, remembered per content type -------------------
+  const storeKey = `${SECTION_STATE_KEY}:${schema.contentType ?? 'unknown'}`;
   useEffect(() => {
-    const storeKey = `${SECTION_STATE_KEY}:${schema.contentType ?? 'unknown'}`;
-    chrome.storage.local.get({ [storeKey]: null }, result => {
+    // By key, not with a defaults object: `{ [key]: undefined }` serializes to `{}`, which
+    // asks for nothing and would never return the remembered panel.
+    chrome.storage.local.get(storeKey, result => {
       const stored = result[storeKey];
-      if (stored && typeof stored === 'object') {
-        // Never let stored state hide a section holding a validation error.
-        setOpen(prev => ({ ...stored, ...prev }));
+      // Only if nothing was clicked while storage was being read.
+      if (stored === null || typeof stored === 'string') {
+        setChosen(prev => (prev === undefined ? stored : prev));
       }
     });
-  }, [schema.contentType]);
+  }, [storeKey]);
 
-  const toggleSection = useCallback((section: string) => {
-    setOpen(prev => {
-      const next = { ...prev, [section]: !prev[section] };
-      const storeKey = `${SECTION_STATE_KEY}:${schema.contentType ?? 'unknown'}`;
-      chrome.storage.local.set({ [storeKey]: next });
-      return next;
-    });
-  }, [schema.contentType]);
+  useEffect(() => {
+    const expand = () => setExpandAll(true);
+    document.addEventListener(EXPAND_RAIL_EVENT, expand);
+    return () => document.removeEventListener(EXPAND_RAIL_EVENT, expand);
+  }, []);
+
+  /**
+   * Re-renders on any change to the form, so the one-line panel summaries stay current.
+   *
+   * Several controls write to Drupal's inputs without going through this component —
+   * the topic picker, the menu picker, a relocated native widget — and each of those
+   * dispatches a bubbling change event, which is the one signal they all share.
+   */
+  const [, setFormTick] = useState(0);
+  useEffect(() => {
+    let queued = 0;
+    const onEdit = () => {
+      if (queued) return;
+      queued = requestAnimationFrame(() => { queued = 0; setFormTick(t => t + 1); });
+    };
+    schema.form.addEventListener('input', onEdit);
+    schema.form.addEventListener('change', onEdit);
+    return () => {
+      schema.form.removeEventListener('input', onEdit);
+      schema.form.removeEventListener('change', onEdit);
+      if (queued) cancelAnimationFrame(queued);
+    };
+  }, [schema.form]);
 
   // --- Draft assessment on mount; nothing is applied automatically -------
   useEffect(() => {
@@ -379,43 +470,106 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
     return role;
   };
 
-  /** One collapsible rail panel: header, count, and its fields when open. */
+  const effectiveChosen = chosen === undefined ? defaultPanel(primaryPanels, schema.contentType) : chosen;
+  const isPanelOpen = (key: string) => expandAll || forced.has(key) || effectiveChosen === key;
+
+  /** Opens one panel and closes the rest; clicking the open one closes it. */
+  const toggleSection = (key: string) => {
+    const wasOpen = isPanelOpen(key);
+    setExpandAll(false);
+    setForced(prev => {
+      if (!prev.has(key)) return prev;
+      const next = new Set(prev);
+      next.delete(key);
+      return next;
+    });
+    const next = wasOpen ? null : key;
+    setChosen(next);
+    chrome.storage.local.set({ [storeKey]: next });
+  };
+
+  const nodeTitleField = left.find(f => primaryRole(f) === 'title');
+  const summaryField = left.find(f => primaryRole(f) === 'summary');
+
+  /**
+   * The one-line state shown at the right of a panel header.
+   *
+   * The header used to carry a field count and a note of what the panel replaced — true,
+   * but nothing an editor needs on the hundredth save. What they need is the answer the
+   * panel holds: which parent, how many topics, whether a description is set.
+   */
+  const panelSummary = (section: SectionId): string => {
+    const own = fieldsBySection.get(section) ?? [];
+    switch (section) {
+      case 'search':
+        return searchSummary(own) || countOf(panelFields(section));
+      case 'topics': {
+        const topics = own.find(f => f.kind === 'checkboxGroup');
+        if (!topics) return countOf(own);
+        const n = (readValue(topics) as string[]).length;
+        return n ? `${n} selected` : 'None';
+      }
+      case 'related': {
+        const parts: string[] = [];
+        if (own.length) parts.push(`${linkedCount(own)} linked`);
+        const group = groupsSummary(fieldsBySection.get('groups') ?? []);
+        if (group) parts.push(group);
+        return parts.join(' · ');
+      }
+      case 'menu': {
+        const parent = own.find(f => /parent/i.test(f.label));
+        return menuSummary(parent, own.filter(f => f !== parent)) || countOf(own);
+      }
+      default:
+        return countOf(panelFields(section));
+    }
+  };
+
+  const renderFields = (fields: FieldDescriptor[], section: SectionId) => (
+    <SectionFields
+      fields={fields}
+      section={section}
+      errorFor={errorFor}
+      slottedFields={slottedFields}
+      onChange={handleFieldChange}
+    />
+  );
+
+  /** One rail header row: name, current value on the right, chevron. */
+  const railHeader = (key: string, title: string, summary: string, hasError: boolean) => {
+    const isOpen = isPanelOpen(key);
+    return (
+      <button
+        type="button"
+        onClick={() => toggleSection(key)}
+        aria-expanded={isOpen}
+        data-rail-toggle={key}
+        className="w-full flex items-center gap-2.5 px-4.5 py-2.5 text-left hover:bg-legacy-200 transition-colors duration-200 ease-studio"
+      >
+        <span className="shrink-0 text-section font-semibold text-ink">{title}</span>
+        {hasError && (
+          <span className="shrink-0 text-help font-semibold text-burnt">needs attention</span>
+        )}
+        <span data-panel-summary className="flex-1 min-w-0 text-right truncate text-help text-ink-help">
+          {summary}
+        </span>
+        {isOpen
+          ? <ChevronUp size={14} className="text-ink-muted shrink-0" aria-hidden />
+          : <ChevronDown size={14} className="text-ink-muted shrink-0" aria-hidden />}
+      </button>
+    );
+  };
+
+  /** One collapsible rail panel: a one-line header, and its fields when open. */
   const renderPanel = (section: SectionId) => {
     const fields = panelFields(section);
     const meta = SECTION_META[section];
-    const isOpen = Boolean(open[section]);
-    const sectionHasError = errors?.fieldErrors.some(e => panelOf(e.field.section) === section);
+    const isOpen = isPanelOpen(section);
+    const sectionHasError = Boolean(errors?.fieldErrors.some(e => panelOf(e.field.section) === section));
 
     return (
       <div key={section} data-rail-panel={section} className="border-b border-rule-hair">
-        <button
-          type="button"
-          onClick={() => toggleSection(section)}
-          aria-expanded={isOpen}
-          className="w-full flex items-center gap-2 px-4.5 py-3 text-left hover:bg-legacy-200 transition-colors duration-200 ease-studio"
-        >
-          <span className="flex-1 min-w-0">
-            <span className="block text-section font-semibold text-ink">
-              {meta.title}
-              {sectionHasError && (
-                <span className="ml-2 text-help font-semibold text-burnt">needs attention</span>
-              )}
-            </span>
-            <span className="block text-help text-ink-help">
-              {(() => {
-                const advanced = fields.filter(f => f.advanced).length;
-                const shown = fields.length - advanced;
-                return advanced
-                  ? `${shown} field${shown === 1 ? '' : 's'} · ${advanced} rarely used`
-                  : `${fields.length} field${fields.length === 1 ? '' : 's'}`;
-              })()}
-              {meta.replaced ? ` · replaced ${meta.replaced}` : ''}
-            </span>
-          </span>
-          {isOpen
-            ? <ChevronUp size={14} className="text-ink-muted shrink-0" />
-            : <ChevronDown size={14} className="text-ink-muted shrink-0" />}
-        </button>
+        {railHeader(section, meta.title, panelSummary(section), sectionHasError)}
 
         {isOpen && (
           <div className="px-4.5 pb-4">
@@ -456,15 +610,18 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
                   })()
                 : section === 'related'
                   ? renderRelated()
-                  : (
-                    <SectionFields
-                      fields={fields}
-                      section={section}
-                      errorFor={errorFor}
-                      slottedFields={slottedFields}
-                      onChange={handleFieldChange}
-                    />
-                  )}
+                  : section === 'search'
+                    ? (
+                      <SearchSocialSection
+                        search={fieldsBySection.get('search') ?? []}
+                        seo={fieldsBySection.get('seo') ?? []}
+                        nodeTitle={nodeTitleField}
+                        summary={summaryField}
+                        errorFor={errorFor}
+                        renderFields={renderFields}
+                      />
+                    )
+                    : renderFields(fields, section)}
           </div>
         )}
       </div>
@@ -472,58 +629,66 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
   };
 
   /**
-   * Related Content, with the folded-in Groups fields captioned under it.
+   * Related Content, with the folded-in Groups fields as their own sub-disclosure.
    *
-   * Captioned rather than silently mixed in: an Organic Groups audience is a different
+   * Separate rather than silently mixed in: an Organic Groups audience is a different
    * kind of thing from "Related Treatments", and an editor who was told to "set the
-   * group" needs to recognise it.
+   * group" needs to recognise it. Groups starts shut — it is set once, when a page is
+   * created — and Linked items open. With only one of the two present, there is nothing
+   * to choose between and its fields are listed directly.
    */
+  const [linkedOpen, setLinkedOpen] = useState(true);
+  const [groupsOpen, setGroupsOpen] = useState(false);
   const renderRelated = () => {
     const own = fieldsBySection.get('related') ?? [];
     const groups = fieldsBySection.get('groups') ?? [];
+    if (own.length === 0 || groups.length === 0) {
+      return renderFields(own.length ? own : groups, own.length ? 'related' : 'groups');
+    }
+
+    const hasError = (fields: FieldDescriptor[]) => fields.some(f => errorFor(f));
+    const sub = (
+      name: string, summary: string, open: boolean, toggle: () => void,
+      fields: FieldDescriptor[], section: SectionId
+    ) => {
+      const shown = open || hasError(fields);
+      return (
+        <div data-panel-subgroup={section} className="flex flex-col border-t border-rule-hair first:border-t-0">
+          <button
+            type="button"
+            onClick={toggle}
+            aria-expanded={shown}
+            className="w-full flex items-center gap-2 py-2 text-left"
+          >
+            <span className="shrink-0 text-eyebrow font-semibold uppercase text-ink-secondary">{name}</span>
+            {hasError(fields) && <span className="shrink-0 text-help font-semibold text-burnt">needs attention</span>}
+            <span className="flex-1 min-w-0 text-right truncate text-help text-ink-help">{summary}</span>
+            {shown
+              ? <ChevronUp size={12} className="text-ink-muted shrink-0" aria-hidden />
+              : <ChevronDown size={12} className="text-ink-muted shrink-0" aria-hidden />}
+          </button>
+          {shown && <div className="pb-3">{renderFields(fields, section)}</div>}
+        </div>
+      );
+    };
 
     return (
-      <div className="flex flex-col gap-3">
-        {own.length > 0 && (
-          <SectionFields
-            fields={own}
-            section="related"
-            errorFor={errorFor}
-            slottedFields={slottedFields}
-            onChange={handleFieldChange}
-          />
-        )}
-        {groups.length > 0 && (
-          <div
-            data-panel-subgroup="groups"
-            className={`flex flex-col gap-2 ${own.length > 0 ? 'pt-3 border-t border-rule-hair' : ''}`}
-          >
-            <p className="text-eyebrow font-semibold uppercase text-ink-secondary">
-              {SECTION_META.groups.title}
-            </p>
-            <SectionFields
-              fields={groups}
-              section="groups"
-              errorFor={errorFor}
-              slottedFields={slottedFields}
-              onChange={handleFieldChange}
-            />
-          </div>
-        )}
+      <div className="flex flex-col">
+        {sub('Linked items', `${linkedCount(own)} linked`, linkedOpen, () => setLinkedOpen(v => !v), own, 'related')}
+        {sub(SECTION_META.groups.title, groupsSummary(groups), groupsOpen, () => setGroupsOpen(v => !v), groups, 'groups')}
       </div>
     );
   };
 
-  const moreHasError = errors?.fieldErrors.some(
+  const moreHasError = Boolean(errors?.fieldErrors.some(
     e => secondaryPanels.includes(panelOf(e.field.section))
-  );
-  const moreOpen = Boolean(open[MORE_KEY]) || Boolean(moreHasError);
+  ));
 
   return (
     <SlottedFieldsContext.Provider value={slottedFields ?? EMPTY_SLOTTED}>
     <div className="bg-canvas font-sans">
       {/* Sticky action bar */}
-      <div className="sticky top-11 z-40 bg-white border-b border-rule px-4.5 py-3 flex items-center gap-4 flex-wrap">
+      <div ref={barRef} className="sticky top-11 z-40 bg-white border-b border-rule px-4.5 py-3 flex items-center gap-4 flex-wrap">
         <span className="px-2 h-[22px] inline-flex items-center bg-cu-blue text-white font-semibold text-eyebrow uppercase">
           {schema.contentType ?? 'node'}
         </span>
@@ -701,46 +866,52 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
           })}
         </div>
 
-        {/* Right rail */}
-        <aside className="bg-rail">
+        {/* Right rail. Sticky beneath the action bar and scrolling on its own, so it is
+            never longer than the screen: with one panel open at a time, whatever is open
+            is always reachable without scrolling the writing column away. */}
+        <HelpAsTipContext.Provider value>
+        <aside
+          className="bg-rail sticky overflow-y-auto"
+          style={{ top: railTop, maxHeight: `calc(100vh - ${railTop}px)` }}
+        >
           <div className="px-4.5 py-3 border-b border-rule">
             <p className="text-eyebrow-wide font-semibold uppercase text-ink-secondary">
-              Everything Else
-            </p>
-            <p className="text-help text-ink-help mt-0.5">
-              was five tabs plus a six-item vertical-tab block.
+              Everything else
             </p>
           </div>
 
           {primaryPanels.map(renderPanel)}
 
           {secondaryPanels.length > 0 && (
-            <div className="border-b border-rule-hair">
-              <button
-                type="button"
-                onClick={() => toggleSection(MORE_KEY)}
-                aria-expanded={moreOpen}
-                className="w-full flex items-center gap-2 px-4.5 py-3 text-left hover:bg-legacy-200 transition-colors duration-200 ease-studio"
-              >
-                <span className="flex-1 min-w-0">
-                  <span className="block text-section font-semibold text-ink">
-                    Settings used occasionally
-                    {moreHasError && (
-                      <span className="ml-2 text-help font-semibold text-burnt">needs attention</span>
-                    )}
-                  </span>
-                  <span className="block text-help text-ink-help">
-                    {secondaryPanels.map(s => SECTION_META[s].title).join(' · ')}
-                  </span>
-                </span>
-                {moreOpen
-                  ? <ChevronUp size={14} className="text-ink-muted shrink-0" />
-                  : <ChevronDown size={14} className="text-ink-muted shrink-0" />}
-              </button>
+            <div data-rail-panel={MORE_KEY} className="border-b border-rule-hair">
+              {railHeader(
+                MORE_KEY,
+                'More settings',
+                secondaryPanels.map((p, i) => {
+                  const title = SECTION_META[p].title;
+                  return i === 0 ? title : title.toLowerCase();
+                }).join(', '),
+                moreHasError
+              )}
 
-              {moreOpen && (
-                <div data-rail-more className="border-t border-rule-hair">
-                  {secondaryPanels.map(renderPanel)}
+              {(isPanelOpen(MORE_KEY) || moreHasError) && (
+                /* Flat, not a stack of nested panels: each of these is one or two
+                   fields, and a header per field was more chrome than content. */
+                <div data-rail-more className="px-4.5 pb-4 flex flex-col gap-4">
+                  {secondaryPanels.map(section => {
+                    const fields = panelFields(section);
+                    return (
+                      <div key={section} data-rail-group={section} className="flex flex-col gap-1.5">
+                        {/* A lone field's own label names it; a group needs a caption. */}
+                        {fields.length > 1 && (
+                          <p className="text-eyebrow font-semibold uppercase text-ink-secondary">
+                            {SECTION_META[section].title}
+                          </p>
+                        )}
+                        {renderFields(fields, section)}
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -750,6 +921,7 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
             Autosave is local to this extension. “Save draft to Drupal” writes a real revision.
           </p>
         </aside>
+        </HelpAsTipContext.Provider>
       </div>
 
       {toast && <Toast message={toast} onDismiss={() => setToast(null)} />}

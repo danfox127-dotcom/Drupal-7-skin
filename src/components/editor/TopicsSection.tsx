@@ -3,6 +3,7 @@ import { X } from 'lucide-react';
 import { FieldDescriptor } from '../../lib/formSchema';
 import { readValue, writeValue } from '../../lib/fieldBinding';
 import { FieldControl } from './FieldControl';
+import { InfoTip } from './InfoTip';
 
 /**
  * Topics & Tags — replaces the 36-checkbox list plus the separate Primary Topic
@@ -92,15 +93,23 @@ export const TopicsSection = ({ topics, primary, others, errorFor }: Props) => {
         </ul>
       )}
 
-      <input
-        type="text"
-        value={query}
-        onChange={e => setQuery(e.target.value)}
-        placeholder={`Search ${options.length} topics`}
-        className="w-full px-3 py-2 bg-white border border-rule-control rounded text-control text-ink placeholder:text-ink-placeholder"
-      />
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder={`Search ${options.length} topics`}
+          aria-label="Search topics"
+          className="w-full px-3 py-2 bg-white border border-rule-control rounded text-control text-ink placeholder:text-ink-placeholder"
+        />
+        {primary && (
+          <InfoTip text="The first topic you pick becomes the primary topic." about="Topics" />
+        )}
+      </div>
 
-      <div className="max-h-56 overflow-y-auto border border-rule rounded">
+      {/* 180px, not 224: the condensed rail scrolls on its own, and a list taller than
+          that pushes Tags below the fold of the panel. */}
+      <div className="max-h-[180px] overflow-y-auto border border-rule rounded">
         {visible.length === 0 ? (
           <p className="px-3 py-3 text-help text-ink-help">Nothing matches “{query}”.</p>
         ) : (
@@ -123,7 +132,7 @@ export const TopicsSection = ({ topics, primary, others, errorFor }: Props) => {
       </div>
 
       <p className="text-help text-ink-help">
-        {selected.length} of {options.length} selected. First topic selected becomes the primary topic.
+        {selected.length} of {options.length} selected.
       </p>
 
       {errorFor(topics) && (

@@ -198,40 +198,60 @@ const UPDATE_CHECK_TIMEOUT = 30000;
 const UI = '.d7-proxy-ui-container';
 
 /**
- * Opens a rail section by panel id, revealing the secondary group first if needed.
+ * Opens a rail section by panel id, wherever it now lives.
  *
- * The rail lists Search, Topics, Related and Menu Placement openly; Display Template,
- * URL/SEO, Revision and Other sit behind one "Settings used occasionally" disclosure. A
- * test that clicks straight through to a section must not care which tier it is in, or
- * moving a section between tiers breaks a dozen unrelated tests. Menu Placement has now
- * moved tiers once without touching a single caller, which is the point.
+ * The rail lists Search & Social, Topics, Related and Menu Placement as panels; Display
+ * template, Revision and Other are groups inside one "More settings" panel, and URL, SEO &
+ * Sitemap folds into Search & Social behind "Override". A test that clicks straight
+ * through to a section must not care which of those it is, or moving a section breaks a
+ * dozen unrelated tests.
  *
- * Keyed on `data-rail-panel`, NOT on header text. The group's own header lists the titles
- * it holds — "Menu Placement \u00b7 Display Template \u00b7 \u2026" \u2014 so `hasText: 'Menu Placement'`
- * matched the GROUP button, clicked that, and left the section itself shut. Every menu
- * test then failed looking for a parent picker that was one more click away.
+ * Keyed on data attributes, NOT on header text: headers now carry a live summary on the
+ * right ("Top level", "3 selected"), so a text match can hit the wrong row.
+ *
+ * Menu Placement's parent picker sits behind "Change"; it is opened too, since every
+ * caller that opens the menu panel is there for the picker.
  */
 const openRailSection = async (page: Page, panel: string) => {
-  const header = page.locator(`${UI} aside [data-rail-panel="${panel}"] > button[aria-expanded]`);
-  if (await header.count() === 0) {
-    await page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Settings used occasionally' }).click();
-    await expect(header).toHaveCount(1);
+  const toggle = (key: string) => page.locator(`${UI} aside [data-rail-toggle="${key}"]`);
+  const open = async (key: string) => {
+    if (await toggle(key).getAttribute('aria-expanded') === 'false') await toggle(key).click();
+  };
+
+  if (panel === 'seo') {
+    await open('search');
+    const override = page.locator(`${UI} aside [data-seo-override]`);
+    if (await override.getAttribute('aria-expanded') === 'false') await override.click();
+    return;
   }
-  if (await header.getAttribute('aria-expanded') === 'false') await header.click();
+
+  if (await toggle(panel).count() === 0) {
+    await open('__more');
+    await expect(page.locator(`${UI} aside [data-rail-group="${panel}"]`)).toHaveCount(1);
+    return;
+  }
+
+  await open(panel);
+  if (panel === 'menu') {
+    const change = page.locator(`${UI} aside [data-parent-picker-toggle]`);
+    if (await change.count() && await change.getAttribute('aria-expanded') === 'false') await change.click();
+  }
 };
 
 /**
- * Expands everything collapsed in the overlay, nested groups included.
+ * Expands everything collapsed in the overlay, nested disclosures included.
  *
- * One pass is not enough: opening the secondary group renders section headers that were
- * not in the DOM when the pass started, so a single querySelectorAll misses them. Loops
- * until a pass finds nothing left to open.
+ * Rail panels open one at a time when clicked, so clicking every shut header would leave
+ * only the last one open. They are opened together through the editor's own event; only
+ * the disclosures inside them are clicked, looping because opening one can render more.
  */
 const expandAll = async (page: Page) => {
   await page.evaluate(async () => {
+    document.dispatchEvent(new CustomEvent('d7-studio:expand-rail'));
+    await new Promise(r => setTimeout(r, 150));
     const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
     for (let pass = 0; pass < 4; pass++) {
-      const shut = Array.from(sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]'));
+      const shut = Array.from(sr.querySelectorAll<HTMLElement>('[aria-expanded="false"]:not([data-rail-toggle])'));
       if (shut.length === 0) break;
       shut.forEach(b => b.click());
       await new Promise(r => setTimeout(r, 150));
@@ -931,7 +951,7 @@ test.describe('D7 Studio: menu parent depth', () => {
     await page.goto(`${HOST}/node/add/page`);
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
     await openRailSection(page, 'menu');
-    await expect(page.locator(`${UI} input[placeholder="Filter parent items"]`)).toBeVisible();
+    await expect(page.locator(`${UI} input[placeholder="Type to find the parent page"]`)).toBeVisible();
   };
 
   test('every parent Drupal offers is selectable, at any depth', async ({ page, settings }) => {
@@ -987,7 +1007,7 @@ test.describe('D7 Studio: menu parent depth', () => {
    */
   test('a deep parent row names its immediate ancestors', async ({ page, settings }) => {
     await openMenuSection(page, settings);
-    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Video Tutorial');
+    await page.fill(`${UI} input[placeholder="Type to find the parent page"]`, 'Video Tutorial');
 
     const trail = page.locator(`${UI} aside [data-parent-option="main-menu:204"] [data-parent-trail]`);
     await expect(trail).toBeVisible();
@@ -1000,7 +1020,7 @@ test.describe('D7 Studio: menu parent depth', () => {
 
   test('a dimmed context row does not restate its own lineage', async ({ page, settings }) => {
     await openMenuSection(page, settings);
-    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Video Tutorial');
+    await page.fill(`${UI} input[placeholder="Type to find the parent page"]`, 'Video Tutorial');
 
     // Specialties is present only to hold the hierarchy up, so a trail on it is noise.
     await expect(page.locator(`${UI} aside [data-parent-option="main-menu:200"]`)).toBeVisible();
@@ -1017,17 +1037,18 @@ test.describe('D7 Studio: menu parent depth', () => {
    * did not stop them pushing the parent picker to fifth position, below the panel's
    * visible area. The placement control has to lead the section named Menu Placement.
    */
-  test('the parent picker comes before the fields it writes to', async ({ page, settings }) => {
+  test('only the link\'s own two controls come before the placement', async ({ page, settings }) => {
     await openMenuSection(page, settings);
-    const order = await page.evaluate(() => {
+    // The design's order is "Provide a menu link", the link title, then Lives under. What
+    // must never happen again is a site's own menu fields landing ahead of the placement.
+    const before = await page.evaluate(() => {
       const root = document.querySelector('.d7-proxy-ui-form-host')!.shadowRoot!;
-      const picker = root.querySelector('aside input[placeholder="Filter parent items"]')!;
-      const enabled = [...root.querySelectorAll('aside label')]
-        .find(l => /Provide a menu link/i.test(l.textContent ?? ''))!;
-      // DOCUMENT_POSITION_FOLLOWING === the checkbox comes after the picker.
-      return Boolean(picker.compareDocumentPosition(enabled) & Node.DOCUMENT_POSITION_FOLLOWING);
+      const placement = root.querySelector('aside [data-menu-parent]')!;
+      return [...root.querySelectorAll('aside [data-rail-panel="menu"] label')]
+        .filter(l => Boolean(l.compareDocumentPosition(placement) & Node.DOCUMENT_POSITION_FOLLOWING))
+        .map(l => (l.textContent ?? '').trim());
     });
-    expect(order, 'the picker must precede "Provide a menu link"').toBe(true);
+    expect(before.every(t => /^(Provide a menu link|Menu link title)/i.test(t)), before.join(' | ')).toBe(true);
   });
 
   test('reports how deep the menu goes', async ({ page, settings }) => {
@@ -1062,7 +1083,7 @@ test.describe('D7 Studio: menu parent depth', () => {
 
   test('filtering a deep item keeps its whole ancestor chain visible', async ({ page, settings }) => {
     await openMenuSection(page, settings);
-    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'video');
+    await page.fill(`${UI} input[placeholder="Type to find the parent page"]`, 'video');
     const labels = (await page.locator(`${UI} aside [data-parent-label]`).allInnerTexts()).map(t => t.trim());
     // The match plus all four ancestors, so the position is never ambiguous.
     for (const crumb of ['Specialties', 'Cardiology & Cardiac Surgery', 'Our Services',
@@ -1074,7 +1095,9 @@ test.describe('D7 Studio: menu parent depth', () => {
   test('the breadcrumb shows the full path for a deep selection', async ({ page, settings }) => {
     await openMenuSection(page, settings);
     await page.locator(`${UI} aside [data-parent-option="main-menu:204"]`).click();
-    const trail = await page.locator(`${UI} aside >> text=/Will appear under/`).innerText();
+    // Picking closes the picker; the "Lives under" line is what remains.
+    await expect(page.locator(`${UI} aside [data-parent-option]`)).toHaveCount(0);
+    const trail = await page.locator(`${UI} aside [data-menu-crumb]`).innerText();
     expect(trail).toContain('Specialties');
     expect(trail).toContain('Our Services');
     expect(trail).toContain('Video Tutorial');
@@ -1092,7 +1115,7 @@ test.describe('D7 Studio: parent picker at real scale', () => {
     await page.goto(`${HOST}/node/add/page-bigmenu`);
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
     await openRailSection(page, 'menu');
-    await expect(page.locator(`${UI} input[placeholder="Filter parent items"]`)).toBeVisible();
+    await expect(page.locator(`${UI} input[placeholder="Type to find the parent page"]`)).toBeVisible();
   };
 
   const rowCount = (page: import('@playwright/test').Page) =>
@@ -1111,7 +1134,7 @@ test.describe('D7 Studio: parent picker at real scale', () => {
 
   test('typing narrows to matches with their ancestors', async ({ page, settings }) => {
     await open(page, settings);
-    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Detail 7.1');
+    await page.fill(`${UI} input[placeholder="Type to find the parent page"]`, 'Detail 7.1');
     const labels = (await page.locator(`${UI} aside [data-parent-label]`).allInnerTexts()).map(t => t.trim());
     expect(labels).toContain('Detail 7.1 Cardiology');
     // Ancestors retained, so the position in a 200-row menu is never ambiguous.
@@ -1131,7 +1154,7 @@ test.describe('D7 Studio: parent picker at real scale', () => {
    */
   test('searching a parent surfaces the items beneath it', async ({ page, settings }) => {
     await open(page, settings);
-    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Specialty 7');
+    await page.fill(`${UI} input[placeholder="Type to find the parent page"]`, 'Specialty 7');
 
     const labels = (await page.locator(`${UI} aside [data-parent-label]`).allInnerTexts())
       .map(t => t.trim());
@@ -1145,7 +1168,7 @@ test.describe('D7 Studio: parent picker at real scale', () => {
     // by the section name has to count as a real match — otherwise the count lies and it
     // reads as scaffolding rather than a result.
     await open(page, settings);
-    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Specialty 7');
+    await page.fill(`${UI} input[placeholder="Type to find the parent page"]`, 'Specialty 7');
 
     // Detail 7.1 Cardiology — a grandchild of Specialty 7, whose own label contains
     // nothing matching the query.
@@ -1164,8 +1187,12 @@ test.describe('D7 Studio: parent picker at real scale', () => {
    */
   test('the selected parent is unmistakable, not a faint tint', async ({ page, settings }) => {
     await open(page, settings);
-    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Specialty 7');
+    await page.fill(`${UI} input[placeholder="Type to find the parent page"]`, 'Specialty 7');
     await page.locator(`${UI} aside [data-parent-option="main-menu:3071"]`).click();
+
+    // Picking closes the picker. Reopened, the choice has to be the obvious row.
+    await page.locator(`${UI} aside [data-parent-picker-toggle]`).click();
+    await page.fill(`${UI} input[placeholder="Type to find the parent page"]`, 'Specialty 7');
 
     const row = `${UI} aside [data-parent-option="main-menu:3071"]`;
     await expect(page.locator(row)).toHaveAttribute('aria-pressed', 'true');
@@ -1231,7 +1258,7 @@ test.describe('D7 Studio: parent picker at real scale', () => {
     // Clipping cut the trail from the right, which is where the NEAREST ancestor sits —
     // leaving a dangling separator ("in … › Gharavi Lab ›") and losing the useful half.
     await open(page, settings);
-    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Specialty 7');
+    await page.fill(`${UI} input[placeholder="Type to find the parent page"]`, 'Specialty 7');
 
     const trail = page.locator(
       `${UI} aside [data-parent-option="main-menu:3071"] [data-parent-trail]`
@@ -1244,7 +1271,7 @@ test.describe('D7 Studio: parent picker at real scale', () => {
 
   test('a broad query is capped rather than rendering everything', async ({ page, settings }) => {
     await open(page, settings);
-    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'e');
+    await page.fill(`${UI} input[placeholder="Type to find the parent page"]`, 'e');
     const rows = await rowCount(page);
     expect(rows).toBeGreaterThan(0);
     expect(rows).toBeLessThanOrEqual(120);
@@ -1253,7 +1280,7 @@ test.describe('D7 Studio: parent picker at real scale', () => {
 
   test('a deep match can still be selected and written back', async ({ page, settings }) => {
     await open(page, settings);
-    await page.fill(`${UI} input[placeholder="Filter parent items"]`, 'Detail 12.1');
+    await page.fill(`${UI} input[placeholder="Type to find the parent page"]`, 'Detail 12.1');
     await page.locator(`${UI} aside [data-parent-option="main-menu:3121"]`).click();
     await expect(page.locator('#edit-menu-parent')).toHaveValue('main-menu:3121');
   });
@@ -1266,6 +1293,118 @@ test.describe('D7 Studio: parent picker at real scale', () => {
     await openRailSection(page, 'menu');
     expect(await rowCount(page)).toBeGreaterThan(0);
     await expect(page.locator(`${UI} aside >> text=/Type above to search/`)).toHaveCount(0);
+  });
+});
+
+test.describe('D7 Studio: Menu Placement\'s Position list', () => {
+  /**
+   * The real captured Page form, whose parent select has six top-level links. Their
+   * weights come from the menu's admin page, served here with values consistent with the
+   * order the capture lists them in — Drupal sorts by weight, then title.
+   */
+  const URL = `${HOST}/node/add/page?position`;
+  const WEIGHTS: Record<string, number> = {
+    12216: -10, // About Us
+    7191: -5,   // Specialties
+    7196: -3,   // Treatments & Conditions
+    66935: 0,   // Locations
+    66907: 2,   // Find a Doctor
+    7231: 5,    // For Patients
+  };
+  const adminPage = Object.entries(WEIGHTS).map(([mlid, w]) =>
+    `<select name="mlid:${mlid}[weight]"><option value="${w}" selected="selected">${w}</option></select>`
+  ).join('');
+
+  const open = async (page: Page, context: import('@playwright/test').BrowserContext, settings: any, admin: 'ok' | 'forbidden' = 'ok') => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await context.route(URL, route =>
+      route.fulfill({ status: 200, contentType: 'text/html', body: read('captured/page.html') }));
+    await context.route(`${HOST}/admin/structure/menu/manage/main-menu`, route =>
+      admin === 'ok'
+        ? route.fulfill({ status: 200, contentType: 'text/html', body: adminPage })
+        : route.fulfill({ status: 403, body: 'Access denied' }));
+    await page.goto(URL);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible({ timeout: OVERLAY_MOUNT_TIMEOUT });
+  };
+
+  const rowTitles = (page: Page) => page.evaluate(() => {
+    const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+    return Array.from(sr.querySelectorAll('[data-menu-position="ready"] [data-position-self], [data-menu-position="ready"] [data-position-sibling]'))
+      .map(el => (el.hasAttribute('data-position-self') ? '*' : '') + (el.querySelector('.truncate')?.textContent ?? '').trim());
+  });
+
+  test('Page opens Menu Placement, and shows the page among its real siblings', async ({ page, context, settings }) => {
+    await open(page, context, settings);
+    await page.locator(`${UI} input[aria-label="Title"]`).fill('Zebra Clinic');
+
+    // Page is the one type whose rail opens on Menu Placement.
+    await expect(page.locator(`${UI} aside [data-rail-toggle="menu"]`)).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator(`${UI} aside [data-menu-position="ready"]`)).toBeVisible();
+
+    // Weight 0 and "Zebra…" sorts after Locations (0, "L") and before Find a Doctor (2).
+    await expect.poll(() => rowTitles(page)).toEqual([
+      'About Us', 'Specialties', 'Treatments & Conditions', 'Locations', '*Zebra Clinic', 'Find a Doctor', 'For Patients',
+    ]);
+  });
+
+  test('clicking a link places the page above it, by writing only this page\'s weight', async ({ page, context, settings }) => {
+    await open(page, context, settings);
+    await page.locator(`${UI} input[aria-label="Title"]`).fill('Zebra Clinic');
+    await expect(page.locator(`${UI} aside [data-menu-position="ready"]`)).toBeVisible();
+
+    await page.locator(`${UI} aside [data-position-sibling="7191"]`).click();
+
+    // Between About Us (-10) and Specialties (-5): the offered weight nearest the gap.
+    await expect(page.locator('#edit-menu-weight')).toHaveValue('-7');
+    await expect.poll(() => rowTitles(page)).toEqual([
+      'About Us', '*Zebra Clinic', 'Specialties', 'Treatments & Conditions', 'Locations', 'Find a Doctor', 'For Patients',
+    ]);
+    // Placing the page puts it in the menu, or Drupal would discard the weight on save.
+    await expect(page.locator('#edit-menu-enabled')).toBeChecked();
+    await expect(page.locator(`${UI} aside [data-menu-weight]`)).toHaveText('Weight -7');
+  });
+
+  test('the arrows move it one place at a time', async ({ page, context, settings }) => {
+    await open(page, context, settings);
+    await page.locator(`${UI} input[aria-label="Title"]`).fill('Zebra Clinic');
+    await expect(page.locator(`${UI} aside [data-menu-position="ready"]`)).toBeVisible();
+
+    await page.locator(`${UI} aside [data-position-self] button[aria-label="Move down"]`).click();
+    // Past Find a Doctor (2), still before For Patients (5).
+    await expect(page.locator('#edit-menu-weight')).toHaveValue('3');
+    await page.locator(`${UI} aside [data-position-self] button[aria-label="Move up"]`).click();
+    await page.locator(`${UI} aside [data-position-self] button[aria-label="Move up"]`).click();
+    // Back past Find a Doctor and then Locations: between Treatments (-3) and Locations (0).
+    await expect(page.locator('#edit-menu-weight')).toHaveValue('-1');
+  });
+
+  test('the "Lives under" box itself opens the parent picker', async ({ page, context, settings }) => {
+    await open(page, context, settings);
+    /**
+     * Reported: "I can't select the parent item." The box showing the current parent was
+     * drawn like a field but was inert — only a small "Change" link beside its label
+     * opened the picker. Whatever looks like the control has to be the control.
+     */
+    await page.locator(`${UI} aside [data-menu-crumb]`).click();
+    const filter = page.locator(`${UI} input[placeholder="Type to find the parent page"]`);
+    await expect(filter).toBeVisible();
+
+    await filter.fill('Specialties');
+    await page.locator(`${UI} aside [data-parent-option="main-menu:7191"]`).click();
+    await expect(page.locator('#edit-menu-parent')).toHaveValue('main-menu:7191');
+    await expect(page.locator(`${UI} aside [data-menu-crumb]`)).toContainText('Specialties');
+  });
+
+  test('when the menu cannot be read, the native weight is offered instead', async ({ page, context, settings }) => {
+    await open(page, context, settings, 'forbidden');
+    const fallback = page.locator(`${UI} aside [data-menu-position="unavailable"]`);
+    await expect(fallback).toBeVisible();
+    // The real -50…50 select, still writing to Drupal's own control — and showing a
+    // negative weight as negative, not as a positive number indented one level.
+    const select = fallback.locator('select');
+    await expect(select.locator('option[value="-4"]')).toHaveText('-4');
+    await select.selectOption({ value: '-4' });
+    await expect(page.locator('#edit-menu-weight')).toHaveValue('-4');
   });
 });
 
@@ -1283,14 +1422,14 @@ test.describe('D7 Studio: rarely-used fields collapse', () => {
     await page.goto(`${HOST}/node/add/page`);
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
     await openRailSection(page, 'menu');
-    await expect(page.locator(`${UI} input[placeholder="Filter parent items"]`)).toBeVisible();
+    await expect(page.locator(`${UI} input[placeholder="Type to find the parent page"]`)).toBeVisible();
   };
 
   test('menu-attribute fields are hidden behind a disclosure by default', async ({ page, settings }) => {
     await openMenu(page, settings);
 
-    // The parent picker is visible; the attribute fields are not.
-    await expect(page.locator(`${UI} aside >> text=Parent item`)).toBeVisible();
+    // The placement is visible; the attribute fields are not.
+    await expect(page.locator(`${UI} aside >> text=Lives under`)).toBeVisible();
     await expect(page.locator(`${UI} [data-advanced-fields]`)).toHaveCount(0);
     await expect(page.locator(`${UI} aside >> text=/Show 9 rarely-used fields/`)).toBeVisible();
   });
@@ -1308,13 +1447,14 @@ test.describe('D7 Studio: rarely-used fields collapse', () => {
     expect(written).toBe('promo-link');
   });
 
-  test('the section header says how many are held back', async ({ page, settings }) => {
+  test('the section header says where the page will appear, with nothing clicked', async ({ page, settings }) => {
     await settings({ nodeEditor: true, combobox: false, htmlExport: false });
     await page.goto(`${HOST}/node/add/page`);
     await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
-    // Visible with nothing clicked: the count belongs on the section header, so nothing
-    // feels missing before it is opened.
-    await expect(page.locator(`${UI} aside >> text=/rarely used/`).first()).toBeVisible();
+    // The condensed header carries the panel's current answer, not a field count: this
+    // fixture's "Provide a menu link" is unchecked, so the page is not in the menu.
+    await expect(page.locator(`${UI} aside [data-rail-toggle="menu"] [data-panel-summary]`))
+      .toHaveText('Not in the menu');
   });
 
   test('collapsing does not remove them from the form', async ({ page, settings }) => {
@@ -1835,13 +1975,12 @@ test.describe('Feature 5: a content type other than News', () => {
     expect(folded).toEqual({ present: true, disabled: false });
   });
 
-  test('the SEO section forms on this content type too', async ({ page, settings }) => {
+  test('the SEO fields form on this content type too, under Search & Social', async ({ page, settings }) => {
     await open(page, settings);
-    const rail = await page.evaluate(() => {
-      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
-      return (sr.textContent || '').replace(/\s+/g, ' ');
-    });
-    expect(rail).toContain('URL, SEO & Sitemap');
+    // URL, SEO & Sitemap folded into Search & Social: its fields sit behind "Override".
+    await expect(page.locator(`${UI} aside [data-seo-override]`)).toBeVisible();
+    await openRailSection(page, 'seo');
+    await expect(page.locator(`${UI} aside [data-seo-fields]`)).toBeVisible();
   });
 
   test('the metatag and path fields are reachable once that section is open', async ({ page, settings }) => {
@@ -2037,20 +2176,19 @@ test.describe('Feature 5: the description is findable and the Titles are disting
     return (sr.textContent || '').replace(/\s+/g, ' ');
   });
 
-  test('Search & Social Preview leads the rail and is open without being clicked', async ({ page, settings }) => {
+  test('Search & Social leads the rail and is open without being clicked', async ({ page, settings }) => {
     await open(page, settings);
 
     const state = await page.evaluate(() => {
       const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
-      const toggles = Array.from(sr.querySelectorAll('button[aria-expanded]'));
-      const first = toggles[0];
+      const first = sr.querySelector('aside [data-rail-toggle]');
       return {
-        firstSection: (first?.textContent || '').replace(/\s+/g, ' ').slice(0, 30),
+        firstSection: (first?.firstElementChild?.textContent || '').trim(),
         firstExpanded: first?.getAttribute('aria-expanded'),
       };
     });
 
-    expect(state.firstSection).toContain('Search & Social Preview');
+    expect(state.firstSection).toBe('Search & Social');
     // Prominence means visible on load, not one click away.
     expect(state.firstExpanded).toBe('true');
   });
@@ -2164,23 +2302,57 @@ test.describe('Feature 5: the rail is triaged, and the image is not in it', () =
     expect(box.projecting).toBeGreaterThan(0);
   });
 
-  /** The rail's top-level headers, in order, excluding those nested in the group. */
+  /** The rail's panel titles, in order — the title only, not the summary beside it. */
   const topHeaders = (page: Page) => page.evaluate(() => {
     const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
-    const aside = sr.querySelector('aside')!;
-    return Array.from(aside.querySelectorAll(':scope > div > button[aria-expanded]'))
-      .map(b => (b.querySelector('span > span') || b).textContent!.replace(/\s+/g, ' ').trim());
+    return Array.from(sr.querySelectorAll('aside [data-rail-toggle]'))
+      .map(b => (b.firstElementChild?.textContent ?? '').replace(/\s+/g, ' ').trim());
   });
 
   test('the rail leads with the sections used on most saves', async ({ page, settings }) => {
     await open(page, settings);
-    // News carries no menu fields, so its rail is three sections plus the group.
+    // News carries no menu fields, so its rail is three panels plus More settings.
     expect(await topHeaders(page)).toEqual([
-      'Search & Social Preview',
-      'Topics & Tags',
+      'Search & Social',
+      'Topics',
       'Related Content',
-      'Settings used occasionally',
+      'More settings',
     ]);
+  });
+
+  test('one panel is open at a time', async ({ page, settings }) => {
+    await open(page, settings);
+    const openPanels = () => page.locator(`${UI} aside [data-rail-toggle][aria-expanded="true"]`);
+    await expect(openPanels()).toHaveCount(1);
+
+    await page.locator(`${UI} aside [data-rail-toggle="topics"]`).click();
+    await expect(openPanels()).toHaveCount(1);
+    await expect(page.locator(`${UI} aside [data-rail-toggle="topics"]`)).toHaveAttribute('aria-expanded', 'true');
+
+    // Clicking the open one closes it, leaving none.
+    await page.locator(`${UI} aside [data-rail-toggle="topics"]`).click();
+    await expect(openPanels()).toHaveCount(0);
+  });
+
+  test('the open panel is remembered for the content type', async ({ page, settings }) => {
+    await open(page, settings);
+    await page.locator(`${UI} aside [data-rail-toggle="topics"]`).click();
+    await expect(page.locator(`${UI} aside [data-rail-toggle="topics"]`)).toHaveAttribute('aria-expanded', 'true');
+
+    await page.reload();
+    await expect(page.locator(`${UI} aside [data-rail-toggle="topics"]`)).toHaveAttribute('aria-expanded', 'true');
+    await expect(page.locator(`${UI} aside [data-rail-toggle="search"]`)).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  test('the rail scrolls on its own, never longer than the screen', async ({ page, settings }) => {
+    await open(page, settings);
+    const rail = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const aside = sr.querySelector('aside') as HTMLElement;
+      const style = getComputedStyle(aside);
+      return { position: style.position, overflowY: style.overflowY, fits: aside.getBoundingClientRect().height <= window.innerHeight };
+    });
+    expect(rail).toEqual({ position: 'sticky', overflowY: 'auto', fits: true });
   });
 
   test('Menu Placement is listed openly, not inside the group', async ({ page, settings }) => {
@@ -2198,26 +2370,30 @@ test.describe('Feature 5: the rail is triaged, and the image is not in it', () =
 
   test('the occasional settings are named on the collapsed header, then reachable', async ({ page, settings }) => {
     await open(page, settings);
-    const more = page.locator(`${UI} aside button[aria-expanded]`, { hasText: 'Settings used occasionally' });
+    const more = page.locator(`${UI} aside [data-rail-toggle="__more"]`);
 
     // Named while shut: a group whose contents are a mystery is worse than a long list.
-    await expect(more).toContainText('URL, SEO & Sitemap');
-    await expect(more).toContainText('Revision');
+    await expect(more.locator('[data-panel-summary]')).toContainText('revision');
     await expect(page.locator(`${UI} [data-rail-more]`)).toHaveCount(0);
 
     await more.click();
     const revealed = page.locator(`${UI} [data-rail-more]`);
-    await expect(revealed).toContainText('URL, SEO & Sitemap');
-    await expect(revealed).toContainText('Revision');
+    await expect(revealed.locator('[data-rail-group="revision"]')).toBeVisible();
+    // URL, SEO & Sitemap is no longer here: it folded into Search & Social.
+    await expect(revealed.locator('[data-rail-group="seo"]')).toHaveCount(0);
   });
 
   test('Groups is drawn under Related Content, not as a section of its own', async ({ page, settings }) => {
     await open(page, settings);
     await openRailSection(page, 'related');
+    // Groups is its own disclosure inside Related Content, shut by default.
+    const groupsToggle = page.locator(`${UI} aside [data-panel-subgroup="groups"] > button[aria-expanded]`);
+    await expect(groupsToggle).toHaveAttribute('aria-expanded', 'false');
+    await groupsToggle.click();
 
     // Asserted on the subgroup element, not on panel text: the Related Content header
-    // now reads "replaced the Related Content and Groups tabs", so a text match for
-    // "Groups" would pass whether or not a single Groups field was drawn.
+    // summarises the group flag, so a text match for "Groups" would pass whether or not
+    // a single Groups field was drawn.
     const placement = await page.evaluate(() => {
       const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
       const subgroup = sr.querySelector('[data-panel-subgroup="groups"]');
@@ -2225,7 +2401,7 @@ test.describe('Feature 5: the rail is triaged, and the image is not in it', () =
         exists: !!subgroup,
         insideRelated: subgroup?.closest('[data-rail-panel]')?.getAttribute('data-rail-panel') ?? null,
         // Captioned, not silently mixed in with the entity references.
-        captioned: /groups/i.test(subgroup?.querySelector('p')?.textContent ?? ''),
+        captioned: /groups/i.test(subgroup?.querySelector('button')?.textContent ?? ''),
         controls: subgroup?.querySelectorAll('input, select, textarea, slot').length ?? 0,
         ownPanel: !!sr.querySelector('[data-rail-panel="groups"]'),
       };
@@ -2327,7 +2503,9 @@ test.describe('Feature 5: a rich editor that loads late is still found', () => {
     const summary = await page.evaluate(() => {
       const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
       return {
+        // The rail header's "Uses the summary" is a status line, not a summary field.
         labels: Array.from(sr.querySelectorAll('label, p, span'))
+          .filter(el => !el.closest('[data-panel-summary]'))
           .map(el => (el.textContent || '').trim())
           .filter(t => /summary$/i.test(t) && t.length < 40),
         stillSubmits: new FormData(document.querySelector('form[id$="-node-form"]') as HTMLFormElement)

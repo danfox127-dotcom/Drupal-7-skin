@@ -238,8 +238,10 @@ function readOptions(controls: HTMLElement[], kind: FieldKind, wrapper: Element)
   if (kind === 'select' || controls[0]?.tagName === 'SELECT') {
     const select = controls[0] as HTMLSelectElement;
     return Array.from(select.options).map(opt => {
-      // Drupal encodes taxonomy depth as leading hyphens in the option label.
-      const match = opt.text.match(/^(-+)\s*(.*)$/);
+      // Drupal encodes taxonomy depth as leading hyphens in the option label — but not
+      // on a NUMBER. A weight select's "-4" is minus four, not "4" one level deep; read
+      // as depth, every negative weight displayed as positive.
+      const match = /^-\d+$/.test(opt.text.trim()) ? null : opt.text.match(/^(-+)\s*(.*)$/);
       return {
         value: opt.value,
         label: match ? match[2] : opt.text.trim(),

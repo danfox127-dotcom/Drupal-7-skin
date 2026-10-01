@@ -4,6 +4,7 @@ import { FieldDescriptor, FieldOption } from '../../lib/formSchema';
 import { readValue, writeValue } from '../../lib/fieldBinding';
 import { filterTreeRetainingAncestors } from '../../lib/treeFilter';
 import { FieldControl } from './FieldControl';
+import { MenuPosition } from './MenuPosition';
 
 /**
  * Menu Placement — an evolution of TaxonomyCombobox, per the handoff: keep its filter
@@ -65,13 +66,49 @@ const MAX_RENDERED = 120;
  */
 const TRAIL_SHOWN = 2;
 
+/** Drupal names a menu's root option `<Main Menu>`; the brackets are markup, not a title. */
+const rootLabel = (label: string) => label.replace(/^<(.+)>$/, '$1');
+
+/**
+ * One-line state for the rail header: "Not in the menu", "Top level", or the parent.
+ *
+ * Exported for NodeEditor's panel header, so the header and the section cannot disagree
+ * about where the page will appear.
+ */
+export function menuSummary(parent: FieldDescriptor | undefined, others: FieldDescriptor[]): string {
+  const enabled = others.find(f => f.machineName === 'menu[enabled]');
+  if (enabled && readValue(enabled) !== true) return 'Not in the menu';
+  if (!parent) return '';
+  const option = parent.options?.find(o => o.value === String(readValue(parent)));
+  if (!option) return '';
+  return option.depth === 0 ? 'Top level' : rootLabel(option.label);
+}
+
 export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
   const [value, setValue] = useState<string>(() => (parent ? String(readValue(parent)) : ''));
   const [query, setQuery] = useState('');
   const [showAdvanced, setShowAdvanced] = useState(false);
+  /**
+   * The parent picker stays shut behind "Change" until it is wanted.
+   *
+   * Most saves do not move a page, and a 250px scrolling list of three thousand parents
+   * is the tallest thing in the rail; the breadcrumb says where the page lives in one
+   * line. A rejected parent opens it, so a validation error is never behind a click.
+   */
+  const [pickerOpen, setPickerOpen] = useState(() => Boolean(parent && errorFor(parent)));
+  // Re-renders the Position list when the link title changes, since it sorts by it.
+  const [, setTick] = useState(0);
+  const bump = useCallback(() => setTick(t => t + 1), []);
 
-  // Menu-attribute fields: real, but not what anyone opens this section for.
-  const advancedOthers = useMemo(() => others.filter(f => f.advanced), [others]);
+  /** `menu[weight]`, which Position writes for the editor instead of showing a -50…50 select. */
+  const weight = useMemo(() => others.find(f => f.machineName === 'menu[weight]'), [others]);
+
+  // Menu-attribute fields: real, but not what anyone opens this section for. The weight
+  // is left out: Position is its control, and shows the raw select itself as a fallback.
+  const advancedOthers = useMemo(
+    () => others.filter(f => f.advanced && f !== weight),
+    [others, weight]
+  );
 
   /** The two controls a parent selection writes to, shown right under the picker. */
   const gating = useMemo(
@@ -82,7 +119,8 @@ export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
   /** Everything else non-advanced, including any fields a site has added of its own. */
   const otherPlain = useMemo(
     () => others.filter(f => !f.advanced
-      && f.machineName !== 'menu[enabled]' && f.machineName !== 'menu[link_title]'),
+      && f.machineName !== 'menu[enabled]' && f.machineName !== 'menu[link_title]'
+      && f.machineName !== 'menu[weight]'),
     [others]
   );
 
@@ -167,8 +205,10 @@ export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
     const selected = options.find(o => o.value === value);
     if (!selected) return null;
     // Same ancestry map the filter and the row trails use, so the three cannot disagree
-    // about who a parent is.
-    return [...(ancestorsByValue.get(value) ?? []), selected.label];
+    // about who a parent is. Gaps dropped: a select that skips a depth level (the List
+    // capture does) leaves holes in the trail, and a hole is not an ancestor.
+    return [...(ancestorsByValue.get(value) ?? []), selected.label]
+      .filter((crumb): crumb is string => typeof crumb === 'string');
   }, [options, value, ancestorsByValue]);
 
   /** Deepest level present, for the "N levels deep" hint. */
@@ -202,6 +242,12 @@ export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
   const select = (option: FieldOption) => {
     setValue(option.value);
     if (parent) writeValue(parent, option.value);
+    setPickerOpen(false);
+    setQuery('');
+    ensureInMenu();
+  };
+
+  const ensureInMenu = () => {
 
     /**
      * Choosing a parent IS placing the node in the menu, so enable the link.
@@ -227,127 +273,165 @@ export const MenuSection = ({ parent, others, nodeTitle, errorFor }: Props) => {
     }
   };
 
+  /** This link's title as Drupal will sort it: the link title, else the page's. */
+  const selfTitle = (linkTitle && String(readValue(linkTitle)).trim())
+    || (nodeTitle && String(readValue(nodeTitle)).trim())
+    || 'This page';
+
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-3.5">
       {/*
-        The picker leads, then the two controls it writes to, then anything else.
+        The design's order: the two controls that decide WHETHER the page is in the menu
+        and what the link says, then where it lives, then where among its siblings.
 
-        Marking core's menu-attribute fields advanced was supposed to keep them from
-        burying the picker, and it does — but a site can add its own non-advanced menu
-        fields, and Vagelos has two ("Menu modal: NID", "Link tooltip"). That pushed the
-        placement control to fifth in a section called Menu Placement, below the fold of
-        the panel, where an editor never saw it.
-
-        "Provide a menu link" and the link title sit directly beneath the picker rather
-        than above it, so the values selecting a parent writes appear where the click
-        happened.
+        A site's own non-advanced menu fields come after all of that — Vagelos has two
+        ("Menu modal: NID", "Link tooltip") — because ahead of the picker they pushed the
+        placement control to fifth in a section called Menu Placement.
       */}
+      {gating.map(field => (
+        <FieldControl key={field.machineName} field={field} dense error={errorFor(field)} onChange={bump} />
+      ))}
+
       {parent && (
         <>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-eyebrow font-semibold uppercase text-ink-secondary">
-              {parent.label}
-            </label>
-            <input
-              type="text"
-              value={query}
-              onChange={e => setQuery(e.target.value)}
-              placeholder="Filter parent items"
-              className="w-full px-3 py-2 bg-white border border-rule-control rounded text-control text-ink placeholder:text-ink-placeholder"
-            />
-          </div>
+          <div className="flex flex-col gap-1.5" data-menu-parent>
+            <span id="d7-lives-under" className="text-eyebrow font-semibold uppercase text-ink-secondary">
+              Lives under
+            </span>
 
-          <div className="max-h-[250px] overflow-y-auto border border-rule rounded">
-            {searchFirst ? (
-              <p className="px-3 py-3 text-help text-ink-help">
-                Type above to search {options.length.toLocaleString()} possible parents.
-              </p>
-            ) : filtered.items.length === 0 ? (
-              <p className="px-3 py-3 text-help text-ink-help">Nothing matches “{query}”.</p>
-            ) : (
-              visible.map(option => {
-                const isSelected = option.value === value;
-                // A row present only to preserve hierarchy is dimmed, so it reads as
-                // context rather than a result.
-                const isContext = !filtered.isMatch(option);
-                // Only real results carry a trail. A dimmed context row IS an ancestor,
-                // so restating its own lineage would be noise on the rows that need it least.
-                const trail = isContext ? { labels: [], deeper: false } : trailOf(option);
-                return (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => select(option)}
-                    data-parent-option={option.value}
-                    data-selected={isSelected ? '' : undefined}
-                    aria-pressed={isSelected}
-                    className={`w-full text-left px-2 py-1 text-control flex items-start gap-1.5 transition-colors duration-200 ease-studio ${
-                      isSelected
-                        // Solid, not a tint. A 6%-opacity wash on one row of a scrolling
-                        // list is not a selected state — it was reported as not looking
-                        // selected at all.
-                        ? 'bg-cu-blue text-white font-semibold'
-                        : 'text-ink hover:bg-cu-tint'
-                    } ${isContext ? 'opacity-60' : ''}`}
-                    style={{ paddingLeft: 8 + Math.min(option.depth, MAX_VISUAL_DEPTH) * INDENT_PX }}
-                  >
-                    {isSelected && <Check size={13} className="mt-0.5 shrink-0" aria-hidden />}
-                    <span className="min-w-0">
-                      <span data-parent-label className="block">{option.label}</span>
-                      {trail.labels.length > 0 && (
-                        /*
-                          Wraps rather than clipping. The trail reads outermost-first, so
-                          `truncate` cut the NEAREST ancestor — the one that tells six items
-                          called "Our Services" apart — and left a dangling separator behind
-                          it ("in … › Gharavi Lab ›"). A second line costs a row of height and
-                          keeps the part worth reading.
-                        */
-                        <span
-                          data-parent-trail
-                          className={`block text-help ${isSelected ? 'text-white/85' : 'text-ink-help'}`}
-                        >
-                          in {trail.deeper ? '… › ' : ''}{trail.labels.join(' › ')}
+            {/*
+              The box showing the current parent IS the control that changes it.
+
+              It was drawn like a field but was inert, with a small "Change" link beside
+              the label doing the work — reported as "I can't select the parent item".
+              Whatever looks like the control has to be the control, so the whole box is
+              one button, and "Change" sits inside it next to a dropdown chevron.
+            */}
+            <button
+              type="button"
+              onClick={() => { setPickerOpen(v => !v); setQuery(''); }}
+              aria-expanded={pickerOpen}
+              aria-labelledby="d7-lives-under"
+              aria-describedby="d7-lives-under-path"
+              data-parent-picker-toggle
+              data-menu-crumb
+              className="w-full flex items-center gap-2 px-3 py-2 bg-white border border-rule-control rounded text-left text-control text-ink hover:border-cu-blue transition-colors duration-200 ease-studio"
+            >
+              <span id="d7-lives-under-path" className="flex-1 min-w-0 flex items-center flex-wrap gap-1">
+                {(breadcrumb ?? []).map((crumb, i) => (
+                  <span key={`${crumb}-${i}`} className="flex items-center gap-1">
+                    {i > 0 && <ChevronRight size={11} className="text-ink-muted" aria-hidden />}
+                    <span>{rootLabel(crumb)}</span>
+                  </span>
+                ))}
+              </span>
+              <span className="shrink-0 flex items-center gap-1 text-help font-semibold text-cu-blue">
+                {pickerOpen ? 'Done' : 'Change'}
+                {pickerOpen ? <ChevronUp size={13} aria-hidden /> : <ChevronDown size={13} aria-hidden />}
+              </span>
+            </button>
+
+            {pickerOpen && (
+              <div className="flex flex-col gap-1.5">
+                <input
+                  type="text"
+                  value={query}
+                  onChange={e => setQuery(e.target.value)}
+                  placeholder="Type to find the parent page"
+                  aria-label={parent.label}
+                  autoFocus
+                  className="w-full px-3 py-2 bg-white border border-cu-blue rounded text-control text-ink placeholder:text-ink-placeholder"
+                />
+
+              <div className="max-h-[220px] overflow-y-auto border border-rule rounded">
+                {searchFirst ? (
+                  <p className="px-3 py-3 text-help text-ink-help">
+                    Type above to search {options.length.toLocaleString()} possible parents.
+                  </p>
+                ) : filtered.items.length === 0 ? (
+                  <p className="px-3 py-3 text-help text-ink-help">Nothing matches “{query}”.</p>
+                ) : (
+                  visible.map(option => {
+                    const isSelected = option.value === value;
+                    // A row present only to preserve hierarchy is dimmed, so it reads as
+                    // context rather than a result.
+                    const isContext = !filtered.isMatch(option);
+                    // Only real results carry a trail. A dimmed context row IS an ancestor,
+                    // so restating its own lineage would be noise on the rows that need it least.
+                    const trail = isContext ? { labels: [], deeper: false } : trailOf(option);
+                    return (
+                      <button
+                        key={option.value}
+                        type="button"
+                        onClick={() => select(option)}
+                        data-parent-option={option.value}
+                        data-selected={isSelected ? '' : undefined}
+                        aria-pressed={isSelected}
+                        className={`w-full text-left px-2 py-1 text-control flex items-start gap-1.5 transition-colors duration-200 ease-studio ${
+                          isSelected
+                            // Solid, not a tint. A 6%-opacity wash on one row of a scrolling
+                            // list is not a selected state — it was reported as not looking
+                            // selected at all.
+                            ? 'bg-cu-blue text-white font-semibold'
+                            : 'text-ink hover:bg-cu-tint'
+                        } ${isContext ? 'opacity-60' : ''}`}
+                        style={{ paddingLeft: 8 + Math.min(option.depth, MAX_VISUAL_DEPTH) * INDENT_PX }}
+                      >
+                        {isSelected && <Check size={13} className="mt-0.5 shrink-0" aria-hidden />}
+                        <span className="min-w-0">
+                          <span data-parent-label className="block">{option.label}</span>
+                          {trail.labels.length > 0 && (
+                            /*
+                              Wraps rather than clipping. The trail reads outermost-first, so
+                              `truncate` cut the NEAREST ancestor — the one that tells six items
+                              called "Our Services" apart — and left a dangling separator behind
+                              it ("in … › Gharavi Lab ›"). A second line costs a row of height and
+                              keeps the part worth reading.
+                            */
+                            <span
+                              data-parent-trail
+                              className={`block text-help ${isSelected ? 'text-white/85' : 'text-ink-help'}`}
+                            >
+                              in {trail.deeper ? '… › ' : ''}{trail.labels.join(' › ')}
+                            </span>
+                          )}
                         </span>
-                      )}
-                    </span>
-                  </button>
-                );
-              })
+                      </button>
+                    );
+                  })
+                )}
+              </div>
+
+              <p className="text-help text-ink-help">
+                {/* Not searching: state the size and depth of the menu, whether or not it is
+                    big enough to withhold the list. Searching: report the match count. */}
+                {!searching
+                  ? `${options.length.toLocaleString()} possible parents, ${maxDepth + 1} levels deep.`
+                  : truncated
+                    ? `Showing ${visible.length} of ${filtered.items.length} rows for ${filtered.matchCount} match${filtered.matchCount === 1 ? '' : 'es'} — keep typing to narrow.`
+                    : `${filtered.matchCount} of ${options.length.toLocaleString()} match. Parents are kept visible for context.`}
+              </p>
+
+              </div>
+            )}
+
+            {errorFor(parent) && (
+              <p className="text-help text-burnt font-semibold">{errorFor(parent)}</p>
             )}
           </div>
 
-          <p className="text-help text-ink-help">
-            {/* Not searching: state the size and depth of the menu, whether or not it is
-                big enough to withhold the list. Searching: report the match count. */}
-            {!searching
-              ? `${options.length.toLocaleString()} possible parents, ${maxDepth + 1} levels deep.`
-              : truncated
-                ? `Showing ${visible.length} of ${filtered.items.length} rows for ${filtered.matchCount} match${filtered.matchCount === 1 ? '' : 'es'} — keep typing to narrow.`
-                : `${filtered.matchCount} of ${options.length.toLocaleString()} match. Parents are kept visible for context.`}
-          </p>
-
-          {breadcrumb && breadcrumb.length > 0 && (
-            <p className="flex items-center flex-wrap gap-1 text-help text-ink-help">
-              Will appear under
-              {breadcrumb.map((crumb, i) => (
-                <span key={`${crumb}-${i}`} className="flex items-center gap-1">
-                  {i > 0 && <ChevronRight size={10} className="text-ink-placeholder" />}
-                  <span className="text-ink-secondary font-medium">{crumb}</span>
-                </span>
-              ))}
-            </p>
-          )}
-
-          {errorFor(parent) && (
-            <p className="text-help text-burnt font-semibold">{errorFor(parent)}</p>
+          {weight && (
+            <MenuPosition
+              key={value}
+              options={options}
+              parentValue={value}
+              weight={weight}
+              selfTitle={selfTitle}
+              onPlaced={() => { ensureInMenu(); bump(); }}
+            />
           )}
         </>
       )}
-
-
-      {gating.map(field => (
-        <FieldControl key={field.machineName} field={field} dense error={errorFor(field)} />
-      ))}
 
       {otherPlain.map(field => (
         <FieldControl key={field.machineName} field={field} dense error={errorFor(field)} />

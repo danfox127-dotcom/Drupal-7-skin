@@ -5,6 +5,7 @@ import { readValue, writeValue, FieldValue } from '../../lib/fieldBinding';
 import { useNativeSync } from './useNativeSync';
 import { slotNameFor } from '../../content/inject';
 import { displayLabelFor, wasRelabelled } from '../../lib/formSchema/displayLabels';
+import { InfoTip, HelpAsTipContext } from './InfoTip';
 
 /**
  * Renders one discovered field and writes changes straight to its native control.
@@ -47,11 +48,15 @@ interface Props {
   onChange?: (field: FieldDescriptor, value: FieldValue) => void;
 }
 
-/** Label plus the word "Required" in burnt orange, never a bare asterisk. */
+/**
+ * Label plus the word "Required" in burnt orange, never a bare asterisk — and, in the
+ * rail, the field's help behind an info icon.
+ */
 export function FieldLabel({ field, htmlFor }: { field: FieldDescriptor; htmlFor?: string }) {
   const shown = displayLabelFor(field);
+  const helpAsTip = React.useContext(HelpAsTipContext);
   return (
-    <div className="flex items-baseline gap-2">
+    <div className="flex items-center gap-2">
       <label
         htmlFor={htmlFor}
         className="text-eyebrow font-semibold uppercase text-ink-secondary"
@@ -60,6 +65,7 @@ export function FieldLabel({ field, htmlFor }: { field: FieldDescriptor; htmlFor
       >
         {shown}
       </label>
+      {helpAsTip && field.help && <InfoTip text={field.help} about={shown} />}
       {field.required && (
         <span className="text-help font-semibold text-burnt">Required</span>
       )}
@@ -70,6 +76,7 @@ export function FieldLabel({ field, htmlFor }: { field: FieldDescriptor; htmlFor
 export const FieldControl = ({ field, error, dense, slotted: slottedProp, onChange }: Props) => {
   const relocated = React.useContext(SlottedFieldsContext);
   const slotted = slottedProp ?? relocated.has(field.machineName);
+  const helpAsTip = React.useContext(HelpAsTipContext);
 
   const [value, setValue] = useState<FieldValue>(() => readValue(field));
   // Only rendered for kind 'multiSelect', but declared unconditionally per the rules of
@@ -115,16 +122,21 @@ export const FieldControl = ({ field, error, dense, slotted: slottedProp, onChan
   switch (kind) {
     case 'checkbox':
       control = (
-        <label className="flex items-start gap-2 cursor-pointer">
-          <input
-            id={inputId}
-            type="checkbox"
-            checked={Boolean(value)}
-            onChange={e => commit(e.target.checked)}
-            className="mt-0.5 shrink-0"
-          />
-          <span className="text-control text-ink">{field.label}</span>
-        </label>
+        <span className="flex items-start gap-2">
+          <label className="flex items-start gap-2 cursor-pointer">
+            <input
+              id={inputId}
+              type="checkbox"
+              checked={Boolean(value)}
+              onChange={e => commit(e.target.checked)}
+              className="mt-0.5 shrink-0"
+            />
+            <span className="text-control text-ink">{field.label}</span>
+          </label>
+          {helpAsTip && field.help && (
+            <span className="mt-0.5"><InfoTip text={field.help} about={field.label} /></span>
+          )}
+        </span>
       );
       break;
 
@@ -318,7 +330,7 @@ export const FieldControl = ({ field, error, dense, slotted: slottedProp, onChan
       {field.kind !== 'checkbox' && !slotted && <FieldLabel field={field} htmlFor={inputId} />}
       {control}
 
-      {field.help && !slotted && (
+      {field.help && !slotted && !helpAsTip && (
         <p className="text-help text-ink-help">{field.help}</p>
       )}
 

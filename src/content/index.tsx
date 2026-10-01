@@ -17,7 +17,7 @@ import {
 } from '../lib/menuIndex';
 import { CommandPalette } from '../components/CommandPalette';
 import { ContentList } from '../components/ContentList';
-import { NodeEditor } from '../components/editor/NodeEditor';
+import { NodeEditor, EXPAND_RAIL_EVENT } from '../components/editor/NodeEditor';
 import {
   findContentTable, parseContentList, currentUsername, diagnoseContentList, totalRowsInView,
 } from '../lib/parseContentList';
@@ -709,8 +709,15 @@ const init = async () => {
 
         const shadow = mount.container.shadowRoot;
         if (shadow) {
-          shadow.querySelectorAll<HTMLElement>('[aria-expanded="false"]').forEach(el => el.click());
-          await new Promise(resolve => setTimeout(resolve, 250));
+          // Panels open one at a time when clicked, so they are opened together through
+          // the editor's own event; only the disclosures inside them are clicked.
+          document.dispatchEvent(new CustomEvent(EXPAND_RAIL_EVENT));
+          await new Promise(resolve => setTimeout(resolve, 100));
+          for (let pass = 0; pass < 3; pass++) {
+            shadow.querySelectorAll<HTMLElement>('[aria-expanded="false"]:not([data-rail-toggle])')
+              .forEach(el => el.click());
+            await new Promise(resolve => setTimeout(resolve, 150));
+          }
 
           const rendered = new Set(
             Array.from(shadow.querySelectorAll('slot'))
