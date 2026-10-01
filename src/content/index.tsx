@@ -21,7 +21,7 @@ import { NodeEditor, EXPAND_RAIL_EVENT } from '../components/editor/NodeEditor';
 import {
   findContentTable, parseContentList, currentUsername, diagnoseContentList, totalRowsInView,
 } from '../lib/parseContentList';
-import { discoverSchema, explainSchema, isNodeFormPath, keepFieldOrder } from '../lib/formSchema';
+import { discoverSchema, explainSchema, isNodeFormPath, keepFieldOrder, FieldDescriptor } from '../lib/formSchema';
 import { hasRichEditor } from '../lib/fieldBinding';
 import { getPendingImport } from '../lib/import/pending';
 import { captureFixture } from '../lib/captureFixture';
@@ -29,6 +29,7 @@ import { maybeShowImportReview } from './importFlow';
 import { pastePage } from './cloneFlow';
 import { refreshCopies, registerPasteHandler } from '../lib/clone/pasteAction';
 import { enhanceListForm, isFixedConfigParagraphField } from './listEnhancements';
+import { anchorAutocompletePopups } from './autocompletePopups';
 import { DoctorBatchAdder } from '../components/editor/DoctorBatchAdder';
 import { copyPage } from '../lib/clone/copyPage';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
@@ -643,6 +644,9 @@ const init = async () => {
       }
 
       const mount = injectInsideForm(schema.form, null);
+      // Relocated autocompletes' suggestion popups, which Drupal would otherwise place
+      // off screen once their input is inside the sticky rail.
+      anchorAutocompletePopups(mount.container);
 
       const slotted = new Set<string>();
       for (const field of schema.fields) {
@@ -658,6 +662,23 @@ const init = async () => {
           detached.delete(field.machineName);
         }
       }
+
+      /**
+       * A field whose control already sits inside another field's carrier is covered by it.
+       *
+       * A multi-value widget is relocated whole — every row of its table moves with the
+       * first — but each row walks as its own field. Left unmarked, the second row was
+       * rendered AGAIN as a reimplemented text box beside the real table: same label, no
+       * type-ahead, and whatever was typed there never reached Drupal's autocomplete.
+       * Marked slotted, it renders an empty slot instead, and the real row in the carrier
+       * is the only one on screen.
+       */
+      const markCovered = (fields: FieldDescriptor[]) => {
+        for (const field of fields) {
+          if (field.elements[0]?.closest('.d7-relocated-widget')) slotted.add(field.machineName);
+        }
+      };
+      markCovered(schema.fields);
 
       mount.root.render(
         <React.StrictMode>
@@ -776,24 +797,31 @@ const init = async () => {
          * relocated, being inside the host already. Removing a hero image hid the widget
          * until the node was saved and reopened.
          *
-         * Re-pointing the carrier's slot at the new name, and letting the new descriptor
-         * take the old one's place in the order, keeps it on screen in the same position;
-         * the reverse rename, when a new image is picked, goes through here the same way.
+         * Decided per CARRIER, and only when the field that owns its slot is really gone.
+         * The first version re-pointed the slot at any untracked field found inside the
+         * carrier, and the second, empty row of a multi-value related field is exactly
+         * that: on the first rescan — which Drupal's own type-ahead popup triggers — the
+         * slot moved to that row, and the row holding the existing profile became a
+         * reimplemented text box with no type-ahead.
+         *
+         * The heir takes the old owner's place in the order; the reverse rename, when a
+         * new image is picked, goes through here the same way.
          */
-        for (const field of walked.fields) {
-          if (slotted.has(field.machineName)) continue;
-          const carrier = field.elements[0]?.closest('.d7-relocated-widget');
-          if (!carrier) continue;
-          const previous = renderedFields.find(
-            f => slotNameFor(f.machineName) === carrier.getAttribute('slot')
-          );
-          carrier.setAttribute('slot', slotNameFor(field.machineName));
-          slotted.add(field.machineName);
+        const walkedSlots = new Set(walked.fields.map(f => slotNameFor(f.machineName)));
+        for (const carrier of Array.from(mount.container.querySelectorAll(':scope > .d7-relocated-widget'))) {
+          const slot = carrier.getAttribute('slot');
+          if (!slot || walkedSlots.has(slot)) continue;
+          const heir = walked.fields.find(f => f.elements[0] && carrier.contains(f.elements[0]));
+          if (!heir) continue;
+          const previous = renderedFields.find(f => slotNameFor(f.machineName) === slot);
+          carrier.setAttribute('slot', slotNameFor(heir.machineName));
+          slotted.add(heir.machineName);
           if (previous) {
             slotted.delete(previous.machineName);
-            renderedFields = renderedFields.map(f => (f === previous ? field : f));
+            renderedFields = renderedFields.map(f => (f === previous ? heir : f));
           }
         }
+        markCovered(walked.fields);
 
         const fresh = { ...walked, fields: keepFieldOrder(renderedFields, walked.fields) };
         renderedFields = fresh.fields;

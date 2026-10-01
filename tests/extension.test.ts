@@ -198,6 +198,66 @@ const UPDATE_CHECK_TIMEOUT = 30000;
 const UI = '.d7-proxy-ui-container';
 
 /**
+ * A stand-in for Drupal 7's misc/autocomplete.js, faithful where it matters: the popup is
+ * inserted just before its input and placed with `position: absolute` at jQuery's
+ * `$input.position()` — offsets measured against the input's offsetParent — plus the
+ * input's height. Picked on mousedown, dropped on blur.
+ *
+ * The positioning is the point. jQuery measures against <body>, but the browser places
+ * the popup inside the nearest POSITIONED ancestor in the flat tree; once the rail became
+ * sticky that was the rail, the offset counted twice, and the suggestions rendered off
+ * the right edge of the screen — "can't select an existing profile".
+ */
+const DRUPAL_AUTOCOMPLETE = `<script>
+  function d7Position(el) {
+    var op = el.offsetParent || document.body;
+    while (op && !/^(?:body|html)$/i.test(op.nodeName) && getComputedStyle(op).position === 'static') op = op.offsetParent;
+    var r = el.getBoundingClientRect();
+    var root = /^(?:body|html)$/i.test(op.nodeName);
+    var pr = root ? { top: -window.scrollY, left: -window.scrollX } : op.getBoundingClientRect();
+    return { top: r.top - pr.top, left: r.left - pr.left };
+  }
+  document.addEventListener('keyup', function (e) {
+    var input = e.target.closest && e.target.closest('input.form-autocomplete');
+    if (!input) return;
+    document.querySelectorAll('#autocomplete').forEach(function (p) { p.remove(); });
+    var pos = d7Position(input);
+    var popup = document.createElement('div');
+    popup.id = 'autocomplete';
+    popup.style.cssText = 'position:absolute;z-index:100;overflow:hidden;background:#fff;border:1px solid #888;display:none;'
+      + 'top:' + (pos.top + input.offsetHeight) + 'px;left:' + pos.left + 'px;width:' + input.clientWidth + 'px';
+    input.parentNode.insertBefore(popup, input);
+    setTimeout(function () {
+      popup.innerHTML = '<ul style="margin:0;padding:0;list-style:none"><li style="padding:4px">John Smithers</li></ul>';
+      popup.style.display = 'block';
+      popup.querySelector('li').addEventListener('mousedown', function () {
+        input.value = 'John Smithers (202)';
+        popup.remove();
+      });
+    }, 30);
+  });
+  document.addEventListener('blur', function (e) {
+    if (e.target.matches && e.target.matches('input.form-autocomplete')) {
+      setTimeout(function () { document.querySelectorAll('#autocomplete').forEach(function (p) { p.remove(); }); }, 100);
+    }
+  }, true);
+</script>`;
+
+/** Where the suggestion popup rendered, relative to the input it belongs to. */
+const popupPlacement = (page: Page, inputName: string) => page.evaluate(name => {
+  const input = document.querySelector(`input[name="${name}"]`) as HTMLElement;
+  const li = document.querySelector('#autocomplete li') as HTMLElement | null;
+  if (!li) return { shown: false, underInput: false, clickable: false };
+  const i = input.getBoundingClientRect(), r = li.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + 10, r.top + r.height / 2);
+  return {
+    shown: r.width > 0 && r.height > 0,
+    underInput: Math.abs(r.top - i.bottom) < 6 && Math.abs(r.left - i.left) < 6,
+    clickable: Boolean(hit && li.contains(hit)),
+  };
+}, inputName);
+
+/**
  * Opens a rail section by panel id, wherever it now lives.
  *
  * The rail lists Search & Social, Topics, Related and Menu Placement as panels; Display
@@ -902,6 +962,123 @@ test.describe('D7 Studio: relocated native widgets', () => {
       new FormData(document.querySelector('form.node-form') as HTMLFormElement)
         .get('field_services[und][0][target_id]'));
     expect(value).toBe('cardiology');
+  });
+
+  test('the suggestions appear under the related field, where they can be clicked', async ({ page, context }) => {
+    // Reported: "not sure it's working for any related content". Every related field is a
+    // relocated autocomplete in the sticky rail, so every one of them was affected.
+    const url = `${HOST}/node/add/news?suggestions`;
+    await context.route(url, route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: read('node-add-news-live.html').replace('</body>', `${DRUPAL_AUTOCOMPLETE}</body>`),
+    }));
+    await settingsFor(page);
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.goto(url);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    await openRailSection(page, 'related');
+
+    const input = page.locator('input[name="field_services[und][0][target_id]"]');
+    await input.click();
+    await input.pressSequentially('smi', { delay: 30 });
+    await expect(page.locator('#autocomplete li')).toBeVisible();
+
+    expect(await popupPlacement(page, 'field_services[und][0][target_id]'))
+      .toEqual({ shown: true, underInput: true, clickable: true });
+    await page.locator('#autocomplete li').click();
+    await expect(input).toHaveValue('John Smithers (202)');
+  });
+
+  test('the suggestions follow the field when the rail scrolls', async ({ page, context }) => {
+    const url = `${HOST}/node/add/news?suggestions-scroll`;
+    await context.route(url, route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: read('node-add-news-live.html').replace('</body>', `${DRUPAL_AUTOCOMPLETE}</body>`),
+    }));
+    await settingsFor(page);
+    // Short enough that the rail, open on Related Content, has to scroll.
+    await page.setViewportSize({ width: 1440, height: 420 });
+    await page.goto(url);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    await openRailSection(page, 'related');
+
+    const input = page.locator('input[name="field_services[und][0][target_id]"]');
+    await input.click();
+    await input.pressSequentially('smi', { delay: 30 });
+    await expect(page.locator('#autocomplete li')).toBeVisible();
+
+    const scrolled = await page.evaluate(() => {
+      const aside = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!.querySelector('aside')!;
+      const before = aside.scrollTop;
+      // Clicking the input scrolled it into view, which can leave the rail at its end.
+      aside.scrollTop += before >= 40 ? -40 : 40;
+      return Math.abs(aside.scrollTop - before);
+    });
+    expect(scrolled, 'the rail must actually scroll for this to test anything').toBeGreaterThan(0);
+    await page.waitForTimeout(100);
+    expect((await popupPlacement(page, 'field_services[und][0][target_id]')).underInput).toBe(true);
+  });
+
+  test('a profile can be picked in a related field that already has one', async ({ page, context }) => {
+    /**
+     * Reported: "I can't select an existing profile in related content."
+     *
+     * An EDIT form renders a multi-value related field as its existing items plus one
+     * empty row, all in one table, relocated as ONE widget. Drupal's type-ahead then
+     * inserts its suggestion popup into the form as you type, which triggers the
+     * editor's rescan. The rescan treated the empty second row — inside the carrier but
+     * not tracked by its own name — as the widget renamed, and handed it the slot.
+     */
+    const url = `${HOST}/node/add/news?related-edit`;
+    const html = read('node-add-news-live.html')
+      .replace(
+        /<tbody><tr>[\s\S]*?<\/tr><\/tbody>/,
+        ['Jane Smith (101)', ''].map((value, delta) => `<tr><td><div class="form-item form-type-textfield">
+          <label for="edit-field-services-${delta}">Related Services</label>
+          <input type="text" id="edit-field-services-${delta}" name="field_services[und][${delta}][target_id]" value="${value}" class="form-text form-autocomplete" />
+        </div></td><td><div class="form-item form-type-select">
+          <label for="edit-services-weight-${delta}">Weight for row ${delta + 1}</label>
+          <select id="edit-services-weight-${delta}" name="field_services[und][${delta}][_weight]"><option value="0">0</option></select>
+        </div></td></tr>`).join('').replace(/^/, '<tbody>') + '</tbody>'
+      )
+      .replace('</body>', `${DRUPAL_AUTOCOMPLETE}</body>`);
+    await context.route(url, route => route.fulfill({ status: 200, contentType: 'text/html', body: html }));
+
+    await settingsFor(page);
+    await page.goto(url);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    await openRailSection(page, 'related');
+
+    const empty = page.locator('input[name="field_services[und][1][target_id]"]');
+    await expect(empty).toBeVisible();
+    await empty.click();
+    await empty.pressSequentially('smi', { delay: 30 });
+    // Past the rescan the popup's insertion queues.
+    await page.waitForTimeout(500);
+
+    expect(await popupPlacement(page, 'field_services[und][1][target_id]'))
+      .toEqual({ shown: true, underInput: true, clickable: true });
+    await page.locator('#autocomplete li').click();
+    await page.waitForTimeout(500);
+
+    const state = await page.evaluate(() => {
+      const form = document.querySelector('form.node-form') as HTMLFormElement;
+      const data = new FormData(form);
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const visible = (name: string) => {
+        const el = document.querySelector(`input[name="${name}"]`) as HTMLElement;
+        return el.getBoundingClientRect().height > 0;
+      };
+      return {
+        first: data.get('field_services[und][0][target_id]'),
+        second: data.get('field_services[und][1][target_id]'),
+        bothVisible: visible('field_services[und][0][target_id]') && visible('field_services[und][1][target_id]'),
+        // No reimplemented text box standing in for either row: one with no type-ahead
+        // is exactly what "can't select" looks like.
+        lookalikes: sr.querySelectorAll('input[id^="d7-field-field-services"]').length,
+      };
+    });
+    expect(state).toEqual({ first: 'Jane Smith (101)', second: 'John Smithers (202)', bothVisible: true, lookalikes: 0 });
   });
 
   test('the editor does not inject the standalone widgets it supersedes', async ({ page }) => {
