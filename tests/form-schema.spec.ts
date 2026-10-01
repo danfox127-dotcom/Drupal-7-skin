@@ -833,3 +833,65 @@ test.describe('a genuinely repeatable Paragraphs field still classifies as parag
     expect(kind).toBe('wysiwyg');
   });
 });
+
+test.describe('re-reading the form after widgets have been relocated', () => {
+  /**
+   * The Two-Pane Editor moves some widgets (the body's rich editor, media, autocompletes)
+   * into its host, which sits at the TOP of the form. A plain re-walk then reads them in
+   * the host's position — so News showed Body above Title after any rescan.
+   */
+  async function relocateBodyToTop(page: import('@playwright/test').Page) {
+    return page.evaluate(() => {
+      const api = (window as any).FormSchema;
+      const loc = { pathname: '/node/add/news' };
+      const before = api.discoverSchema(document, loc);
+      const body = before.fields.find((f: any) => /^body/.test(f.machineName));
+      const form = before.form as HTMLFormElement;
+      const host = document.createElement('div');
+      form.insertBefore(host, form.firstChild);
+      host.appendChild(body.elements[0].closest('.form-item'));
+      const after = api.discoverSchema(document, loc);
+      const names = (fields: any[]) => fields.map((f: any) => f.machineName);
+      return {
+        before: names(before.fields),
+        rawAfter: names(after.fields),
+        kept: names(api.keepFieldOrder(before.fields, after.fields)),
+      };
+    });
+  }
+
+  test('a plain re-walk reads a relocated body ahead of title (the bug being guarded)', async ({ page }) => {
+    await open(page, 'node-add-news.html');
+    const { rawAfter } = await relocateBodyToTop(page);
+    expect(rawAfter.findIndex(n => /^body/.test(n))).toBeLessThan(rawAfter.indexOf('title'));
+  });
+
+  test('keepFieldOrder restores the order the form was first read in', async ({ page }) => {
+    await open(page, 'node-add-news.html');
+    const { before, kept } = await relocateBodyToTop(page);
+    expect(kept).toEqual(before);
+  });
+
+  test('a field that appears later lands after the field that precedes it in the DOM', async ({ page }) => {
+    await open(page, 'node-add-news.html');
+    const result = await page.evaluate(() => {
+      const api = (window as any).FormSchema;
+      const loc = { pathname: '/node/add/news' };
+      const before = api.discoverSchema(document, loc);
+      const title = document.querySelector('.form-item-title')!;
+      const added = document.createElement('div');
+      added.className = 'form-item form-type-textfield';
+      added.innerHTML = '<label for="edit-field-late">Late field</label>'
+        + '<input type="text" id="edit-field-late" name="field_late[und][0][value]" class="form-text" />';
+      title.after(added);
+      const after = api.discoverSchema(document, loc);
+      return {
+        before: before.fields.map((f: any) => f.machineName),
+        kept: api.keepFieldOrder(before.fields, after.fields).map((f: any) => f.machineName),
+      };
+    });
+    const late = result.kept.findIndex(n => n.startsWith('field_late'));
+    expect(late).toBe(result.kept.indexOf('title') + 1);
+    expect(result.kept.filter(n => !n.startsWith('field_late'))).toEqual(result.before);
+  });
+});

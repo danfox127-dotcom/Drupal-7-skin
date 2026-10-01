@@ -1447,6 +1447,30 @@ test.describe('Feature 5: the body keeps Drupal\'s real rich text editor', () =>
     expect(state.instances).toEqual(['edit-body-value']);
   });
 
+  test('Title stays above the relocated body after the editor rescans the form', async ({ page, settings }) => {
+    await settings({ nodeEditor: true, combobox: false, htmlExport: false });
+    await openBody(page);
+
+    // Any later change to the form queues the editor's debounced rescan — on a live site
+    // CKEditor's own late setup and Drupal's AJAX both do. That rescan re-walked the form
+    // with the body already sitting in the host at the top of it, and re-rendered Body
+    // above Title. Stand in for that change here, since nothing else in this fixture
+    // touches the form once the overlay is up.
+    await page.evaluate(() => {
+      document.querySelector('form')!.appendChild(document.createElement('div'));
+    });
+    await page.waitForTimeout(1000);
+
+    const titleFirst = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      const title = sr.querySelector('input[aria-label^="Title"]')!;
+      const body = sr.querySelector('slot[name^="field-body"]')!;
+      return Boolean(title.compareDocumentPosition(body) & Node.DOCUMENT_POSITION_FOLLOWING);
+    });
+
+    expect(titleFirst).toBe(true);
+  });
+
   test('the projecting slot exists, so the editor is actually rendered', async ({ page, settings }) => {
     await settings({ nodeEditor: true, combobox: false, htmlExport: false });
     await openBody(page);

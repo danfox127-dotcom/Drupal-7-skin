@@ -21,7 +21,7 @@ import { NodeEditor } from '../components/editor/NodeEditor';
 import {
   findContentTable, parseContentList, currentUsername, diagnoseContentList, totalRowsInView,
 } from '../lib/parseContentList';
-import { discoverSchema, explainSchema, isNodeFormPath } from '../lib/formSchema';
+import { discoverSchema, explainSchema, isNodeFormPath, keepFieldOrder } from '../lib/formSchema';
 import { hasRichEditor } from '../lib/fieldBinding';
 import { getPendingImport } from '../lib/import/pending';
 import { captureFixture } from '../lib/captureFixture';
@@ -751,9 +751,16 @@ const init = async () => {
        * pass finds nothing left to move and produces no further mutation.
        */
       let rescanQueued = false;
+      // The order fields were last rendered in. A raw re-walk cannot be trusted for it:
+      // the widgets relocated above now sit in the host at the top of the form, so they
+      // read ahead of everything that stayed put — Body above Title on News.
+      let renderedFields = schema.fields;
       const rescanEditor = () => {
-        const fresh = discoverSchema();
-        if (!fresh) return;
+        const walked = discoverSchema();
+        if (!walked) return;
+
+        const fresh = { ...walked, fields: keepFieldOrder(renderedFields, walked.fields) };
+        renderedFields = fresh.fields;
 
         for (const field of fresh.fields) {
           if (slotted.has(field.machineName)) continue;

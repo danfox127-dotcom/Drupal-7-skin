@@ -8,6 +8,7 @@ export {
   preciseBaseName, belongsToPreciseBase,
 } from './walkForm';
 export { assignSection, SECTION_RULES } from './sectionRules';
+export { keepFieldOrder } from './order';
 export { displayLabelFor, wasRelabelled, assignDisplayLabels } from './displayLabels';
 
 /**
