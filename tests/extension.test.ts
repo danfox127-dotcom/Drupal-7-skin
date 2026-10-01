@@ -1723,6 +1723,51 @@ test.describe('Feature 5: an existing article can still change its image', () =>
     expect(controls.filename).toBe('puberty-study-teaser.jpg');
   });
 
+  test('removing the hero leaves its widget on screen, ready for a new image', async ({ page, settings }) => {
+    await open(page, settings);
+
+    /**
+     * Reported: removing the hero image made the whole widget vanish until the node was
+     * saved and reopened. Remove renders the EMPTY widget, which walks as a differently
+     * named field (media[field_image_hero_und_0], not field_image_hero[und][0][fid]), so
+     * the editor's rescan dropped the old field's slot — hiding the relocated widget —
+     * and could not relocate the "new" one, which was already inside the overlay.
+     */
+    await page.locator('.d7-proxy-ui-form-host input[name="field_image_hero_und_0_remove_button"]').click();
+    await expect(page.locator('.d7-proxy-ui-form-host .preview-hero')).toHaveCount(0);
+    // Past the rescan's debounce, so the re-render has happened.
+    await page.waitForTimeout(1000);
+
+    const state = await page.evaluate(() => {
+      const host = document.querySelector('.d7-proxy-ui-form-host') as HTMLElement;
+      const slots = new Set(
+        Array.from(host.shadowRoot!.querySelectorAll('slot')).map(s => s.getAttribute('name'))
+      );
+      const browse = host.querySelector('a.launcher[data-field="hero"]') as HTMLElement | null;
+      const label = Array.from(host.querySelectorAll('label'))
+        .find(l => (l.textContent || '').trim() === 'Hero Image') as HTMLElement | undefined;
+      return {
+        browseVisible: !!browse && browse.getBoundingClientRect().height > 0,
+        labelVisible: !!label && label.getBoundingClientRect().height > 0,
+        orphans: Array.from(host.children)
+          .map(c => c.getAttribute('slot'))
+          .filter((n): n is string => !!n && !slots.has(n)),
+      };
+    });
+
+    expect(state).toEqual({ browseVisible: true, labelVisible: true, orphans: [] });
+    await expect(page.locator(`${UI} [data-left-section="multimedia"]`)).toBeVisible();
+
+    // And the new image, which renames the field back to its hidden fid.
+    await page.locator('.d7-proxy-ui-form-host a.launcher[data-field="hero"]').click();
+    await expect(page.locator('.d7-proxy-ui-form-host .preview-hero')).toBeVisible();
+    await page.waitForTimeout(1000);
+    await expect(page.locator('.d7-proxy-ui-form-host .preview-hero')).toBeVisible();
+    const fid = await page.evaluate(() =>
+      new FormData(document.querySelector('form') as HTMLFormElement).get('field_image_hero[und][0][fid]'));
+    expect(fid).toBe('50001');
+  });
+
   test('the existing fid is preserved, so saving does not detach the image', async ({ page, settings }) => {
     await open(page, settings);
 

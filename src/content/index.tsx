@@ -759,6 +759,35 @@ const init = async () => {
         const walked = discoverSchema();
         if (!walked) return;
 
+        /**
+         * A relocated widget Drupal re-rendered under a DIFFERENT name keeps its carrier.
+         *
+         * A populated Media widget walks as its hidden `field_x[und][0][fid]`; once Remove
+         * renders the empty one it walks as the launcher's `media[field_x_und_0]`. Keyed by
+         * name alone, the old field vanished — taking the only slot that projects the
+         * carrier, so the widget went invisible — and the "new" field could not be
+         * relocated, being inside the host already. Removing a hero image hid the widget
+         * until the node was saved and reopened.
+         *
+         * Re-pointing the carrier's slot at the new name, and letting the new descriptor
+         * take the old one's place in the order, keeps it on screen in the same position;
+         * the reverse rename, when a new image is picked, goes through here the same way.
+         */
+        for (const field of walked.fields) {
+          if (slotted.has(field.machineName)) continue;
+          const carrier = field.elements[0]?.closest('.d7-relocated-widget');
+          if (!carrier) continue;
+          const previous = renderedFields.find(
+            f => slotNameFor(f.machineName) === carrier.getAttribute('slot')
+          );
+          carrier.setAttribute('slot', slotNameFor(field.machineName));
+          slotted.add(field.machineName);
+          if (previous) {
+            slotted.delete(previous.machineName);
+            renderedFields = renderedFields.map(f => (f === previous ? field : f));
+          }
+        }
+
         const fresh = { ...walked, fields: keepFieldOrder(renderedFields, walked.fields) };
         renderedFields = fresh.fields;
 

@@ -55,5 +55,65 @@
 
   <input type="submit" id="edit-submit" name="op" value="Save" />
 </form>
+<script>
+/*
+  Stands in for Drupal's Remove: an AJAX submit whose response replaces the widget's
+  ajax-wrapper with the EMPTY widget. The empty markup is copied from the real capture
+  (captured/news.html), and its shape is the point: the field is now keyed by the
+  launcher's media[field_x_und_0] input rather than the populated widget's hidden
+  field_x[und][0][fid], so the same field comes back under a different name.
+*/
+document.addEventListener('click', function (event) {
+  var button = event.target.closest ? event.target.closest('input[name$="_remove_button"]') : null;
+  if (!button) return;
+  event.preventDefault();
+  var field = button.name.match(/^field_image_(\w+)_und_0_remove_button$/)[1];
+  var wrapperId = 'edit-field-image-' + field + '-und-0-ajax-wrapper';
+  var label = field === 'hero' ? 'Hero Image' : 'Teaser Image';
+  window.setTimeout(function () {
+    var old = document.getElementById(wrapperId);
+    var fresh = document.createElement('div');
+    fresh.className = 'field-widget-media-generic';
+    fresh.id = wrapperId;
+    fresh.innerHTML = ''
+      + '<div class="form-item form-type-media form-item-field-image-' + field + '-und-0">'
+      +   '<label for="edit-field-image-' + field + '-und-0-upload">' + label + ' </label>'
+      +   '<div class="media-widget form-media clearfix">'
+      +     '<div class="preview"></div>'
+      +     '<input class="upload form-text" type="text" id="edit-field-image-' + field + '-und-0-upload"'
+      +       ' name="media[field_image_' + field + '_und_0]" value="" size="22" maxlength="128" style="display: none;">'
+      +     '<a href="#" class="button browse launcher" data-field="' + field + '">Browse</a>'
+      +     '<input class="fid" type="hidden" name="field_image_' + field + '[und][0][fid]" value="">'
+      +   '</div>'
+      + '</div>';
+    old.parentNode.replaceChild(fresh, old);
+  }, 150);
+});
+
+/*
+  Stands in for picking a file in the media browser: the response renders the POPULATED
+  widget again, keyed by its hidden fid — the rename back the other way.
+*/
+document.addEventListener('click', function (event) {
+  var launcher = event.target.closest ? event.target.closest('a.launcher') : null;
+  if (!launcher) return;
+  event.preventDefault();
+  var field = launcher.getAttribute('data-field');
+  var wrapperId = 'edit-field-image-' + field + '-und-0-ajax-wrapper';
+  var label = field === 'hero' ? 'Hero Image' : 'Teaser Image';
+  window.setTimeout(function () {
+    var old = document.getElementById(wrapperId);
+    var fresh = document.createElement('div');
+    fresh.className = 'field-widget-media-generic';
+    fresh.id = wrapperId;
+    fresh.innerHTML = ''
+      + '<label>' + label + '</label>'
+      + '<div class="media-thumbnail preview-' + field + '"><span class="filename">new-' + field + '.jpg</span></div>'
+      + '<input type="hidden" name="field_image_' + field + '[und][0][fid]" value="50001" />'
+      + '<input type="submit" name="field_image_' + field + '_und_0_remove_button" value="Remove" class="form-submit" />';
+    old.parentNode.replaceChild(fresh, old);
+  }, 150);
+});
+</script>
 </body>
 </html>
