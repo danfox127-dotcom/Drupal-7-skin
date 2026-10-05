@@ -1,5 +1,5 @@
 {
-  "version": "0.3.0",
-  "notes": "Copy and paste a whole page between Columbia Drupal 7 sites: terms matched by name, references checked against the destination before writing, content items rebuilt, images listed with their URLs. Install from the Chrome Web Store instead of a zip.",
-  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.3.0/d7-studio-extension-0.3.0.zip"
+  "version": "0.4.0",
+  "notes": "Supports the List content type, condenses the editor's right rail (one panel at a time, a visual menu position), adds a Remove span tags button to formatted text fields, and fixes Title order, hero image removal and related-content suggestions.",
+  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.4.0/d7-studio-extension-0.4.0.zip"
 }
