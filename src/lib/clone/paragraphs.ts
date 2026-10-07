@@ -204,6 +204,25 @@ function deltasOf(form: ParentNode, baseName: string): number[] {
   return [...seen].sort((a, b) => a - b);
 }
 
+/**
+ * Presses one of Drupal's AJAX buttons the way a person does.
+ *
+ * `button.click()` does NOTHING to an AJAX button in Drupal 7. Core binds a button's
+ * #ajax to MOUSEDOWN (so Enter in a text field cannot fire it) and adds a handler that
+ * swallows the click, so a click neither runs the request nor submits the form. Every
+ * "Add another item" the paste pressed was a no-op: it waited out its timeout and the
+ * People List never arrived. The test stand-ins listened for click, so they agreed.
+ *
+ * Mousedown, then click. A button bound the core way answers the mousedown and drops the
+ * click; one bound to click instead ignores the mousedown and answers the click. Either
+ * way it fires exactly once.
+ */
+export function pressDrupalButton(button: HTMLElement): void {
+  const view = button.ownerDocument.defaultView ?? window;
+  button.dispatchEvent(new view.MouseEvent('mousedown', { bubbles: true, cancelable: true, button: 0 }));
+  button.click();
+}
+
 export interface AddItemResult {
   ok: boolean;
   /** The delta Drupal rendered for the new item. */
@@ -225,7 +244,7 @@ async function clickAddMoreAndWait(
   root: Document
 ): Promise<AddItemResult> {
   const before = new Set(deltasOf(form, baseName));
-  button.click();
+  pressDrupalButton(button);
 
   const appeared = await waitFor(
     () => deltasOf(form, baseName).some(delta => !before.has(delta)),

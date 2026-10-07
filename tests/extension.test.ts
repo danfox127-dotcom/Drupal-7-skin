@@ -3389,7 +3389,9 @@ test.describe('D7 Studio: List filter fields and batch profile add', () => {
       );
       const tbody = document.getElementById('field-cola-cups-profiles-values')?.querySelector('tbody');
       if (!button || !tbody) return;
-      button.addEventListener('click', event => {
+      // Drupal 7 binds a button's AJAX to MOUSEDOWN and swallows the click ('prevent: click').
+      button.addEventListener('click', event => event.preventDefault());
+      button.addEventListener('mousedown', event => {
         event.preventDefault();
         setTimeout(() => {
           const rows = Array.from(tbody.querySelectorAll<HTMLElement>('tr'));

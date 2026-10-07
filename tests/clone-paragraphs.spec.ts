@@ -96,7 +96,9 @@ async function openForm(
     const host = document.querySelector('#paragraph-items')!;
     let next = document.querySelectorAll('[data-paragraph-delta]').length;
 
-    button.addEventListener('click', event => {
+    // Drupal 7 binds a button's AJAX to MOUSEDOWN and swallows the click ('prevent: click').
+    button.addEventListener('click', event => event.preventDefault());
+    button.addEventListener('mousedown', event => {
       event.preventDefault();
       if (delay === null) return;   // models a request that never comes back
 
@@ -502,7 +504,9 @@ test.describe('adding a row to a plain multi-value widget with no bundle to choo
       const table = document.getElementById('field-cola-cups-profiles-values')!;
       const tbody = table.querySelector('tbody')!;
 
-      button.addEventListener('click', event => {
+      // Drupal 7 binds a button's AJAX to MOUSEDOWN and swallows the click ('prevent: click').
+      button.addEventListener('click', event => event.preventDefault());
+      button.addEventListener('mousedown', event => {
         event.preventDefault();
         if (delay === null) return;   // models a request that never comes back
         setTimeout(() => {
