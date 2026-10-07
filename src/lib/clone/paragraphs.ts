@@ -2,6 +2,7 @@ import { FieldDescriptor, FormSchema, FieldKind, findNodeForm, walkForm } from '
 import { writeValue } from '../fieldBinding';
 import { hasRichEditorOn } from '../richEditorPresence';
 import { CapturedField, CapturedParagraph } from './types';
+import { autocompletePathFor, resolveReference } from './references';
 import { ParagraphWidget, findParagraphWidgets } from './snapshot';
 
 /**
@@ -41,7 +42,7 @@ export function relativeName(baseName: string, machineName: string): { delta: nu
  * and says which one answered — so a wrong guess is visible in the review instead of
  * producing an item of the wrong type.
  */
-export type BundleSource = 'bundle-input' | 'subform-class' | 'field-name' | 'unknown';
+export type BundleSource = 'row-class' | 'bundle-input' | 'subform-class' | 'field-name' | 'unknown';
 
 /**
  * Works out which type an existing item is.
@@ -128,40 +129,133 @@ export function effectiveKind(field: FieldDescriptor): FieldKind {
   return 'text';
 }
 
+/** A name inside double quotes in a CSS attribute selector. */
+const attr = (value: string) => value.replace(/["\\]/g, '\\$&');
+
+/**
+ * The type of the item at `prefix`, read off the row Drupal renders for it.
+ *
+ * Verified against a real People List (vagelos.columbia.edu/node/26237/edit): every item
+ * is a `<tr class="draggable paragraphs-item-type-persons">`, its nested people
+ * `paragraphs-item-type-person`, and the row holds the item's own `[_weight]` select —
+ * which is what ties a row to an exact prefix when rows nest inside rows. Drupal's class
+ * swaps the machine name's underscores for hyphens, so it is swapped back.
+ */
+export function rowBundle(form: ParentNode, prefix: string): string | null {
+  const weight = form.querySelector(`[name="${attr(prefix)}[_weight]"]`);
+  const row = weight?.closest('tr, .paragraphs-item');
+  const match = row?.className.match(/paragraphs-item-type-([a-z0-9_-]+)/i);
+  return match ? match[1].replace(/-/g, '_') : null;
+}
+
+/**
+ * The structured content widgets directly inside one item: relative base names such as
+ * `field_persons_paragraphs`. Recognised by their own item rows, so a plain multi-value
+ * field (a person's several Titles, which also carry `[_weight]`) is not mistaken for one.
+ */
+function nestedWidgetsOf(form: ParentNode, prefix: string): string[] {
+  const found = new Set<string>();
+  const own = new RegExp(`^${escapeRe(prefix)}\\[([a-z0-9_]+)\\]\\[und\\]\\[\\d+\\]\\[_weight\\]$`);
+  for (const el of Array.from(form.querySelectorAll<HTMLElement>(`[name^="${attr(prefix)}["][name$="[_weight]"]`))) {
+    const match = ((el as HTMLInputElement).name ?? '').match(own);
+    if (match && el.closest('tr, .paragraphs-item')?.className.match(/paragraphs-item-type-/)) found.add(match[1]);
+  }
+  return [...found];
+}
+
+/** "Persons", from the nested widget's own table header. */
+function nestedLabel(form: ParentNode, absBase: string, fallback: string): string {
+  const any = form.querySelector(`[name^="${attr(absBase)}[und]"]`);
+  const widget = any?.closest('.field-widget-paragraphs-embed');
+  const label = widget?.querySelector('th.field-label label, label');
+  const text = (label?.textContent ?? '').replace(/\*/g, '').trim();
+  return text || fallback;
+}
+
+/** `person` -> "Person", for a nested item whose type has no chooser to name it. */
+const bundleTitle = (bundle: string) =>
+  bundle.split('_').filter(Boolean).map(w => w[0].toUpperCase() + w.slice(1)).join(' ');
+
+/** A Media widget's controls: a reference, listed for re-attaching, never a value to copy. */
+const isMediaControl = (field: FieldDescriptor) =>
+  Boolean(field.elements[0]?.closest('.field-widget-media-generic, .media-widget'));
+
+/** Paragraphs' own bookkeeping is not content. */
+const BOOKKEEPING = /\[(bundle|_bundle|paragraph_bundle|_weight|_remove)\]$/;
+
+/**
+ * Reads the items of one widget, and of every widget nested in them.
+ *
+ * Each item keeps only its OWN fields; whatever sits in a nested widget becomes that
+ * widget's items, recursively. Flattened, a People List of eight people was one item of
+ * 56 fields — and the paste could only ever create the outer item.
+ */
+function captureLevel(
+  form: HTMLFormElement,
+  fields: FieldDescriptor[],
+  absBase: string,
+  bundles: { value: string; label: string }[],
+  capture: (field: FieldDescriptor, relative: string) => CapturedField
+): CapturedParagraph[] {
+  const deltas = new Set<number>();
+  for (const field of fields) {
+    const parsed = relativeName(absBase, field.machineName);
+    if (parsed) deltas.add(parsed.delta);
+  }
+
+  return [...deltas].sort((a, b) => a - b).map(delta => {
+    const prefix = `${absBase}[und][${delta}]`;
+    const nested = nestedWidgetsOf(form, prefix);
+    const insideNested = (name: string) => nested.some(base => name.startsWith(`${prefix}[${base}][`));
+
+    const own: CapturedField[] = [];
+    for (const field of fields) {
+      if (!field.machineName.startsWith(`${prefix}[`) || insideNested(field.machineName)) continue;
+      if (BOOKKEEPING.test(field.machineName) || isMediaControl(field)) continue;
+      const parsed = relativeName(absBase, field.machineName);
+      if (parsed) own.push(capture(field, parsed.relative));
+    }
+
+    const offered = bundles.map(b => b.value);
+    const fromRow = rowBundle(form, prefix);
+    const detected = fromRow && (offered.length === 0 || offered.includes(fromRow))
+      ? { bundle: fromRow, from: 'row-class' as BundleSource }
+      : detectBundle(form, absBase, delta, offered);
+    const label = bundles.find(b => b.value === detected.bundle)?.label
+      ?? (detected.bundle ? bundleTitle(detected.bundle) : '');
+
+    const children = nested.map(base => {
+      const childBase = `${prefix}[${base}]`;
+      return {
+        baseName: base,
+        label: nestedLabel(form, childBase, bundleTitle(base.replace(/^field_|_paragraphs$/g, ''))),
+        items: captureLevel(form, fields, childBase, [], capture),
+      };
+    }).filter(child => child.items.length > 0);
+
+    return {
+      bundle: detected.bundle ?? '',
+      bundleLabel: label || 'unknown type',
+      bundleFrom: detected.from,
+      delta,
+      fields: own,
+      ...(children.length ? { children } : {}),
+    };
+  });
+}
+
 /** Reads the items of one Paragraphs widget off the form currently open. */
 export function captureParagraphItems(
   schema: FormSchema,
   widget: ParagraphWidget,
   capture: (field: FieldDescriptor, relative: string) => CapturedField
 ): CapturedParagraph[] {
-  const bundleValues = widget.bundles.map(b => b.value);
-  const byDelta = new Map<number, CapturedField[]>();
+  return captureLevel(schema.form, schema.fields, widget.baseName, widget.bundles, capture);
+}
 
-  for (const field of schema.fields) {
-    const parsed = relativeName(widget.baseName, field.machineName);
-    if (!parsed) continue;
-    // Paragraphs' own bookkeeping is not content.
-    if (/\[(bundle|_bundle|paragraph_bundle|_weight|_remove)\]$/.test(field.machineName)) continue;
-
-    const list = byDelta.get(parsed.delta);
-    const captured = capture(field, parsed.relative);
-    if (list) list.push(captured);
-    else byDelta.set(parsed.delta, [captured]);
-  }
-
-  return [...byDelta.entries()]
-    .sort((a, b) => a[0] - b[0])
-    .map(([delta, fields]) => {
-      const detected = detectBundle(schema.form, widget.baseName, delta, bundleValues);
-      const label = widget.bundles.find(b => b.value === detected.bundle)?.label ?? '';
-      return {
-        bundle: detected.bundle ?? '',
-        bundleLabel: label || detected.bundle || 'unknown type',
-        bundleFrom: detected.from,
-        delta,
-        fields,
-      };
-    });
+/** Every item in a captured tree, depth first — for counts and checks. */
+export function allItems(items: CapturedParagraph[]): CapturedParagraph[] {
+  return items.flatMap(item => [item, ...allItems((item.children ?? []).flatMap(c => c.items))]);
 }
 
 /**
@@ -343,12 +437,52 @@ export async function addAnotherRow(
   return clickAddMoreAndWait(button, form, baseName, timeoutMs, root);
 }
 
+/**
+ * Asks Drupal to add one item to a NESTED widget — a Person to a People List, a Phone to
+ * a Person.
+ *
+ * A nested widget offering one type renders a button per type instead of a chooser,
+ * named for its position: `field_page_paragraphs_und_0_field_persons_paragraphs` +
+ * `_add_more_add_more_bundle_person`, verified on the real People List. One offering
+ * several types renders the same chooser and button as the outer widget, so that is
+ * tried second.
+ */
+export async function addNestedItem(
+  absBase: string,
+  bundle: string,
+  timeoutMs = 15000,
+  root: Document = document
+): Promise<AddItemResult> {
+  const form = root.querySelector<HTMLFormElement>('form.node-form, form[id$="-node-form"]');
+  if (!form) return { ok: false, delta: null, reason: 'the node form is no longer on the page' };
+
+  const flat = absBase.replace(/\]\[/g, '_').replace(/\[/g, '_').replace(/\]/g, '');
+  const perType = form.querySelector<HTMLInputElement>(
+    `input[type="submit"][name="${attr(flat)}_add_more_add_more_bundle_${attr(bundle)}"]`
+  );
+  if (perType) return clickAddMoreAndWait(perType, form, absBase, timeoutMs, root);
+
+  const select = form.querySelector<HTMLSelectElement>(`select[name="${attr(flat)}_add_more_type"]`);
+  const button = form.querySelector<HTMLInputElement>(`input[type="submit"][name="${attr(flat)}_add_more_add_more"]`);
+  if (select && button) {
+    select.value = bundle;
+    if (select.value !== bundle) {
+      return { ok: false, delta: null, reason: `this site does not offer a “${bundle}” item here` };
+    }
+    select.dispatchEvent(new Event('change', { bubbles: true }));
+    return clickAddMoreAndWait(button, form, absBase, timeoutMs, root);
+  }
+  return { ok: false, delta: null, reason: `this site has no way to add a “${bundleTitle(bundle)}” here` };
+}
+
 export interface ItemOutcome {
   bundleLabel: string;
-  /** Relative names written into the new item. */
+  /** Relative names written into the new item, its nested items included. */
   written: string[];
   /** Fields the new item does not have, or whose control refused the value. */
   problems: string[];
+  /** Items recreated in each widget directly inside this one: "Persons: 8 of 8". Deeper misses are in `problems`. */
+  nested: { label: string; added: number; total: number }[];
   ok: boolean;
   reason: string | null;
 }
@@ -358,8 +492,148 @@ export interface ParagraphOutcome {
   items: ItemOutcome[];
 }
 
+interface FillResult {
+  written: string[];
+  problems: string[];
+  nested: { label: string; added: number; total: number }[];
+}
+
+/** The fields under `prefix` on the live form, by name relative to the item. */
+function liveSlots(root: Document, absBase: string, delta: number): Map<string, FieldDescriptor> {
+  const slots = new Map<string, FieldDescriptor>();
+  const liveForm = findNodeForm(root);
+  if (!liveForm) return slots;
+  for (const field of walkForm(liveForm)) {
+    const parsed = relativeName(absBase, field.machineName);
+    if (parsed?.delta === delta) slots.set(parsed.relative, field);
+  }
+  return slots;
+}
+
+/** `field_person_position[und][1][value]` -> the field and the row it needs. */
+const MULTI_ROW = /^([a-z0-9_]+)\[und\]\[(\d+)\]/;
+
 /**
- * Recreates a widget's items on the destination, in order.
+ * Writes one value, the way the top-level paste does.
+ *
+ * A reference inside an item — a Person's Symplr Profile — is looked up on THIS site
+ * first. Written as copied it would carry the source site's node id, and Drupal would link
+ * whatever node has that number here, with nothing on screen to say so.
+ *
+ * A rich text value is written and then AWAITED into its editor. Fire-and-forget was fine
+ * for one item, but each nested add submits the form, and Drupal's editor integration
+ * copies the editor's content over the textarea on the way out; an editor that had not
+ * received the value yet would empty the Bio it was just given.
+ */
+async function writeItemField(target: FieldDescriptor, value: CapturedField['value']): Promise<{ ok: boolean; note?: string }> {
+  const el = target.elements[0];
+  if (el?.classList.contains('form-autocomplete')) {
+    const resolved = await resolveReference(String(value), autocompletePathFor(target), true);
+    if (!resolved.value) return { ok: true, note: resolved.note ?? 'not found on this site, so left empty' };
+    return { ok: writeValue({ ...target, kind: 'autocomplete' }, resolved.value) };
+  }
+
+  const kind = effectiveKind(target);
+  // Rich text: the textarea through writeValue as plain text, then the editor once, awaited.
+  if (!writeValue({ ...target, kind: kind === 'wysiwyg' ? 'text' : kind }, value)) return { ok: false };
+  if (kind === 'wysiwyg' && el?.id) {
+    try {
+      await chrome.runtime.sendMessage({ type: 'syncRichEditor', elementId: el.id, value: String(value) });
+    } catch {
+      // No bridge: the textarea already holds the value, which is all a plain one needs.
+    }
+  }
+  return { ok: true };
+}
+
+/** True when a captured value has nothing in it worth writing. */
+const blank = (value: CapturedField['value']) =>
+  Array.isArray(value) ? value.length === 0 : typeof value === 'boolean' ? !value : String(value).trim() === '';
+
+/**
+ * Fills the item Drupal just rendered at `absBase[und][delta]`, then recreates everything
+ * nested in it, depth first — a People List's people, each person's phones and emails.
+ */
+async function fillItem(
+  absBase: string,
+  delta: number,
+  item: CapturedParagraph,
+  root: Document
+): Promise<FillResult> {
+  const prefix = `${absBase}[und][${delta}]`;
+  const result: FillResult = { written: [], problems: [], nested: [] };
+  let slots = liveSlots(root, absBase, delta);
+
+  for (const source of item.fields) {
+    let target = slots.get(source.machineName);
+
+    /**
+     * A second Title on a person: the new item renders one row, so another has to be
+     * asked for with the field's own "Add another item" first.
+     */
+    const row = source.machineName.match(MULTI_ROW);
+    if (!target && row && Number(row[2]) > 0 && !blank(source.value)) {
+      const anchor = [...slots.entries()].find(([name]) => name.startsWith(`${row[1]}[und][`))?.[1];
+      for (let tries = 0; !target && anchor?.elements[0] && tries < Number(row[2]); tries++) {
+        const added = await addAnotherRow(anchor.elements[0], `${prefix}[${row[1]}]`, 15000, root);
+        if (!added.ok) break;
+        slots = liveSlots(root, absBase, delta);
+        target = slots.get(source.machineName);
+      }
+    }
+
+    if (!target) {
+      if (!blank(source.value)) result.problems.push(source.label || source.machineName);
+      continue;
+    }
+    if (blank(source.value)) continue;
+
+    const wrote = await writeItemField(target, source.value);
+    if (wrote.ok) result.written.push(source.machineName);
+    else result.problems.push(target.label || source.machineName);
+  }
+
+  for (const child of item.children ?? []) {
+    const childBase = `${prefix}[${child.baseName}]`;
+    const tally = { label: child.label, added: 0, total: child.items.length };
+
+    /**
+     * A new People List arrives with an empty Person already in it when Persons is
+     * required. Those are used first, in order; only past them is another one asked for.
+     */
+    const waiting = deltasOf(findNodeForm(root) ?? root, childBase);
+    for (const [index, childItem] of child.items.entries()) {
+      const label = `${child.label} ${index + 1}`;
+      if (!childItem.bundle) {
+        result.problems.push(`${label}: its type could not be told, so it was not recreated`);
+        continue;
+      }
+
+      let childDelta: number | null = null;
+      if (index < waiting.length && (rowBundle(findNodeForm(root) ?? root, `${childBase}[und][${waiting[index]}]`) ?? childItem.bundle) === childItem.bundle) {
+        childDelta = waiting[index];
+      } else {
+        const added = await addNestedItem(childBase, childItem.bundle, 15000, root);
+        if (!added.ok || added.delta === null) {
+          result.problems.push(`${label}: ${added.reason ?? 'not added'}`);
+          continue;
+        }
+        childDelta = added.delta;
+      }
+
+      const filled = await fillItem(childBase, childDelta, childItem, root);
+      tally.added++;
+      result.written.push(...filled.written.map(name => `${child.baseName}[und][${childDelta}][${name}]`));
+      result.problems.push(...filled.problems.map(problem => `${label}: ${problem}`));
+    }
+    result.nested.push(tally);
+  }
+
+  return result;
+}
+
+/**
+ * Recreates a widget's items on the destination, in order, and everything nested in them.
  *
  * Sequential, never parallel. Drupal rebuilds form state on every add-more, so
  * overlapping requests drop items — and the order of content items is the order they
@@ -374,7 +648,7 @@ export async function rebuildParagraphs(
   for (const item of captured.items) {
     if (!item.bundle) {
       outcome.items.push({
-        bundleLabel: item.bundleLabel, written: [], problems: [], ok: false,
+        bundleLabel: item.bundleLabel, written: [], problems: [], nested: [], ok: false,
         reason: 'Could not tell what type of content item this is, so it was not recreated.',
       });
       continue;
@@ -383,66 +657,35 @@ export async function rebuildParagraphs(
     const added = await addAnotherItem(captured.baseName, item.bundle, 15000, root);
     if (!added.ok || added.delta === null) {
       outcome.items.push({
-        bundleLabel: item.bundleLabel, written: [], problems: [], ok: false,
+        bundleLabel: item.bundleLabel, written: [], problems: [], nested: [], ok: false,
         reason: added.reason,
       });
       continue;
     }
 
     /**
-     * Re-read, because this item's fields did not exist when the page was first walked —
-     * and because Drupal's AJAX replaces the whole widget wrapper, which leaves every
-     * earlier reference into it detached.
-     *
-     * walkForm rather than discoverSchema: discoverSchema first checks the URL looks
-     * like a node form, and that question is already settled — we just clicked this
-     * form's own "Add another item". Depending on the path made the re-read fail
-     * wherever the URL was not a Drupal path, which is every test that serves the form
-     * directly, and would also have failed on any admin path shaped differently.
+     * Every read goes back to the live form: this item's fields did not exist when the
+     * page was first walked, and Drupal's AJAX replaces the widget's wrapper on every add,
+     * leaving earlier references detached. walkForm rather than discoverSchema, because
+     * whether this is a node form was settled when its own button was pressed.
      */
-    const liveForm = findNodeForm(root);
-    if (!liveForm) {
+    if (!findNodeForm(root)) {
       outcome.items.push({
-        bundleLabel: item.bundleLabel, written: [], problems: [], ok: false,
+        bundleLabel: item.bundleLabel, written: [], problems: [], nested: [], ok: false,
         reason: 'The form could not be read again after the item was added.',
       });
       continue;
     }
 
-    const slots = new Map<string, FieldDescriptor>();
-    for (const field of walkForm(liveForm)) {
-      const parsed = relativeName(captured.baseName, field.machineName);
-      if (parsed?.delta === added.delta) slots.set(parsed.relative, field);
-    }
-
-    const written: string[] = [];
-    const problems: string[] = [];
-
-    for (const source of item.fields) {
-      const target = slots.get(source.machineName);
-      if (!target) {
-        problems.push(source.label || source.machineName);
-        continue;
-      }
-
-      /**
-       * effectiveKind, not target.kind. Everything inside a Paragraphs widget is
-       * classified `paragraphs`, and writeValue has no case for it — so an item's HTML
-       * would reach the textarea and never the rich editor, which overwrites it on
-       * submit.
-       */
-      const corrected: FieldDescriptor = { ...target, kind: effectiveKind(target) };
-      if (writeValue(corrected, source.value)) written.push(source.machineName);
-      else problems.push(target.label || source.machineName);
-    }
-
+    const filled = await fillItem(captured.baseName, added.delta, item, root);
     outcome.items.push({
       bundleLabel: item.bundleLabel,
-      written,
-      problems,
-      ok: problems.length === 0,
-      reason: problems.length
-        ? `Added, but ${problems.length} field${problems.length === 1 ? '' : 's'} did not take: ${problems.join(', ')}.`
+      written: filled.written,
+      problems: filled.problems,
+      nested: filled.nested,
+      ok: filled.problems.length === 0,
+      reason: filled.problems.length
+        ? `Added, but ${filled.problems.length} part${filled.problems.length === 1 ? '' : 's'} did not take: ${filled.problems.join('; ')}.`
         : null,
     });
   }

@@ -155,7 +155,12 @@ export function summarise(outcome: CloneOutcome): string {
   if (outcome.failed.length) parts.push(`${outcome.failed.length} refused by the form`);
   const items = outcome.paragraphs.flatMap(w => w.items);
   const rebuilt = items.filter(item => item.ok).length;
-  if (rebuilt) parts.push(`${rebuilt} content item${rebuilt === 1 ? '' : 's'} rebuilt`);
+  // "with 8 Persons": a People List is one item, and the people in it are the point.
+  const inside = items.flatMap(item => item.nested ?? []).filter(n => n.added > 0)
+    .map(n => `${n.added} ${n.label}`);
+  if (rebuilt) {
+    parts.push(`${rebuilt} content item${rebuilt === 1 ? '' : 's'} rebuilt${inside.length ? ` (with ${inside.join(', ')})` : ''}`);
+  }
   if (items.length > rebuilt) parts.push(`${items.length - rebuilt} needing a look`);
   if (outcome.images.length) {
     parts.push(`${outcome.images.length} image${outcome.images.length === 1 ? '' : 's'} to attach`);

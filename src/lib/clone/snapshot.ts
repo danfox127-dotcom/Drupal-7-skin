@@ -4,7 +4,7 @@ import { findTarget } from '../import/targets';
 import { denyReason } from './denyList';
 import { optionLabelsFor } from './values';
 import { describeMediaRefs } from './media';
-import { captureParagraphItems, relativeName } from './paragraphs';
+import { allItems, captureParagraphItems } from './paragraphs';
 import {
   CapturedField, CapturedParagraphField, NodeSnapshot, SNAPSHOT_VERSION,
 } from './types';
@@ -113,6 +113,45 @@ function isEmpty(captured: CapturedField): boolean {
   return String(value).trim() === '';
 }
 
+/**
+ * Images inside structured content items — a People List's portraits — as file fields.
+ *
+ * Read off the page rather than from the walked fields. The walker files everything in a
+ * Paragraphs widget under `paragraphs`, and a widget that already HOLDS a photo has no
+ * text control at all — just the preview, a Remove button and a hidden fid — so it walks
+ * as nothing. A pasted People List lost every photo with nothing saying so. One per Media
+ * widget, named for the item it belongs to, because "Image" eight times over says nothing
+ * about which person goes with which file.
+ */
+function nestedImageFields(form: HTMLFormElement): FieldDescriptor[] {
+  return Array.from(form.querySelectorAll<HTMLElement>('.field-widget-paragraphs-embed .field-widget-media-generic'))
+    .map(widget => {
+      const control = widget.querySelector<HTMLElement>('input[name$="[fid]"], input, select') ?? widget;
+      const label = (widget.querySelector('label')?.textContent ?? 'Image').replace(/\*/g, '').trim() || 'Image';
+      const row = widget.closest('tr[class*="paragraphs-item-type-"], .paragraphs-item');
+      const owner = Array.from(row?.querySelectorAll<HTMLInputElement>('input.form-text:not(.form-autocomplete)') ?? [])
+        .filter(input => !input.closest('.field-widget-media-generic'))
+        .map(input => input.value.trim())
+        .find(Boolean);
+      const name = (control as HTMLInputElement).name ?? '';
+      return {
+        machineName: name || widget.id,
+        baseName: widget.id || name,
+        label: owner ? `${label} — ${owner}` : label,
+        kind: 'file',
+        required: false,
+        help: '',
+        section: 'multimedia',
+        matchedBy: 'nested media widget',
+        group: null,
+        groupPath: [],
+        elements: [control],
+        multiValue: false,
+        advanced: false,
+      } as FieldDescriptor;
+    });
+}
+
 export async function captureNode(
   schema: FormSchema,
   location: Pick<Location, 'href' | 'origin'> = window.location
@@ -158,8 +197,9 @@ export async function captureNode(
       continue;
     }
 
-    // Images are references, not values — describeMediaRefs handles them below.
-    if (field.kind === 'file') continue;
+    // Images are references, not values — describeMediaRefs handles them below. Including
+    // the Media controls inside content items, whose names do not mark them as nested.
+    if (field.kind === 'file' || field.elements[0]?.closest('.field-widget-media-generic')) continue;
 
     const captured = captureField(field);
     if (isEmpty(captured)) continue;
@@ -187,18 +227,22 @@ export async function captureNode(
 
     paragraphs.push({ baseName: widget.baseName, label: widget.label, items });
 
-    const unknown = items.filter(item => !item.bundle);
+    const every = allItems(items);
+    const unknown = every.filter(item => !item.bundle);
     if (unknown.length) {
       note(
         widget.label,
-        `${unknown.length} of ${items.length} content item${items.length === 1 ? '' : 's'} `
+        `${unknown.length} of ${every.length} content item${every.length === 1 ? '' : 's'} `
         + 'could not be identified by type, so they cannot be recreated automatically. '
         + 'Their values are shown so you can rebuild them.'
       );
     }
   }
 
-  const media = describeMediaRefs(schema.fields, location.href);
+  const media = [
+    ...describeMediaRefs(schema.fields, location.href),
+    ...describeMediaRefs(nestedImageFields(schema.form), location.href),
+  ];
 
   const titleField = findTarget(schema, 'title');
   const title = titleField ? String(readValue(titleField)).trim() : '';

@@ -311,6 +311,11 @@ export const PasteReview = ({
                     </span>
                     <span className="text-help text-ink-help">
                       {item.fields.length} field{item.fields.length === 1 ? '' : 's'}
+                      {(item.children ?? []).map(child => (
+                        <span key={child.baseName} data-paste-nested={child.baseName}>
+                          {' · '}{child.items.length} {child.label}
+                        </span>
+                      ))}
                     </span>
                     {/**
                       * How the type was worked out, shown when it is a weaker claim than

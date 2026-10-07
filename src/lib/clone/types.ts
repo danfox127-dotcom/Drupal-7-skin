@@ -72,7 +72,7 @@ export interface CapturedParagraph {
    * weaker claim than one that read Drupal's own record of it, and the difference has to
    * be visible rather than averaged away.
    */
-  bundleFrom: 'bundle-input' | 'subform-class' | 'field-name' | 'unknown';
+  bundleFrom: 'row-class' | 'bundle-input' | 'subform-class' | 'field-name' | 'unknown';
   /** Position in the source widget, so order survives the rebuild. */
   delta: number;
   /**
@@ -82,6 +82,15 @@ export interface CapturedParagraph {
    * delta, and an absolute name would point at the wrong one.
    */
   fields: CapturedField[];
+  /**
+   * Structured content nested INSIDE this item, with base names relative to it — a
+   * People List's `field_persons_paragraphs`, and inside each Person its Phones and
+   * Emails. Their fields are not repeated in `fields`.
+   *
+   * Optional, so a copy made before nesting was understood still reads: its nested values
+   * sit flat in `fields`, and paste behaves as it did then.
+   */
+  children?: CapturedParagraphField[];
 }
 
 export interface CapturedParagraphField {
