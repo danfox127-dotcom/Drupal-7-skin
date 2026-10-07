@@ -9,7 +9,7 @@ import {
   clearDraft, assessDraft, formatAge,
 } from '../../lib/autosave';
 import { readFormErrors, hasErrors, FormErrors } from '../../lib/validationErrors';
-import { FieldControl, SlottedFieldsContext, EMPTY_SLOTTED } from './FieldControl';
+import { FieldControl, SlottedFieldsContext, EMPTY_SLOTTED, isCoveredField } from './FieldControl';
 import { PrimaryField, primaryRole } from './PrimaryField';
 import { TopicsSection } from './TopicsSection';
 import { MenuSection, menuSummary } from './MenuSection';
@@ -830,8 +830,12 @@ export const NodeEditor = ({ schema, slottedFields }: Props) => {
 
           {typeFields.length > 0 && (
             <div className="grid grid-cols-2 gap-4">
-              {typeFields.map(field => (
-                <FieldControl key={field.machineName} field={field} error={errorFor(field)} slotted={slottedFields?.has(field.machineName)} onChange={handleFieldChange} />
+              {/* A relocated widget — structured content, a related-items table — takes the
+                  full width. Squeezed into one column it sat beside an empty cell. */}
+              {typeFields.filter(field => !isCoveredField(field)).map(field => (
+                <div key={field.machineName} className={slottedFields?.has(field.machineName) ? 'col-span-2' : undefined}>
+                  <FieldControl field={field} error={errorFor(field)} slotted={slottedFields?.has(field.machineName)} onChange={handleFieldChange} />
+                </div>
               ))}
             </div>
           )}

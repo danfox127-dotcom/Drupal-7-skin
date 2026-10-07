@@ -1022,6 +1022,101 @@ test.describe('D7 Studio: relocated native widgets', () => {
     expect((await popupPlacement(page, 'field_services[und][0][target_id]')).underInput).toBe(true);
   });
 
+  test('a row carried inside another field\'s widget draws no empty box', async ({ page, context }) => {
+    /**
+     * Reported from a People List on vagelos: a column of empty bordered boxes, one per
+     * person subfield, and an empty box beside the structured content.
+     *
+     * Every row of a relocated multi-value widget walks as its own field, and is marked
+     * slotted so it is not reimplemented beside the real one. Rendered as a slot, each
+     * drew the slot's bordered frame around nothing, because no carrier is named for it.
+     */
+    const url = `${HOST}/node/add/news?related-rows`;
+    const html = read('node-add-news-live.html')
+      .replace(
+        /<tbody><tr>[\s\S]*?<\/tr><\/tbody>/,
+        ['Jane Smith (101)', 'John Doe (102)', ''].map((value, delta) => `<tr><td><div class="form-item form-type-textfield">
+          <label for="edit-field-services-${delta}">Related Services</label>
+          <input type="text" id="edit-field-services-${delta}" name="field_services[und][${delta}][target_id]" value="${value}" class="form-text form-autocomplete" />
+        </div></td><td><div class="form-item form-type-select">
+          <label for="edit-services-weight-${delta}">Weight for row ${delta + 1}</label>
+          <select id="edit-services-weight-${delta}" name="field_services[und][${delta}][_weight]"><option value="0">0</option></select>
+        </div></td></tr>`).join('').replace(/^/, '<tbody>') + '</tbody>'
+      );
+    await context.route(url, route => route.fulfill({ status: 200, contentType: 'text/html', body: html }));
+
+    await settingsFor(page);
+    await page.goto(url);
+    await expect(page.locator(`${UI} input[aria-label="Title"]`)).toBeVisible();
+    await openRailSection(page, 'related');
+    await expect(page.locator('input[name="field_services[und][2][target_id]"]')).toBeVisible();
+
+    const boxes = await page.evaluate(() => {
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return Array.from(sr.querySelectorAll('.d7-slot-host')).map(box => {
+        const slot = box.querySelector('slot') as HTMLSlotElement | null;
+        return { name: slot?.name ?? '', filled: (slot?.assignedElements().length ?? 0) > 0 };
+      });
+    });
+    expect(boxes.filter(b => !b.filled)).toEqual([]);
+    // And the table itself is still on screen, every row of it.
+    expect(boxes.some(b => b.name.includes('field-services'))).toBe(true);
+  });
+
+  test('an empty Structured Content shows its Add button next to the type chooser', async ({ page, context }) => {
+    /**
+     * Reported on nursing: choosing People List did nothing. A real capture of
+     * nursing.columbia.edu/node/5050/edit showed why — the editor moved only the type
+     * chooser, and "Add new Content Item" stayed behind in the hidden form.
+     */
+    const url = `${HOST}/node/5050/edit?empty-paragraphs`;
+    await context.route(url, route => route.fulfill({
+      status: 200, contentType: 'text/html', body: read('clone/page-nursing-empty-paragraphs.html'),
+    }));
+    await settingsFor(page);
+    await page.goto(url);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: OVERLAY_MOUNT_TIMEOUT });
+
+    const add = page.locator('input[name="field_page_paragraphs_add_more_add_more"]');
+    await expect(add).toBeVisible();
+    await expect(page.locator('select[name="field_page_paragraphs_add_more_type"]')).toBeVisible();
+    expect(await page.evaluate(() => {
+      const button = document.querySelector('input[name="field_page_paragraphs_add_more_add_more"]')!;
+      const chooser = document.querySelector('select[name="field_page_paragraphs_add_more_type"]')!;
+      const carrier = chooser.closest('.d7-relocated-widget');
+      return Boolean(carrier) && carrier === button.closest('.d7-relocated-widget');
+    })).toBe(true);
+  });
+
+  test('a People List moves as one piece, its Title inside it', async ({ page, context }) => {
+    /**
+     * Reported on vagelos: the People List item's Title sat in a box of its own above the
+     * list, apart from the item it belongs to. Real capture of node/26237/edit.
+     */
+    const url = `${HOST}/node/26237/edit?people-list`;
+    await context.route(url, route => route.fulfill({
+      status: 200, contentType: 'text/html', body: read('clone/page-people-list.html'),
+    }));
+    await settingsFor(page);
+    await page.goto(url);
+    await page.waitForSelector('.d7-proxy-ui-form-host', { timeout: OVERLAY_MOUNT_TIMEOUT });
+    await expect(page.locator('input[name="field_page_paragraphs_add_more_add_more"]')).toBeVisible();
+
+    const layout = await page.evaluate(() => {
+      const carrierOf = (sel: string) => document.querySelector(sel)?.closest('.d7-relocated-widget') ?? null;
+      const list = carrierOf('select[name="field_page_paragraphs_add_more_type"]');
+      const sr = (document.querySelector('.d7-proxy-ui-form-host') as HTMLElement).shadowRoot!;
+      return {
+        titleWithList: list !== null
+          && carrierOf('input[name="field_page_paragraphs[und][0][field_title][und][0][value]"]') === list,
+        lastPersonWithList: carrierOf('input[name="field_page_paragraphs[und][0][field_persons_paragraphs][und][7][field_person_full_name][und][0][value]"]') === list,
+        emptyBoxes: Array.from(sr.querySelectorAll('.d7-slot-host slot'))
+          .filter(slot => (slot as HTMLSlotElement).assignedElements().length === 0).length,
+      };
+    });
+    expect(layout).toEqual({ titleWithList: true, lastPersonWithList: true, emptyBoxes: 0 });
+  });
+
   test('a profile can be picked in a related field that already has one', async ({ page, context }) => {
     /**
      * Reported: "I can't select an existing profile in related content."

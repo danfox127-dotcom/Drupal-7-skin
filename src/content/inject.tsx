@@ -1,7 +1,7 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import stylesheet from '../styles/main.css?inline';
-import { preciseBaseName, belongsToPreciseBase } from '../lib/formSchema/walkForm';
+import { preciseBaseName, belongsToPreciseBase, isAddableParagraphsWidget } from '../lib/formSchema/walkForm';
 
 /**
  * One parsed stylesheet shared by every shadow root via `adoptedStyleSheets`.
@@ -171,6 +171,30 @@ export function slotNameFor(machineName: string): string {
  * which case the caller should fall back to rendering a note.
  */
 /**
+ * The whole Structured Content widget an element sits in, when it is a repeatable one.
+ *
+ * A Paragraphs widget is ONE control: its items, its type chooser and its "Add new
+ * Content Item" button work together, and Drupal's AJAX replaces the whole wrapper on
+ * every add or remove. Climbing by field name split it. On an empty widget only the type
+ * chooser moved and the Add button stayed in the hidden form, so choosing People List did
+ * nothing; on a populated one, an item's Title moved on its own, away from its item.
+ *
+ * The OUTERMOST one, because items nest: a People List holds Persons, and each Person
+ * holds Phones and Emails, all of them Paragraphs widgets. A fixed single-item paragraph
+ * (List's filters) offers no way to add another, so it is not claimed here and keeps the
+ * per-field moves its enhancements rely on.
+ */
+function outermostRepeatableParagraphs(element: HTMLElement): HTMLElement | null {
+  let found: HTMLElement | null = null;
+  let node = element.closest<HTMLElement>('.field-widget-paragraphs-embed');
+  while (node) {
+    if (isAddableParagraphsWidget(node)) found = node;
+    node = node.parentElement?.closest<HTMLElement>('.field-widget-paragraphs-embed') ?? null;
+  }
+  return found;
+}
+
+/**
  * Finds the outermost wrapper that belongs to THIS field and nothing else.
  *
  * Taking the nearest `.form-item` is not enough for a multi-value field: Drupal puts each
@@ -187,6 +211,9 @@ export function slotNameFor(machineName: string): string {
  * `baseName` — see belongsToPreciseBase for why the loose one is the wrong tool here.
  */
 function widgetWrapperFor(element: HTMLElement, preciseBase: string): HTMLElement | null {
+  const structured = outermostRepeatableParagraphs(element);
+  if (structured) return structured;
+
   let best = (element.closest<HTMLElement>('.form-item') ?? element.parentElement) as HTMLElement | null;
   if (!best) return null;
 

@@ -73,6 +73,12 @@ export function FieldLabel({ field, htmlFor }: { field: FieldDescriptor; htmlFor
   );
 }
 
+/** True when this field's control was carried along inside another field's relocated widget. */
+export function isCoveredField(field: FieldDescriptor): boolean {
+  const carrier = field.elements[0]?.closest('.d7-relocated-widget');
+  return Boolean(carrier && carrier.getAttribute('slot') !== slotNameFor(field.machineName));
+}
+
 export const FieldControl = ({ field, error, dense, slotted: slottedProp, onChange }: Props) => {
   const relocated = React.useContext(SlottedFieldsContext);
   const slotted = slottedProp ?? relocated.has(field.machineName);
@@ -104,6 +110,18 @@ export const FieldControl = ({ field, error, dense, slotted: slottedProp, onChan
   const inputId = `d7-field-${field.machineName.replace(/[^a-z0-9]/gi, '-')}`;
   const inputClass =
     'w-full px-3 py-2 bg-white border border-rule-control rounded text-input text-ink placeholder:text-ink-placeholder';
+
+  /**
+   * A field that sits inside ANOTHER field's relocated widget renders nothing.
+   *
+   * A relocated widget moves whole — every row of a multi-value table, every subfield of
+   * a structured content item — but each of those walks as its own field. They are marked
+   * slotted so they are not reimplemented beside the real widget; rendered as slots, each
+   * drew an empty bordered box, because no carrier is named for them. On a People List
+   * that was a column of empty boxes, one per person subfield, and an empty box beside
+   * the structured content in the Details grid. The carrier's owner shows all of it.
+   */
+  if (slotted && isCoveredField(field)) return null;
 
   let control: React.ReactNode;
 
