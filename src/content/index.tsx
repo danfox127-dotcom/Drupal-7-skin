@@ -367,7 +367,7 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
  * Nothing is waited for when the page has no editor library at all, which is the common
  * case for a form with no rich text field.
  */
-async function waitForRichEditors(): Promise<string> {
+async function waitForRichEditorsOnce(): Promise<string> {
   const probe = async () => {
     const res = await sendRichEditorLifecycle('*', 'probe');
     if (!res.ok || !res.editor) return null;
@@ -400,6 +400,17 @@ async function waitForRichEditors(): Promise<string> {
     state = await probe();
   }
   return `timeout:${state?.ready ?? 0}/${state?.total ?? 0}`;
+}
+
+let richEditorsWait: Promise<string> | null = null;
+
+/**
+ * The one wait for this page's rich editors, shared. The Varys capture and the Two-Pane
+ * Editor both need it, and each starting its own sent every probe to the worker twice.
+ */
+function waitForRichEditors(): Promise<string> {
+  richEditorsWait ??= waitForRichEditorsOnce();
+  return richEditorsWait;
 }
 
 /**

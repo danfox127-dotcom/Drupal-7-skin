@@ -4006,6 +4006,23 @@ test.describe('Recording a node save for Varys', () => {
     });
   }
 
+  test('a connected browser with the Two-Pane Editor on waits for the rich editors once, not twice', async ({ page, context, settings }) => {
+    /**
+     * The capture and the editor both need CKEditor to have finished building, and each used
+     * to start its own wait, so every probe went to the worker twice. On a form with no editor
+     * library one wait is exactly four probes: the first look and three retries.
+     */
+    await settings({ varysConnection: connected, nodeEditor: true });
+    const seen = await listenInWorker(context);
+
+    await page.goto(`${HOST}/node/23110/edit`);
+    await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+    await page.waitForTimeout(1500);
+
+    const probes = (await seen()).filter(m => m.type === 'richEditorLifecycle' && m.op === 'probe');
+    expect(probes).toHaveLength(4);
+  });
+
   test('a new page is sent with a before of null', async ({ page, context, settings }) => {
     await settings({ varysConnection: connected });
     const seen = await listenInWorker(context);
