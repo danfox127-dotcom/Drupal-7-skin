@@ -161,8 +161,9 @@ Chrome keeps them current.
 
 ## If you connect it to Varys
 
-Varys is the content-intelligence service used by Columbia's web teams. It runs on Fly.io
-(its API), Vercel (its web app) and Supabase (its database). Data sent to Varys is stored by
+Varys is the content-intelligence service used by Columbia's web teams, run by the same team
+that maintains this extension. It runs on Fly.io (its API), Vercel (its web app) and
+Supabase (its database). Data sent to Varys is stored by
 Varys and those hosting providers, shown to people signed in to Varys with access to that
 site, and given to no one outside Varys. The extension can optionally be connected to it,
 so that Varys can log the search edits you make in Drupal (a changed title, search
@@ -311,7 +312,8 @@ The extension does not read your clipboard.
 
 The extension sells nothing. Without the Varys connection it shares nothing with anyone: no
 data is collected, so none is transferred anywhere. With it, the data described above goes
-to Varys, the service you chose to connect. It is stored by Varys and its hosting providers,
+to Varys, the service you chose to connect, which is run by the team that maintains this
+extension. It is stored by Varys and its hosting providers,
 shown to people signed in to Varys with access to that site, and given to no one outside
 Varys. None of it is used for advertising, credit assessment, or lending, or for any purpose
 unrelated to the extension's single purpose: providing a faster administrative interface
