@@ -24,10 +24,18 @@ test.describe('parsing a suggestions answer', () => {
       .toMatchObject({ clinical_review_note: 'Check the dose.' });
   });
 
+  test('a ready answer may have no made_at time, because Varys\'s generated_at can be null', () => {
+    expect(parseSuggestionsAnswer({ ...ready, made_at: null })).toEqual({ ...ready, made_at: null });
+  });
+
   test('a ready answer missing a part, or with a part of the wrong type, is not an answer', () => {
     const { current, ...noCurrent } = ready;
     void current;
     expect(parseSuggestionsAnswer(noCurrent)).toBeNull();
+    // A null made_at is fine; a missing key is not, and nor is anything but text or null.
+    const { made_at, ...noMadeAt } = ready;
+    void made_at;
+    expect(parseSuggestionsAnswer(noMadeAt)).toBeNull();
     expect(parseSuggestionsAnswer({ ...ready, made_at: 20261021 })).toBeNull();
     expect(parseSuggestionsAnswer({ ...ready, clinical_review_note: undefined })).toBeNull();
     expect(parseSuggestionsAnswer({ ...ready, suggested: { ...side, h2s: 'Overview' } })).toBeNull();

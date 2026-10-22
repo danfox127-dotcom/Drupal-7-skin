@@ -4821,6 +4821,17 @@ test.describe('Varys suggestions: worker', () => {
       .toEqual({ ok: true, answer: READY });
   });
 
+  test('a ready answer with no made_at time still reaches the panel', async ({ page, context, extensionId, settings }) => {
+    // Varys builds made_at from a blueprint's generated_at, which can be null.
+    const noTime = { ...READY, made_at: null };
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varysUp({ status: 200, body: noTime }));
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE }))
+      .toEqual({ ok: true, answer: noTime });
+  });
+
   test('asking Varys to make them posts the page URL, and says it is generating', async ({ page, context, extensionId, settings }) => {
     await settings({ varysConnection: connected, nodeEditor: false });
     const calls = await stubVarys(context, varysUp({ status: 200, body: { status: 'generating' } }));
@@ -4837,6 +4848,20 @@ test.describe('Varys suggestions: worker', () => {
     expect(call.authorization).toBe(`Bearer ${KEY}`);
   });
 
+  test('generate waits longer than the usual 15 seconds for Varys to read the page', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, async call => {
+      if (call.path !== '/api/extension/suggestions/generate') return varysUp()(call);
+      // Varys reads the page before it answers 202, and on a cache miss that has outlasted 15 s.
+      await new Promise(resolve => setTimeout(resolve, 16_500));
+      return { status: 202, body: { status: 'generating' } };
+    });
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, { type: 'varysGenerateSuggestions', pageUrl: PAGE }))
+      .toEqual({ ok: true, answer: { status: 'generating' } });
+  });
+
   test('an untracked host sends nothing', async ({ page, context, extensionId, settings }) => {
     await settings({ varysConnection: connected, nodeEditor: false });
     const calls = await stubVarys(context, varysUp());
@@ -4847,6 +4872,25 @@ test.describe('Varys suggestions: worker', () => {
         .toEqual({ ok: true, answer: { status: 'not_tracked' } });
     }
     expect(suggestionsIn(calls)).toEqual([]);
+  });
+
+  test('with no list of tracked sites to check against, nothing is sent about the page', async ({ page, context, extensionId, settings }) => {
+    // Varys cannot be asked which sites it tracks and nothing is cached, so the page's address
+    // must not leave the browser: a suggestions request is passive, and the next form open retries.
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, call => call.path === '/api/extension/connection'
+      ? { status: 503, body: { detail: 'Database unavailable.' } }
+      : varysUp()(call));
+    await openEditor(page);
+
+    for (const type of ['varysSuggestions', 'varysGenerateSuggestions']) {
+      expect(await asContentScript(page, context, extensionId, { type, pageUrl: PAGE }))
+        .toEqual({ ok: false, reason: 'unreachable', message: UNREACHABLE });
+    }
+    expect(suggestionsIn(calls)).toEqual([]);
+    // Varys was not refused, so the key is not in doubt.
+    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    expect(stored.varysConnection.expired).toBeUndefined();
   });
 
   test('a 401 marks the connection expired', async ({ page, context, extensionId, settings }) => {

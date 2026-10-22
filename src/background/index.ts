@@ -507,6 +507,8 @@ const formKey = (tabId: number) => `varysForm:${tabId}`;
 const pendingKey = (tabId: number) => `varysPending:${tabId}`;
 const SITES_KEY = 'varysSites';
 const VARYS_TIMEOUT_MS = 15_000;
+/** Generate reads the page (snapshot, live probe, Search Console) before it answers 202, which can outlast 15 s. */
+const VARYS_GENERATE_TIMEOUT_MS = 60_000;
 
 /**
  * Runs a tab's state changes one after another, in the order their events arrived. Each is a
@@ -668,6 +670,7 @@ interface VarysAnswer {
 
 async function callVarys(
   connection: VarysConnection, method: 'GET' | 'POST', path: string, body?: unknown,
+  timeoutMs: number = VARYS_TIMEOUT_MS,
 ): Promise<VarysAnswer> {
   try {
     const response = await fetch(`${VARYS_API}${path}`, {
@@ -678,7 +681,7 @@ async function callVarys(
       },
       body: body === undefined ? undefined : JSON.stringify(body),
       credentials: 'omit',
-      signal: AbortSignal.timeout(VARYS_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     let json: unknown = null;
     try {
@@ -937,8 +940,9 @@ async function actOnSave(request: VarysActionRequest): Promise<VarysActionRespon
  *
  * - Not connected, or the key already expired: nothing is sent.
  * - A site Varys does not track: `not_tracked`, and nothing is sent. The page's address leaves
- *   the browser only for a site on the list Varys gave this person. (When Varys cannot even be
- *   asked for that list the request is sent, as a save is, and Varys answers `not_tracked`.)
+ *   the browser only for a site on the list Varys gave this person. When that list is unknown
+ *   (Varys could not be asked and none is cached) nothing is sent either, and the panel is told
+ *   Varys is unreachable: unlike a save, this request is passive and the next form open retries.
  * - A 401, on the list or on the request: the key is marked expired.
  * - No answer at all: unreachable. Another status, or an answer that is not a shape Varys
  *   documents: an error, with Varys's own words when it gave any.
@@ -954,10 +958,11 @@ async function suggestionsFor(request: VarysSuggestionsRequest): Promise<Suggest
     await markExpired(connection);
     return { ok: false, reason: 'expired', message: ACTION_EXPIRED_COPY };
   }
-  if (sites && !isTrackedSite(pageUrl, sites)) return { ok: true, answer: { status: 'not_tracked' } };
+  if (sites === null) return { ok: false, reason: 'unreachable', message: ACTION_UNREACHABLE_COPY };
+  if (!isTrackedSite(pageUrl, sites)) return { ok: true, answer: { status: 'not_tracked' } };
 
   const answer = request.type === 'varysGenerateSuggestions'
-    ? await callVarys(connection, 'POST', '/api/extension/suggestions/generate', { page_url: pageUrl })
+    ? await callVarys(connection, 'POST', '/api/extension/suggestions/generate', { page_url: pageUrl }, VARYS_GENERATE_TIMEOUT_MS)
     : await callVarys(connection, 'GET', `/api/extension/suggestions?page_url=${encodeURIComponent(pageUrl)}`);
   if (succeeded(answer)) {
     const parsed = parseSuggestionsAnswer(answer.json);

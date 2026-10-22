@@ -25,8 +25,8 @@ export type SuggestionsAnswer =
   | { status: 'not_tracked' | 'not_crawled' | 'none' | 'generating' }
   | {
       status: 'ready';
-      /** ISO time Varys made them. */
-      made_at: string;
+      /** ISO time Varys made them; null when Varys has no time for them. */
+      made_at: string | null;
       clinical_review_note: string | null;
       current: ScaffoldSide;
       suggested: ScaffoldSide;
@@ -71,7 +71,7 @@ export function parseSuggestionsAnswer(json: unknown): SuggestionsAnswer | null 
     case 'generating':
       return { status: a.status };
     case 'ready':
-      return isText(a.made_at) && isTextOrNull(a.clinical_review_note)
+      return isTextOrNull(a.made_at) && isTextOrNull(a.clinical_review_note)
         && isScaffoldSide(a.current) && isScaffoldSide(a.suggested)
         ? {
           status: 'ready',
