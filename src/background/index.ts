@@ -942,12 +942,16 @@ async function actOnSave(request: VarysActionRequest): Promise<VarysActionRespon
  * What Varys has for a page's Page Health suggestions, or asks it to make them, for the panel.
  * The same steps as a save, in the same order, and the panel is told which one stopped it:
  *
- * - Not connected, or the key already expired: nothing is sent.
+ * - Not connected: nothing is sent.
  * - A site Varys does not track: `not_tracked`, and nothing is sent. The page's address leaves
- *   the browser only for a site on the list Varys gave this person. When that list is unknown
- *   (Varys could not be asked and none is cached) nothing is sent either, and the panel is told
- *   Varys is unreachable: unlike a save, this request is passive and the next form open retries.
- * - A 401, on the list or on the request: the key is marked expired.
+ *   the browser only for a site on the list Varys gave this person. When Varys cannot give a
+ *   fresh list (it is unreachable, or the key is expired, already or by a 401 on the list), the
+ *   list it last gave, of any age, still answers "not tracked", as it does for a save
+ *   (ruling R11): a dead key on a site Varys never tracked is not this site's business.
+ * - The key expired, and the site is on that list or there is no list: `expired`.
+ * - No list at all and Varys cannot be asked: nothing is sent, and the panel is told Varys is
+ *   unreachable: unlike a save, this request is passive and the next form open retries.
+ * - A 401 on the request itself: the key is marked expired.
  * - No answer at all: unreachable. Another status, or an answer that is not a shape Varys
  *   documents: an error, with Varys's own words when it gave any.
  */
@@ -955,15 +959,22 @@ async function suggestionsFor(request: VarysSuggestionsRequest): Promise<Suggest
   const { pageUrl } = request;
   const connection = await getConnection();
   if (!connection) return { ok: false, reason: 'not_connected', message: ACTION_NOT_CONNECTED_COPY };
-  if (connection.expired) return { ok: false, reason: 'expired', message: ACTION_EXPIRED_COPY };
 
+  const notTracked: SuggestionsReply = { ok: true, answer: { status: 'not_tracked' } };
+  const expired = async (): Promise<SuggestionsReply> =>
+    knownUntracked(pageUrl, await sessionGet<SitesCache>(SITES_KEY), connection.email)
+      ? notTracked
+      : { ok: false, reason: 'expired', message: ACTION_EXPIRED_COPY };
+  if (connection.expired) return expired();
+
+  // A list of any age when Varys cannot give a fresh one (see trackedSites).
   const sites = await trackedSites(connection);
   if (sites === 'expired') {
     await markExpired(connection);
-    return { ok: false, reason: 'expired', message: ACTION_EXPIRED_COPY };
+    return expired();
   }
   if (sites === null) return { ok: false, reason: 'unreachable', message: ACTION_UNREACHABLE_COPY };
-  if (!isTrackedSite(pageUrl, sites)) return { ok: true, answer: { status: 'not_tracked' } };
+  if (!isTrackedSite(pageUrl, sites)) return notTracked;
 
   const answer = request.type === 'varysGenerateSuggestions'
     ? await callVarys(connection, 'POST', '/api/extension/suggestions/generate', { page_url: pageUrl }, VARYS_GENERATE_TIMEOUT_MS)

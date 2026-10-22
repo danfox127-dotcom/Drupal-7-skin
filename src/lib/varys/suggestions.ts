@@ -47,6 +47,12 @@ export interface VarysSuggestionsRequest {
 /** Shown when Insert finds nowhere to put the heading. */
 export const SUGGESTIONS_NO_CURSOR_COPY = 'Click in the body where the heading should go, then press Insert again.';
 
+/**
+ * Shown when Varys answered with an error. Its own detail ("Not Found") means nothing to the
+ * person editing, so it goes to the console instead (ruling R12).
+ */
+export const SUGGESTIONS_ERROR_COPY = "Varys couldn't answer for this page right now.";
+
 const isText = (v: unknown): v is string => typeof v === 'string';
 const isTextOrNull = (v: unknown): v is string | null => v === null || typeof v === 'string';
 

@@ -4401,7 +4401,8 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     expect(page.url()).toBe(PUBLIC);
 
     await page.waitForTimeout(1500);
-    expect(sentSince(calls, opened)).toEqual([]);
+    // Exactly nothing: the save lands on the public page, where no panel asks anything.
+    expect(calls.slice(opened)).toEqual([]);
     await expect(page.locator('#d7-varys-notice')).toHaveCount(0);
     expect(await stored(context, 'varysPendingNotice')).toBeUndefined();
     expect(await stored(context, 'varysQueue')).toBeUndefined();
@@ -4688,7 +4689,8 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     await expect.poll(async () => (await sessionKeys(context)).filter(k => k.startsWith('varysPending:'))).toEqual([]);
     expect((await sessionKeys(context)).some(k => k.startsWith('varysForm:'))).toBe(true);
     await page.waitForTimeout(500);
-    expect(sentSince(calls, opened)).toEqual([]);
+    // Exactly nothing: the login page is not a form, so no panel asks anything there either.
+    expect(calls.slice(opened)).toEqual([]);
 
     await openForm(page);
     await saveAndPublish(page, { 'title_field[und][0][value]': 'Saved after logging in' });
@@ -4952,6 +4954,63 @@ test.describe('Varys suggestions: worker', () => {
     expect(calls).toEqual([]);
   });
 
+  /** The list of sites Varys last gave this person, two days old: a dead key never refreshes it. */
+  const lastList = (context: BrowserContext, sites: string[]) => worker(context).evaluate(([email, list]) =>
+    chrome.storage.session.set({ varysSites: { email, sites: list, fetchedAt: Date.now() - 2 * 86_400_000 } }),
+  [EMAIL, sites] as const);
+
+  test('an expired key on a site the last list does not track answers not tracked, and asks nothing', async ({ page, context, extensionId, settings }) => {
+    // Ruling R11: as for a save, the last list says what is not tracked when the key cannot ask.
+    await settings({ varysConnection: { ...connected, expired: true }, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await lastList(context, ['nursing.columbia.edu']);
+    await openEditor(page);
+
+    for (const type of ['varysSuggestions', 'varysGenerateSuggestions']) {
+      expect(await asContentScript(page, context, extensionId, { type, pageUrl: PAGE }))
+        .toEqual({ ok: true, answer: { status: 'not_tracked' } });
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test('an expired key on a site the last list tracks is expired, and asks nothing', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: { ...connected, expired: true }, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await lastList(context, ['cuimc.columbia.edu']);
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE }))
+      .toEqual({ ok: false, reason: 'expired', message: EXPIRED });
+    expect(calls).toEqual([]);
+  });
+
+  test('a 401 on the list of sites, with an old list that lacks the site, answers not tracked', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, () => ({ status: 401, body: { detail: 'This key has expired.' } }));
+    // Old enough that the worker asks Varys for a fresh one first.
+    await lastList(context, ['nursing.columbia.edu']);
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE }))
+      .toEqual({ ok: true, answer: { status: 'not_tracked' } });
+    expect(suggestionsIn(calls)).toEqual([]);
+    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    expect(stored.varysConnection.expired).toBe(true);
+  });
+
+  test('when Varys cannot give a fresh list, an old one still says not tracked', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, call => call.path === '/api/extension/connection'
+      ? { status: 503, body: { detail: 'Database unavailable.' } }
+      : varysUp()(call));
+    await lastList(context, ['nursing.columbia.edu']);
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE }))
+      .toEqual({ ok: true, answer: { status: 'not_tracked' } });
+    expect(suggestionsIn(calls)).toEqual([]);
+  });
+
   test('a browser that is not connected is not asked either', async ({ page, context, extensionId, settings }) => {
     await settings({ nodeEditor: false });
     const calls = await stubVarys(context, varysUp());
@@ -5063,6 +5122,7 @@ test.describe('Varys suggestions: panel', () => {
   const INTO_OVERRIDE = 'Goes into the search description field, which overrides Summary on this page.';
   const EXPIRED = 'Your Varys connection has expired. Reconnect from the extension menu.';
   const NO_CURSOR = 'Click in the body where the heading should go, then press Insert again.';
+  const ERROR = "Varys couldn't answer for this page right now.";
   /** Where the panel remembers an Ask Varys in the tab's sessionStorage, followed by the page's public address. */
   const PENDING_KEY = 'd7-varys-ask:';
   const HEADING = 'Fish & chips <b>';
@@ -5398,6 +5458,90 @@ test.describe('Varys suggestions: panel', () => {
     expect(suggestionsIn(calls)).toEqual([]);
   });
 
+  const worker = (context: BrowserContext) => context.serviceWorkers()[0];
+  /** The list of sites Varys last gave this person, two days old: a dead key never refreshes it. */
+  const lastList = (context: BrowserContext, sites: string[]) => worker(context).evaluate(([email, list]) =>
+    chrome.storage.session.set({ varysSites: { email, sites: list, fetchedAt: Date.now() - 2 * 86_400_000 } }),
+  [EMAIL, sites] as const);
+
+  test('an expired key on a site the last list does not track shows no panel, and asks nothing', async ({ page, context, settings }) => {
+    // Ruling R11: the save notice says "not tracked" here, so the panel must not say "reconnect".
+    await settings({ varysConnection: { ...connected, expired: true }, nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready()));
+    await lastList(context, ['nursing.columbia.edu']);
+    const seen = await listenInWorker(context);
+
+    await page.goto(FORM);
+    await expect.poll(async () => (await seen()).some(m => m.type === 'varysSuggestions')).toBe(true);
+    await page.waitForTimeout(1000);
+
+    await expect(panel(page)).toHaveCount(0);
+    expect(calls).toEqual([]);
+  });
+
+  test('an expired key on a site the last list tracks shows the reconnect copy, and asks nothing', async ({ page, context, settings }) => {
+    await settings({ varysConnection: { ...connected, expired: true }, nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready()));
+    await lastList(context, ['cuimc.columbia.edu']);
+    await open(page);
+
+    await expect(panel(page).getByText(EXPIRED)).toBeVisible();
+    expect(calls).toEqual([]);
+  });
+
+  for (const [label, answer] of [
+    ['Varys cannot be reached', () => 'abort' as const],
+    ['Varys answers with an error', (call: VarysCall): VarysAnswer => call.path === '/api/extension/connection'
+      ? { status: 200, body: SITES }
+      : { status: 404, body: { detail: 'Not Found' } }],
+  ] as const) {
+    test(`no panel when, on the first look, ${label}`, async ({ page, context, settings }) => {
+      // Otherwise a Varys that is down would put a panel on every Drupal page this person opens.
+      await settings({ varysConnection: connected, nodeEditor: false });
+      await stubVarys(context, answer);
+      const seen = await listenInWorker(context);
+
+      await page.goto(FORM);
+      await expect.poll(async () => (await seen()).some(m => m.type === 'varysSuggestions')).toBe(true);
+      await page.waitForTimeout(1500);
+
+      await expect(panel(page)).toHaveCount(0);
+    });
+  }
+
+  test('an error once the panel is up is said plainly, and Varys\'s own words go to the console', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys(call => call.method === 'POST'
+      ? { status: 500, body: { detail: 'Not Found' } }
+      : { status: 200, body: { status: 'none' } }));
+    await open(page);
+
+    await panel(page).getByRole('button', { name: 'Ask Varys' }).click();
+
+    await expect(panel(page).getByText(ERROR)).toBeVisible();
+    await expect(panel(page).getByText('Not Found')).toHaveCount(0);
+  });
+
+  test('Insert works from the first moment when the body\'s editor loads late', async ({ page, context, settings }) => {
+    // The Specialty form whose CKEditor attaches after the page loads, here after 3 s: the panel
+    // waits for it, so the first Insert finds the editor rather than reporting there is none.
+    const LATE = `${HOST}/node/17177/edit`;
+    await context.route(LATE, route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: read('node-edit-specialty-async.html').replace(
+        'setTimeout(function () { Drupal.attachBehaviors(document); }, 600);',
+        'setTimeout(function () { Drupal.attachBehaviors(document); }, 3000);'),
+    }));
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready()));
+    await open(page, LATE);
+
+    await suggestedHeading(page, HEADING).getByRole('button', { name: 'Insert at cursor' }).click();
+
+    await expect(panel(page).getByText('Inserted into the body.')).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__inserted)).toEqual(['<h2>Fish &amp; chips &lt;b&gt;</h2>']);
+  });
+
   test('a browser that is not connected shows no panel and asks nothing', async ({ page, context, settings }) => {
     await settings({ nodeEditor: false });
     const calls = await stubVarys(context, answering(ready()));
@@ -5473,8 +5617,9 @@ test.describe('Varys suggestions: panel', () => {
 
   test('the panel works with the Two-Pane Editor on, clear of its Save buttons', async ({ page, context, settings }) => {
     /**
-     * The Specialty form whose CKEditor attaches late, made later still: the Two-Pane Editor
-     * waits for it, so the editor's bar of Save buttons arrives well after the panel, and the
+     * The Specialty form whose CKEditor attaches late, made later still. The panel and the
+     * Two-Pane Editor both wait for it, and the editor then still detaches and re-attaches
+     * CKEditor before its bar of Save buttons appears, so the bar arrives after the panel: the
      * panel must move clear of it with nothing scrolled or resized.
      */
     const LATE = `${HOST}/node/17177/edit`;
@@ -5488,7 +5633,6 @@ test.describe('Varys suggestions: panel', () => {
     // Long enough that, left alone, the panel would reach the top of the window and the editor's bar.
     await stubVarys(context, answering(ready({ clinical_review_note: 'A long note. '.repeat(60) })));
     await open(page, LATE);
-    await expect(page.locator('.d7-proxy-ui-form-host')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Publish', exact: true })).toBeVisible({ timeout: OVERLAY_MOUNT_TIMEOUT });
 
     const overlaps = async () => {

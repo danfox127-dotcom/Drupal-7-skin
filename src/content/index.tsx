@@ -586,7 +586,7 @@ const init = async () => {
     // Independent of the editor and the schema below, and of the Two-Pane Editor setting.
     void startVarysCapture();
     // In this same content script, so what it fills is what the capture reports at Save.
-    void startVarysPanel();
+    void startVarysPanel(waitForRichEditors);
 
     /**
      * Before the form is read, not after.

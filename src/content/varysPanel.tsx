@@ -10,7 +10,7 @@ import {
 } from '../lib/varys/suggestionFill';
 import { markFilled } from '../lib/varys/filled';
 import {
-  SUGGESTIONS_NO_CURSOR_COPY,
+  SUGGESTIONS_ERROR_COPY, SUGGESTIONS_NO_CURSOR_COPY,
   type SuggestionsAnswer, type SuggestionsReply, type VarysSuggestionsRequest,
 } from '../lib/varys/suggestions';
 import { ACTION_EXPIRED_COPY, ACTION_NOT_CONNECTED_COPY, ACTION_UNREACHABLE_COPY } from '../lib/varys/submissions';
@@ -87,13 +87,25 @@ async function askWorker(message: VarysSuggestionsRequest): Promise<SuggestionsR
   }
 }
 
-/** The extension's own words for a reply that is not an answer. */
-function copyFor(reply: Extract<SuggestionsReply, { ok: false }>): string {
+type Failure = Extract<SuggestionsReply, { ok: false }>;
+
+/**
+ * The extension's own words for a reply that is not an answer. Varys's own detail on an
+ * error is for whoever debugs it, so it goes to the console, never on screen (ruling R12).
+ */
+function copyFor(reply: Failure): string {
   switch (reply.reason) {
     case 'expired': return ACTION_EXPIRED_COPY;
     case 'not_connected': return ACTION_NOT_CONNECTED_COPY;
     case 'unreachable': return ACTION_UNREACHABLE_COPY;
-    default: return reply.message || ACTION_UNREACHABLE_COPY;
+    case 'error':
+      console.warn('[D7 Studio] Varys could not answer for this page:', reply.message);
+      return SUGGESTIONS_ERROR_COPY;
+    default: {
+      const unknown: never = reply.reason;
+      console.warn('[D7 Studio] Varys suggestions: a failure this version does not know', unknown);
+      return SUGGESTIONS_ERROR_COPY;
+    }
   }
 }
 
@@ -129,20 +141,21 @@ function clearPending(pageUrl: string): void {
 // --------------------------------------------------------------------------- the decisions
 
 /**
- * Where the panel starts, from the first answer and any Ask Varys still pending in this tab.
- * Null for an answer that means no panel at all (not tracked).
+ * Where the panel starts, from the first reply and any Ask Varys still pending in this tab.
+ * Null when there is to be no panel at all (ruling R11): only an answer about a tracked page,
+ * or an expired key on a page the last list says is tracked, is worth a panel. Not tracked,
+ * not connected, unreachable and an error on the first look all mount nothing, so a Varys
+ * that is down does not put a panel on every Drupal page this person opens.
  */
-function initialPhase(reply: SuggestionsReply, pageUrl: string): { phase: Phase; failures: number } | null {
-  const pending = readPending(pageUrl);
+function initialPhase(reply: SuggestionsReply, pageUrl: string): Phase | null {
   if (!reply.ok) {
-    if (pending !== null && (reply.reason === 'unreachable' || reply.reason === 'error')) {
-      // Varys may be writing still: this counts as the first failed look, not the last.
-      return { phase: { kind: 'generating', since: pending }, failures: 1 };
-    }
-    if (reply.reason === 'expired' || reply.reason === 'not_connected') clearPending(pageUrl);
-    return { phase: { kind: 'message', message: copyFor(reply) }, failures: 0 };
+    if (reply.reason === 'error') console.warn('[D7 Studio] Varys could not answer for this page:', reply.message);
+    if (reply.reason !== 'expired') return null;
+    clearPending(pageUrl);
+    return { kind: 'message', message: copyFor(reply) };
   }
 
+  const pending = readPending(pageUrl);
   const { answer } = reply;
   switch (answer.status) {
     case 'not_tracked':
@@ -150,21 +163,40 @@ function initialPhase(reply: SuggestionsReply, pageUrl: string): { phase: Phase;
     case 'generating': {
       const since = pending ?? Date.now();
       writePending(pageUrl, since);
-      return { phase: { kind: 'generating', since }, failures: 0 };
+      return { kind: 'generating', since };
     }
     case 'none':
-      return pending !== null
-        ? { phase: { kind: 'generating', since: pending }, failures: 0 }
-        : { phase: { kind: 'answer', answer: { status: 'none' } }, failures: 0 };
-    default:
+      return pending !== null ? { kind: 'generating', since: pending } : { kind: 'answer', answer: { status: 'none' } };
+    case 'ready':
+    case 'not_crawled':
       clearPending(pageUrl);
-      return { phase: { kind: 'answer', answer: shown(answer) }, failures: 0 };
+      return { kind: 'answer', answer: shown(answer)! };
+    default: {
+      const unknown: never = answer;
+      console.warn('[D7 Studio] Varys suggestions: a status this version does not know', unknown);
+      return null;
+    }
   }
 }
 
-/** A ready or not-crawled answer, as the panel holds it. */
-function shown(answer: SuggestionsAnswer): Shown {
-  return answer.status === 'ready' ? answer : { status: answer.status === 'none' ? 'none' : 'not_crawled' };
+/**
+ * An answer the panel shows as it stands, or null for one it does not (not tracked, or still
+ * generating). Exhaustive, so a status added later cannot fall into another's words.
+ */
+function shown(answer: SuggestionsAnswer): Shown | null {
+  switch (answer.status) {
+    case 'ready': return answer;
+    case 'none': return { status: 'none' };
+    case 'not_crawled': return { status: 'not_crawled' };
+    case 'not_tracked':
+    case 'generating':
+      return null;
+    default: {
+      const unknown: never = answer;
+      console.warn('[D7 Studio] Varys suggestions: a status this version does not know', unknown);
+      return null;
+    }
+  }
 }
 
 /** Escapes text for use inside HTML, so a heading is always text and never markup. */
@@ -291,10 +323,10 @@ function usePlacement(deps: unknown[]): Placement {
 
 function VarysPanel({ pageUrl, first, onClose }: {
   pageUrl: string;
-  first: { phase: Phase; failures: number };
+  first: Phase;
   onClose: () => void;
 }) {
-  const [phase, setPhase] = useState<Phase>(first.phase);
+  const [phase, setPhase] = useState<Phase>(first);
   const [records, setRecords] = useState<Partial<Record<FillKind, FillRecord>>>({});
   const [notes, setNotes] = useState<Partial<Record<FillKind, string>>>({});
   const [addressKept, setAddressKept] = useState(false);
@@ -303,7 +335,7 @@ function VarysPanel({ pageUrl, first, onClose }: {
   // Bumped by any edit in the page, so "Now" and Undo follow what the person types.
   const [edits, setEdits] = useState(0);
 
-  const failures = useRef(first.failures);
+  const failures = useRef(0);
   // What is on screen now, for an answer that arrives after the wait it belongs to has moved on.
   const phaseNow = useRef(phase);
   phaseNow.current = phase;
@@ -370,8 +402,9 @@ function VarysPanel({ pageUrl, first, onClose }: {
           onClose();
           return;
         }
-        if (answer.status === 'ready' || answer.status === 'not_crawled') {
-          stop({ kind: 'answer', answer: shown(answer) }, true);
+        const done = answer.status === 'none' ? null : shown(answer);
+        if (done) {
+          stop({ kind: 'answer', answer: done }, true);
           return;
         }
         // `none` or `generating`: still writing, as far as anyone can tell.
@@ -416,12 +449,13 @@ function VarysPanel({ pageUrl, first, onClose }: {
         return;
       }
       const { answer } = reply;
+      const done = answer.status === 'none' ? null : shown(answer);
       if (answer.status === 'not_tracked') {
         clearPending(pageUrl);
         onClose();
-      } else if (answer.status === 'ready' || answer.status === 'not_crawled') {
+      } else if (done) {
         clearPending(pageUrl);
-        setPhase({ kind: 'answer', answer: shown(answer) });
+        setPhase({ kind: 'answer', answer: done });
       }
     });
   }, [pageUrl, onClose]);
@@ -576,17 +610,24 @@ function VarysPanel({ pageUrl, first, onClose }: {
  * the page's site is one Varys tracks. Not awaited by anything, and never lets a fault of its
  * own reach the person editing: the panel is an extra.
  *
- * The first answer decides whether there is a panel at all, so the panel is mounted only
- * after it: an untracked site, or a worker that cannot be asked, shows nothing.
+ * The first answer decides whether there is a panel at all (see initialPhase), so the panel
+ * is mounted only after it. It also waits for the page's rich editors, asked for in the same
+ * breath, so the form is first read with CKEditor in place and Insert at cursor works from
+ * the panel's first moment: pressed while CKEditor is still loading, it would find no editor.
+ * `editorsReady` is index.tsx's one shared wait, called only once this browser is connected.
  */
-export async function startVarysPanel(): Promise<void> {
+export async function startVarysPanel(editorsReady: () => Promise<unknown>): Promise<void> {
   try {
     if (nodeIdFromPath(window.location.pathname) === null) return;
     if (!(await varysIsConnected())) return;
     const pageUrl = publicUrlFor(window.location, document);
     if (pageUrl === null) return;
 
-    const reply = await askWorker({ type: 'varysSuggestions', pageUrl });
+    const [reply] = await Promise.all([
+      askWorker({ type: 'varysSuggestions', pageUrl }),
+      // Bounded by the wait itself; a fault in it only means the editors are as ready as they get.
+      editorsReady().catch(() => undefined),
+    ]);
     if (reply === null) return;
     const first = initialPhase(reply, pageUrl);
     if (first === null) return;
