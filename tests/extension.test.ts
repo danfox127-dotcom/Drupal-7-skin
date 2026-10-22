@@ -5120,6 +5120,7 @@ test.describe('Varys suggestions: panel', () => {
     + 'Change it by hand if you need to.';
   const INTO_SUMMARY = 'Goes into Summary, which is also the search description.';
   const INTO_OVERRIDE = 'Goes into the search description field, which overrides Summary on this page.';
+  const INTO_OVERRIDE_ONLY = 'Goes into the search description field.';
   const EXPIRED = 'Your Varys connection has expired. Reconnect from the extension menu.';
   const NO_CURSOR = 'Click in the body where the heading should go, then press Insert again.';
   const ERROR = "Varys couldn't answer for this page right now.";
@@ -5314,7 +5315,9 @@ test.describe('Varys suggestions: panel', () => {
     await stubVarys(context, answering(ready()));
     await open(page);
 
-    await expect(row(page, 'Search result description').getByText(INTO_OVERRIDE)).toBeVisible();
+    // An empty override overrides nothing yet: it does not claim to.
+    await expect(row(page, 'Search result description').getByText(INTO_OVERRIDE_ONLY, { exact: true })).toBeVisible();
+    await expect(row(page, 'Search result description').getByText(INTO_OVERRIDE)).toHaveCount(0);
     await row(page, 'Search result description').getByRole('button', { name: 'Use' }).click();
     expect(await page.inputValue(META_DESCRIPTION)).toBe('A new description.');
     expect(await page.inputValue(SUMMARY)).toBe('');
@@ -5613,6 +5616,176 @@ test.describe('Varys suggestions: panel', () => {
 
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(HEADING);
     expect(await page.evaluate(() => (window as any).__inserted)).toEqual([]);
+  });
+
+  test('a search description field with text of its own says it overrides Summary', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready()));
+    await serveForm(context, {
+      edit: html => html.replace('name="metatags[und][description][value]" cols="60" rows="2"><',
+        'name="metatags[und][description][value]" cols="60" rows="2">Our own description.<'),
+    });
+    await open(page);
+
+    await expect(row(page, 'Search result description').getByText(INTO_OVERRIDE)).toBeVisible();
+  });
+
+  test("a search title keeps the site's name token after the suggestion, shows it, and Undo puts the pattern back", async ({ page, context, settings }) => {
+    // Drupal metatag's stock default (ruling R16): replacing it whole would drop the site's name.
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready()));
+    await serveForm(context, {
+      edit: html => html.replace('name="metatags[und][title][value]" value=""',
+        'name="metatags[und][title][value]" value="[node:title] | [site:name]"'),
+    });
+    await open(page);
+
+    // What Use will write is what the panel says Varys suggests.
+    await expect(row(page, 'Search result title').getByText('New Search Title | [site:name]')).toBeVisible();
+    await row(page, 'Search result title').getByRole('button', { name: 'Use' }).click();
+    expect(await page.inputValue(META_TITLE)).toBe('New Search Title | [site:name]');
+
+    await row(page, 'Search result title').getByRole('button', { name: 'Undo' }).click();
+    expect(await page.inputValue(META_TITLE)).toBe('[node:title] | [site:name]');
+  });
+
+  /** The List page itself at /node/23110, stating its own address in its head. */
+  const servePage = (context: BrowserContext, head: string) => context.route(`${HOST}/node/23110`, route =>
+    route.request().method() === 'GET'
+      ? route.fulfill({
+        status: 200, contentType: 'text/html',
+        body: `<!doctype html><html><head><title>Our list</title>${head}</head><body><h1>Our list</h1></body></html>`,
+      })
+      : route.fallback());
+
+  test('a form with no View tab asks about the address its page states, and a title fill keeps it', async ({ page, context, settings }) => {
+    // Ruling R17: the form names only /node/23110, which Varys never crawled; the page says where it lives.
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready()));
+    await servePage(context, `<link rel="shortlink" href="/node/23110"><link rel="canonical" href="${HOST}${ALIAS}">`);
+    await open(page);
+
+    expect(suggestionsIn(calls)[0].search).toBe('?page_url=' + encodeURIComponent(`${HOST}${ALIAS}`));
+    await row(page, 'Title').getByRole('button', { name: 'Use' }).click();
+    expect(await page.inputValue(TITLE)).toBe('A Better Title');
+    expect(await page.isChecked(PATHAUTO)).toBe(false);
+    expect(await page.inputValue(ALIAS_BOX)).toBe('faculty/our-list');
+  });
+
+  test('when the page states no address of this site, the form asks about /node/N as before', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready()));
+    // Another site's address, as syndicated content would state it: not this page's.
+    await servePage(context, `<link rel="canonical" href="https://www.columbiadoctors.org${ALIAS}">`);
+    await open(page);
+
+    expect(suggestionsIn(calls)[0].search).toBe('?page_url=' + encodeURIComponent(`${HOST}/node/23110`));
+    await expect(row(page, 'Title').getByRole('button', { name: 'Use' })).toBeDisabled();
+  });
+
+  /** The List form as Drupal re-renders it after `button`: with the title and search title filled, pathauto off, the address kept. */
+  const rerendered = (html: string) => html
+    .replace(/(<body[^>]*>)/, `$1<ul class="tabs primary"><li><a href="${ALIAS}">View</a></li>`
+      + '<li><a href="/node/23110/edit">Edit</a></li></ul>')
+    .replace('name="metatags[und][title][value]" value=""', 'name="metatags[und][title][value]" value="New Search Title"')
+    .replace('name="title_field[und][0][value]" value=""', 'name="title_field[und][0][value]" value="A Better Title"')
+    .replace('name="path[pathauto]" value="1" checked="checked"', 'name="path[pathauto]" value="1"')
+    .replace('name="path[alias]" value="" size="60" maxlength="255" class="form-text" disabled="disabled"',
+      'name="path[alias]" value="faculty/our-list" size="60" maxlength="255" class="form-text"');
+
+  for (const [label, button, rerenderOn] of [
+    ['a Preview (View changes)', '#edit-preview-changes', 'View changes'],
+    ['a save Drupal rejects', '#edit-submit', 'Save as draft'],
+  ] as const) {
+    test(`after ${label}, the re-rendered form keeps Undo, the keep-address note and what the next save reports`, async ({ page, context, settings }) => {
+      // Ruling R18: the fills are still in the re-rendered form, so the panel must still own them.
+      await settings({ varysConnection: connected, nodeEditor: false });
+      const calls = await stubVarys(context, answering(ready()));
+      await serveForm(context, { viewTab: ALIAS });
+      // Drupal re-renders the form for `rerenderOn`; any other submit is a save that goes through.
+      await context.route(FORM, route => {
+        const request = route.request();
+        if (request.method() !== 'POST') return route.fallback();
+        if ((request.postData() ?? '').includes(rerenderOn)) {
+          return route.fulfill({ status: 200, contentType: 'text/html', body: rerendered(read('captured/list-populated.html')) });
+        }
+        return route.fulfill({
+          status: 200, contentType: 'text/html',
+          body: `<!doctype html><html><head><script>history.replaceState(null, '', '/news/foo');</script></head>`
+            + '<body><h1>Foo</h1></body></html>',
+        });
+      });
+      await open(page);
+      await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+
+      await row(page, 'Search result title').getByRole('button', { name: 'Use' }).click();
+      await row(page, 'Title').getByRole('button', { name: 'Use' }).click();
+      await expect(panel(page).getByText(KEEPS_ADDRESS)).toBeVisible();
+
+      await Promise.all([
+        page.waitForEvent('load'),
+        page.evaluate(b => (document.querySelector(b) as HTMLElement).click(), button),
+      ]);
+      await expect(panel(page)).toHaveCount(1, { timeout: OVERLAY_MOUNT_TIMEOUT });
+      expect(await page.inputValue(META_TITLE)).toBe('New Search Title');
+
+      await expect(row(page, 'Search result title').getByRole('button', { name: 'Undo' })).toBeVisible();
+      await expect(row(page, 'Title').getByRole('button', { name: 'Undo' })).toBeVisible();
+      await expect(panel(page).getByText(KEEPS_ADDRESS)).toBeVisible();
+
+      // Undo still works across the re-render...
+      await row(page, 'Search result title').getByRole('button', { name: 'Undo' }).click();
+      expect(await page.inputValue(META_TITLE)).toBe('');
+      await expect(row(page, 'Search result title').getByRole('button', { name: 'Use' })).toBeVisible();
+
+      // ...and the save that follows still reports the title Varys filled.
+      await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+      await Promise.all([
+        page.waitForEvent('load'),
+        page.evaluate(() => (document.querySelector('#edit-submit-publish') as HTMLElement).click()),
+      ]);
+      await expect.poll(() => savesIn(calls).length).toBe(1);
+      expect(savesIn(calls)[0].body.varys_filled).toEqual(['title']);
+    });
+  }
+
+  test('after a save goes through, the reopened form takes nothing up', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready()));
+    await saveLands(context, FORM);
+    // Once saved, Drupal holds the filled text, and the reopened form shows it: exactly what a
+    // carried record would match, so only dropping it at the save keeps it from coming back.
+    let saved = false;
+    await serveForm(context, {
+      edit: html => (saved
+        ? html.replace('name="metatags[und][title][value]" value=""', 'name="metatags[und][title][value]" value="New Search Title"')
+        : html),
+    });
+    await open(page);
+    await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+
+    await row(page, 'Search result title').getByRole('button', { name: 'Use' }).click();
+    await Promise.all([
+      page.waitForEvent('load'),
+      page.evaluate(() => (document.querySelector('#edit-submit-publish') as HTMLElement).click()),
+    ]);
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    expect(savesIn(calls)[0].body.varys_filled).toEqual(['meta_title']);
+
+    saved = true;
+    await open(page);
+    expect(await page.inputValue(META_TITLE)).toBe('New Search Title');
+    await expect(row(page, 'Search result title')).toBeVisible();
+    // Neither Undo (nothing was taken up) nor Use (the field already holds the suggestion).
+    await expect(row(page, 'Search result title').getByRole('button')).toHaveCount(0);
+
+    await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+    await Promise.all([
+      page.waitForEvent('load'),
+      page.evaluate(() => (document.querySelector('#edit-submit-publish') as HTMLElement).click()),
+    ]);
+    await expect.poll(() => savesIn(calls).length).toBe(2);
+    expect(savesIn(calls)[1].body.varys_filled).toEqual([]);
   });
 
   test('the panel works with the Two-Pane Editor on, clear of its Save buttons', async ({ page, context, settings }) => {

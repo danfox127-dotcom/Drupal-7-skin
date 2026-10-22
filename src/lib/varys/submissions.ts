@@ -15,6 +15,7 @@
  */
 
 import type { VarysFilledField } from './filled';
+import type { CarriedFills } from './suggestionFill';
 import { bareHost, type ButtonKind, type PageState, type RawFormValues, type VarysSubmitMessage } from './pageState';
 
 // ------------------------------------------------------------------------------------- copy
@@ -214,6 +215,14 @@ export interface OpenedForm {
    * from this form was its Save. Never sent to Varys.
    */
   raw: RawFormValues | null;
+  /**
+   * The suggestions panel's live fills (their Undo records, the keep-address note, whether a
+   * heading was inserted), so the panel on a re-render of this same form can take them up
+   * again: a Preview, or a save Drupal rejected, re-renders the form with the fills still in
+   * it. They go with the record, so a save that goes through drops them. Never sent to Varys.
+   * Absent on a record no panel has written to, or from a version before the panel had them.
+   */
+  fills?: CarriedFills | null;
 }
 
 export type FormEvent =
@@ -222,7 +231,9 @@ export type FormEvent =
   /** The tab is now at `url`. */
   | { kind: 'navigated'; url: string }
   /** A save from this form went through. */
-  | { kind: 'saved' };
+  | { kind: 'saved' }
+  /** The panel on the form at `url` has these fills now (varysCarryFills). */
+  | { kind: 'fills'; url: string; formPath: string; fills: CarriedFills | null };
 
 const originOf = (url: string): string | null => parse(url)?.origin ?? null;
 
@@ -236,9 +247,16 @@ const originOf = (url: string): string | null => parse(url)?.origin ?? null;
  *   detour to log in, on the site's /user pages or another site's sign-on: nothing on the
  *   site changed meanwhile, and the person comes back to the form to save again.
  * - saved: gone. The page has a new before now.
+ * - fills: set on the record when it is for the same form, and nothing otherwise. Never a
+ *   record of its own: one without a before would win as the form's first.
  */
 export function nextOpenedForm(current: OpenedForm | undefined, event: FormEvent): OpenedForm | undefined {
   if (event.kind === 'saved') return undefined;
+
+  if (event.kind === 'fills') {
+    if (!current || current.origin !== originOf(event.url) || current.formPath !== event.formPath) return current;
+    return { ...current, fills: event.fills };
+  }
 
   if (event.kind === 'navigated') {
     if (!current) return undefined;
@@ -252,6 +270,15 @@ export function nextOpenedForm(current: OpenedForm | undefined, event: FormEvent
   if (origin === null) return current;
   if (current && current.origin === origin && current.formPath === event.formPath) return current;
   return { origin, formPath: event.formPath, before: event.before, raw: event.raw };
+}
+
+/**
+ * The fills the panel left on this tab's record of the form at `url` (path `formPath`), or
+ * null: there is no record, it is some other form's, or no panel wrote any.
+ */
+export function carriedFillsFor(opened: OpenedForm | undefined, url: string, formPath: string): CarriedFills | null {
+  if (!opened || opened.origin !== originOf(url) || opened.formPath !== formPath) return null;
+  return opened.fills ?? null;
 }
 
 /**

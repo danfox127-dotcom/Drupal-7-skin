@@ -8,6 +8,8 @@
  * GET /api/extension/suggestions and POST /api/extension/suggestions/generate.
  */
 
+import type { CarriedFills } from './suggestionFill';
+
 /** One side of the comparison: what the page has, or what Varys suggests. */
 export type ScaffoldSide = {
   meta_title: string | null;
@@ -42,6 +44,23 @@ export interface VarysSuggestionsRequest {
   type: 'varysSuggestions' | 'varysGenerateSuggestions';
   /** Absolute public address of the page being edited. Never the edit form's. */
   pageUrl: string;
+}
+
+/**
+ * The panel's live fills, for the worker to keep with the form as it first opened, so a
+ * Preview or a rejected save does not lose their Undo (ruling R18). No reply. `formPath` is
+ * the edit form's own path; the worker keeps them only for that form, in that tab.
+ */
+export interface VarysCarryFillsMessage {
+  type: 'varysCarryFills';
+  formPath: string;
+  fills: CarriedFills | null;
+}
+
+/** What the panel on this form had before a re-render. The reply is the CarriedFills, or null. */
+export interface VarysCarriedFillsRequest {
+  type: 'varysCarriedFills';
+  formPath: string;
 }
 
 /** Shown when Insert finds nowhere to put the heading. */

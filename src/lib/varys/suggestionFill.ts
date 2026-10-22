@@ -104,6 +104,62 @@ export function fieldFor(kind: FillKind, fields: FieldDescriptor[]): FieldDescri
   }
 }
 
+/** What separates a search title from the site's name in Drupal's metatag pattern. */
+const TAIL_SEPARATOR = ' | ';
+
+/**
+ * The trailing ` | <segment>` of a search title, when that segment holds a token: the
+ * metatag module's stock default is `[node:title] | [site:name]`, and its `| [site:name]` is
+ * how such a site puts its name on every search result. Empty otherwise. A LITERAL tail is
+ * not returned: Varys serves a suggestion without the site's name precisely because a site
+ * like that appends its name itself, so keeping a literal one would name it twice.
+ */
+function tokenTail(current: string): string {
+  const text = current.trim();
+  const at = text.lastIndexOf(TAIL_SEPARATOR);
+  if (at <= 0) return '';
+  const tail = text.slice(at);
+  return TOKEN.test(tail.slice(TAIL_SEPARATOR.length)) ? tail : '';
+}
+
+/**
+ * What Use would write for a suggestion of this kind: the suggestion itself, except that a
+ * search title keeps the field's token tail after it (see `tokenTail`, ruling R16), so the
+ * live title does not lose the site's name. The panel shows this as "Varys suggests", so
+ * what is on screen is what Use writes.
+ */
+export function valueToFill(kind: FillKind, value: string, fields: FieldDescriptor[]): string {
+  if (kind !== 'meta_title') return value;
+  const field = findField(fields, META_TITLE);
+  const tail = field ? tokenTail(String(readValue(field))) : '';
+  if (tail === '' || value.trimEnd().endsWith(tail)) return value;
+  return value.trimEnd() + tail;
+}
+
+export type DescriptionPlacement = 'summary_followed' | 'summary_only' | 'override_over_summary' | 'override_only';
+
+/**
+ * Where a suggested description goes, for the panel to say in words: Summary, which the
+ * override follows (`summary_followed`); Summary on a form with no override box
+ * (`summary_only`); an override holding text of its own on a form that also has Summary,
+ * which it overrides (`override_over_summary`); or the override otherwise: empty, holding
+ * another token, or on a form without Summary (`override_only`). Null when neither exists.
+ */
+export function descriptionPlacement(fields: FieldDescriptor[]): DescriptionPlacement | null {
+  const override = findField(fields, META_DESCRIPTION);
+  switch (descriptionTarget(fields)) {
+    case 'summary':
+      return override ? 'summary_followed' : 'summary_only';
+    case 'override': {
+      const text = String(readValue(override!)).trim();
+      const own = text !== '' && !TOKEN.test(text);
+      return own && findField(fields, SUMMARY) ? 'override_over_summary' : 'override_only';
+    }
+    default:
+      return null;
+  }
+}
+
 /**
  * The page's current address as an alias the box can hold: percent-decoded, no leading
  * slash. Null when there is nothing usable, which includes `/node/N`: that is where a page
@@ -162,7 +218,8 @@ function aliasInput(alias: FieldDescriptor): HTMLInputElement | undefined {
 }
 
 /**
- * Writes `value` into the field a suggestion of this kind belongs in.
+ * Writes `value` into the field a suggestion of this kind belongs in: for a search title,
+ * with the field's token tail kept after it (`valueToFill`).
  *
  * Returns what Undo needs, or null when nothing was filled: the form has no such field, the
  * title fill was refused (below), or the page refused a write (whatever was written is put
@@ -192,13 +249,15 @@ export function fillOne(
   const previous = String(readValue(field));
   // Read before anything is written, in case the page reacts to the title or the untick.
   const previousAlias = alias ? String(readValue(alias)) : null;
-  if (!writeValue(field, value)) return null;
+  if (!writeValue(field, valueToFill(kind, value, fields))) return null;
 
   const record: FillRecord = {
     kind,
     machineName: field.machineName,
     previous,
-    filled: value,
+    // What the field holds now, which is what Undo is offered on: the suggestion with any
+    // token tail kept (valueToFill), as the control took it.
+    filled: String(readValue(field)),
     pathautoWasTicked: false,
     previousAlias,
     aliasFilled: null,
@@ -301,4 +360,77 @@ export function undoFill(record: FillRecord, fields: FieldDescriptor[]): boolean
 export function letAddressChange(fields: FieldDescriptor[]): void {
   const pathauto = findField(fields, PATHAUTO);
   if (pathauto) writeValue(pathauto, true);
+}
+
+// ------------------------------------------------------- carried through a re-render (R18)
+
+/**
+ * The panel's live fills, kept by the worker with the form as it first opened (`OpenedForm`
+ * in submissions.ts) while the tab stays on that form. Drupal's Preview and a save it rejects
+ * both re-render the same form with what was submitted, so the fills are still in the form;
+ * this lets the panel on the re-render still offer their Undo, the keep-address note and the
+ * "filled from Varys" marks. A save that goes through, or leaving the form, drops it.
+ */
+export interface CarriedFills {
+  records: FillRecord[];
+  /** The panel was showing "Using this title keeps the current web address." */
+  addressKept: boolean;
+  /** A heading was inserted from the panel. */
+  headings: boolean;
+}
+
+/** What the panel on a re-render starts with. */
+export interface AdoptedFills {
+  records: Partial<Record<FillKind, FillRecord>>;
+  addressKept: boolean;
+  headings: boolean;
+}
+
+const KINDS: readonly FillKind[] = ['meta_title', 'meta_description', 'title'];
+const isStringOrNull = (v: unknown) => v === null || typeof v === 'string';
+
+/**
+ * Whether a stored value is a FillRecord. It comes back from the worker's session storage,
+ * which can outlive the version of the extension that wrote it, so it is checked before it
+ * is trusted with Undo.
+ */
+function isFillRecord(v: unknown): v is FillRecord {
+  if (typeof v !== 'object' || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return KINDS.includes(r.kind as FillKind) && typeof r.machineName === 'string'
+    && typeof r.previous === 'string' && typeof r.filled === 'string'
+    && typeof r.pathautoWasTicked === 'boolean' && typeof r.aliasWasDisabled === 'boolean'
+    && isStringOrNull(r.previousAlias) && isStringOrNull(r.aliasFilled);
+}
+
+/**
+ * Takes up the fills carried from before a re-render of this same form.
+ *
+ * A record is adopted only while its field still holds exactly what was filled (`canUndo`):
+ * anything else in the field is the person's, or the form is not the one the fill was made
+ * in. Each adopted record's field is marked filled again; `headings` is marked again when it
+ * had been. The keep-address note comes back only while pathauto is still off, since that is
+ * what it describes. Anything that is not a carried record adopts nothing.
+ */
+export function adoptCarriedFills(carried: unknown, fields: FieldDescriptor[]): AdoptedFills {
+  const adopted: AdoptedFills = { records: {}, addressKept: false, headings: false };
+  if (typeof carried !== 'object' || carried === null) return adopted;
+  const c = carried as Record<string, unknown>;
+  if (!Array.isArray(c.records) || typeof c.addressKept !== 'boolean' || typeof c.headings !== 'boolean') {
+    return adopted;
+  }
+
+  for (const record of c.records) {
+    if (!isFillRecord(record) || adopted.records[record.kind] || !canUndo(record, fields)) continue;
+    adopted.records[record.kind] = record;
+    markFilled(record.kind);
+  }
+
+  const pathauto = findField(fields, PATHAUTO);
+  adopted.addressKept = c.addressKept && pathauto !== undefined && readValue(pathauto) === false;
+  if (c.headings) {
+    adopted.headings = true;
+    markFilled('headings');
+  }
+  return adopted;
 }

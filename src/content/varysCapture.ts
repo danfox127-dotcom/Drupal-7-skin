@@ -72,15 +72,25 @@ function isRawFormValues(v: unknown): v is RawFormValues {
  * The alias a page has when its form's alias box is empty because pathauto owns it, read off
  * the page's own address instead. Null when the page has none: an add form (no page yet), or
  * an address that is only /node/N, which is what Drupal serves for a node with no alias.
+ *
+ * Percent-decoded, as the box itself would hold it: an address escapes `é` and spaces, an
+ * alias does not, and the before and after of a save must not differ by the escaping alone.
+ * A stray `%` that is not an escape leaves the path as it stands.
  */
 function aliasFromAddress(): string | null {
   const address = publicUrlFor(window.location, document);
   if (address === null) return null;
+  let pathname: string;
   try {
-    const { pathname } = new URL(address);
-    return /^\/node\/\d+\/?$/.test(pathname) ? null : pathname;
+    pathname = new URL(address).pathname;
   } catch {
     return null;
+  }
+  if (/^\/node\/\d+\/?$/.test(pathname)) return null;
+  try {
+    return decodeURIComponent(pathname);
+  } catch {
+    return pathname;
   }
 }
 

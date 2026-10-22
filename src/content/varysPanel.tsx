@@ -5,13 +5,16 @@ import { nodeIdFromPath } from '../lib/extractPublicHtml';
 import { discoverSchema, findNodeForm, type FieldDescriptor } from '../lib/formSchema';
 import { readValue } from '../lib/fieldBinding';
 import {
-  canUndo, descriptionTarget, fieldFor, fillOne, letAddressChange, titleFillWouldLoseAddress, undoFill,
-  type FillKind, type FillRecord,
+  adoptCarriedFills, canUndo, descriptionPlacement, fieldFor, fillOne, letAddressChange, titleFillWouldLoseAddress,
+  undoFill, valueToFill,
+  type AdoptedFills, type CarriedFills, type FillKind, type FillRecord,
 } from '../lib/varys/suggestionFill';
 import { markFilled } from '../lib/varys/filled';
+import { fetchSitePage, resolvePublicAddress } from '../lib/varys/publicAddress';
 import {
   SUGGESTIONS_ERROR_COPY, SUGGESTIONS_NO_CURSOR_COPY,
-  type SuggestionsAnswer, type SuggestionsReply, type VarysSuggestionsRequest,
+  type SuggestionsAnswer, type SuggestionsReply, type VarysCarriedFillsRequest, type VarysCarryFillsMessage,
+  type VarysSuggestionsRequest,
 } from '../lib/varys/suggestions';
 import { ACTION_EXPIRED_COPY, ACTION_NOT_CONNECTED_COPY, ACTION_UNREACHABLE_COPY } from '../lib/varys/submissions';
 import { SuggestionsPanel, type PanelBody, type SuggestionRow } from '../components/varys/SuggestionsPanel';
@@ -51,8 +54,10 @@ const COPY_FAILED_COPY = "Couldn't copy. Select the heading and copy it instead.
 const FILL_FAILED_COPY = "This field couldn't be filled, so nothing changed.";
 const NO_ADDRESS_COPY = "Varys can't tell this page's current web address, so it won't change the title here. "
   + 'Change it by hand if you need to.';
-const INTO_SUMMARY_COPY = 'Goes into Summary, which is also the search description.';
-const INTO_OVERRIDE_COPY = 'Goes into the search description field, which overrides Summary on this page.';
+const INTO_SUMMARY_FOLLOWED_COPY = 'Goes into Summary, which is also the search description.';
+const INTO_SUMMARY_ONLY_COPY = 'Goes into Summary.';
+const INTO_OVERRIDE_OVER_SUMMARY_COPY = 'Goes into the search description field, which overrides Summary on this page.';
+const INTO_OVERRIDE_ONLY_COPY = 'Goes into the search description field.';
 
 /** The body's textarea, by name: its id is the one its rich editor is registered under. */
 const BODY_FIELD = 'textarea[name="body[und][0][value]"]';
@@ -207,23 +212,47 @@ function escapeHtml(text: string): string {
 
 const same = (a: string, b: string) => a.trim() === b.trim();
 
-/** Says which field a suggested description goes into, since the form has two that can be it. */
+/**
+ * Says which field a suggested description goes into, since the form has two that can be it,
+ * and claims only what is true of this form: that Summary is also the search description only
+ * where the override follows it, and that the override overrides Summary only where it holds
+ * its own text and there is a Summary to override.
+ */
 function whereDescriptionGoes(fields: FieldDescriptor[]): string | null {
-  switch (descriptionTarget(fields)) {
-    case 'summary': return INTO_SUMMARY_COPY;
-    case 'override': return INTO_OVERRIDE_COPY;
+  switch (descriptionPlacement(fields)) {
+    case 'summary_followed': return INTO_SUMMARY_FOLLOWED_COPY;
+    case 'summary_only': return INTO_SUMMARY_ONLY_COPY;
+    case 'override_over_summary': return INTO_OVERRIDE_OVER_SUMMARY_COPY;
+    case 'override_only': return INTO_OVERRIDE_ONLY_COPY;
     default: return null;
   }
 }
 
-/** The page's current address as a path, for keeping it when the title changes. Never a full URL. */
-function currentAliasPath(): string | null {
-  const address = publicUrlFor(window.location, document);
-  if (address === null) return null;
+/** The page's address as a path, for keeping it when the title changes. Never a full URL. */
+function pathOf(address: string): string | null {
   try {
     return new URL(address).pathname;
   } catch {
     return null;
+  }
+}
+
+/** What the panel had on this form before a re-render, as the worker kept it; null for none. */
+async function askCarried(formPath: string): Promise<unknown> {
+  try {
+    return await chrome.runtime.sendMessage({ type: 'varysCarriedFills', formPath } satisfies VarysCarriedFillsRequest);
+  } catch {
+    return null;
+  }
+}
+
+/** Hands the panel's live fills to the worker to keep with the form (see CarriedFills). Not waited on. */
+function carryFills(formPath: string, fills: CarriedFills): void {
+  try {
+    Promise.resolve(chrome.runtime.sendMessage({ type: 'varysCarryFills', formPath, fills } satisfies VarysCarryFillsMessage))
+      .catch(() => undefined);
+  } catch {
+    // No worker to keep them: a re-render then starts without them, as it always did.
   }
 }
 
@@ -321,15 +350,22 @@ function usePlacement(deps: unknown[]): Placement {
 
 // ------------------------------------------------------------------------------ the panel
 
-function VarysPanel({ pageUrl, first, onClose }: {
+function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }: {
   pageUrl: string;
+  /** The page's address as a path, which a title fill keeps in the alias box. */
+  currentAlias: string | null;
+  /** The edit form's own path, under which the worker keeps this panel's fills. */
+  formPath: string;
+  /** Fills taken up from before a re-render of this same form (see adoptCarriedFills). */
+  adopted: AdoptedFills;
   first: Phase;
   onClose: () => void;
 }) {
   const [phase, setPhase] = useState<Phase>(first);
-  const [records, setRecords] = useState<Partial<Record<FillKind, FillRecord>>>({});
+  const [records, setRecords] = useState<Partial<Record<FillKind, FillRecord>>>(adopted.records);
   const [notes, setNotes] = useState<Partial<Record<FillKind, string>>>({});
-  const [addressKept, setAddressKept] = useState(false);
+  const [addressKept, setAddressKept] = useState(adopted.addressKept);
+  const [headingsInserted, setHeadingsInserted] = useState(adopted.headings);
   const [headingMessage, setHeadingMessage] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
   // Bumped by any edit in the page, so "Now" and Undo follow what the person types.
@@ -340,7 +376,6 @@ function VarysPanel({ pageUrl, first, onClose }: {
   const phaseNow = useRef(phase);
   phaseNow.current = phase;
   const fieldsCache = useRef<FieldDescriptor[] | null>(null);
-  const currentAlias = useRef(currentAliasPath());
 
   /**
    * The form's fields, read once. The controls are re-found by name whenever Drupal's AJAX
@@ -364,6 +399,16 @@ function VarysPanel({ pageUrl, first, onClose }: {
       document.removeEventListener('change', edited, true);
     };
   }, []);
+
+  // Whatever the fills are now, the worker keeps them with the form, so a Preview or a save
+  // Drupal rejects (both re-render this form with the fills still in it) does not lose them.
+  useEffect(() => {
+    carryFills(formPath, {
+      records: Object.values(records).filter((r): r is FillRecord => r !== undefined),
+      addressKept,
+      headings: headingsInserted,
+    });
+  }, [formPath, records, addressKept, headingsInserted]);
 
   // A fill the person has since edited is theirs: its Undo goes, and Use comes back.
   useEffect(() => {
@@ -472,12 +517,12 @@ function VarysPanel({ pageUrl, first, onClose }: {
 
     // Read afresh: a field Drupal's AJAX has added since is found.
     fieldsCache.current = null;
-    const record = fillOne(kind, value, fields(), { currentAlias: currentAlias.current });
+    const record = fillOne(kind, value, fields(), { currentAlias });
     setNotes(prev => ({ ...prev, [kind]: record ? undefined : FILL_FAILED_COPY }));
     if (!record) return;
     setRecords(prev => ({ ...prev, [kind]: record }));
     if (kind === 'title' && record.pathautoWasTicked) setAddressKept(true);
-  }, [phase, records, fields]);
+  }, [phase, records, fields, currentAlias]);
 
   const undo = useCallback((kind: FillKind) => {
     const record = records[kind];
@@ -528,6 +573,7 @@ function VarysPanel({ pageUrl, first, onClose }: {
     switch (reply?.result) {
       case 'inserted':
         markFilled('headings');
+        setHeadingsInserted(true);
         setHeadingMessage(INSERTED_COPY);
         return;
       case 'no-cursor':
@@ -554,7 +600,9 @@ function VarysPanel({ pageUrl, first, onClose }: {
 
     const all = fields();
     const rows = ROWS.map(({ kind, label, pick }): SuggestionRow => {
-      const suggested = pick(answer.suggested);
+      // What Use would write, which for a search title keeps the field's token tail.
+      const offered = pick(answer.suggested);
+      const suggested = offered === null ? null : valueToFill(kind, offered, all);
       const field = fieldFor(kind, all);
       const now = field ? String(readValue(field)) : null;
       const record = records[kind];
@@ -564,7 +612,7 @@ function VarysPanel({ pageUrl, first, onClose }: {
       if (now === null || suggested === null || same(now, suggested)) {
         return { kind, label, now, suggested, action: 'none', where, note: notes[kind] };
       }
-      if (kind === 'title' && titleFillWouldLoseAddress(all, { currentAlias: currentAlias.current })) {
+      if (kind === 'title' && titleFillWouldLoseAddress(all, { currentAlias })) {
         return { kind, label, now, suggested, action: 'blocked', where, note: NO_ADDRESS_COPY };
       }
       return { kind, label, now, suggested, action: 'use', where, note: notes[kind] };
@@ -618,21 +666,40 @@ function VarysPanel({ pageUrl, first, onClose }: {
  */
 export async function startVarysPanel(editorsReady: () => Promise<unknown>): Promise<void> {
   try {
-    if (nodeIdFromPath(window.location.pathname) === null) return;
+    const formPath = window.location.pathname;
+    if (nodeIdFromPath(formPath) === null) return;
     if (!(await varysIsConnected())) return;
-    const pageUrl = publicUrlFor(window.location, document);
-    if (pageUrl === null) return;
+    const address = publicUrlFor(window.location, document);
+    if (address === null) return;
 
-    const [reply] = await Promise.all([
+    // Bounded by the wait itself; a fault in it only means the editors are as ready as they get.
+    const editors = editorsReady().catch(() => undefined);
+    // A form whose View tab was not found names its page /node/N, which Varys never crawled:
+    // the page itself says where it lives (ruling R17). Failing that, /node/N as before.
+    const pageUrl = await resolvePublicAddress(address, fetchSitePage);
+
+    const [reply, carried] = await Promise.all([
       askWorker({ type: 'varysSuggestions', pageUrl }),
-      // Bounded by the wait itself; a fault in it only means the editors are as ready as they get.
-      editorsReady().catch(() => undefined),
+      askCarried(formPath),
+      editors,
     ]);
+    // Taken up whether or not there is a panel this time: the marks are what the next save
+    // reports, and a Preview's fills are still in the form (ruling R18).
+    const adopted = adoptCarriedFills(carried, discoverSchema()?.fields ?? []);
     if (reply === null) return;
     const first = initialPhase(reply, pageUrl);
     if (first === null) return;
 
-    const overlay = injectOverlay(<VarysPanel pageUrl={pageUrl} first={first} onClose={() => overlay.unmount()} />);
+    const overlay = injectOverlay(
+      <VarysPanel
+        pageUrl={pageUrl}
+        currentAlias={pathOf(pageUrl)}
+        formPath={formPath}
+        adopted={adopted}
+        first={first}
+        onClose={() => overlay.unmount()}
+      />,
+    );
   } catch (err) {
     console.warn('[D7 Studio] Could not show Varys suggestions', err);
   }

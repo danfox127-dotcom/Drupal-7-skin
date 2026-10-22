@@ -6,9 +6,12 @@
  * reads `filledFields()` at Save and sends the list with the save, and Varys shows it beside
  * the change as "Filled from Varys: search title". Only the panel marks or unmarks.
  *
- * Plain module state, with no extension API: it lives as long as the page does, which is as
- * long as the form it describes. The panel and the capture are in the same content script, so
- * they share it. A save reloads the page and the list starts empty again.
+ * Plain module state, with no extension API: it lives as long as the page does. The panel and
+ * the capture are in the same content script, so they share it. Every submit reloads the page
+ * and the list starts empty; when the reload is the same form re-rendered (a Preview, or a
+ * save Drupal rejected), the panel marks again the fills still in it, which the worker kept
+ * for it (`adoptCarriedFills` in suggestionFill.ts). After a save that goes through, nothing
+ * is kept, and the reopened form starts with none.
  *
  * Varys keeps only these four (it drops anything else), so this is their whole vocabulary.
  */

@@ -485,6 +485,14 @@ test.describe('readRawValues', () => {
       expect(await aliasWith(page, '/node/23110/edit', VIEW(`${HOST}/news/foo/bar`))).toBe('/news/foo/bar');
     });
 
+    test('takes it percent-decoded, as the alias box would hold it', async ({ page }) => {
+      // The View tab's href is an address, so it is escaped; the alias box holds the text.
+      expect(await aliasWith(page, '/node/23110/edit', VIEW('/conditions/caf%C3%A9-au-lait%20spots')))
+        .toBe('/conditions/café-au-lait spots');
+      // A stray "%" that is not an escape is read as it stands.
+      expect(await aliasWith(page, '/node/23110/edit', VIEW('/news/100%25-sure%zz'))).toBe('/news/100%25-sure%zz');
+    });
+
     test('leaves it empty when the page has no alias, only /node/N', async ({ page }) => {
       expect(await aliasWith(page, '/node/23110/edit', VIEW('/node/23110'))).toBe('');
       // No View tab at all: publicUrlFor falls back to /node/<id>.

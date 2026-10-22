@@ -731,3 +731,184 @@ test.describe('undo', () => {
     expect(r).toEqual({ gone: false, undone: false });
   });
 });
+
+// ------------------------------------------------- a search title and the site's own name
+
+test.describe("a search title and the site's own name (ruling R16)", () => {
+  /**
+   * Drupal's metatag module ships the search title as `[node:title] | [site:name]`. Varys serves
+   * its suggestion without the site's name, so writing it over the whole field would drop the
+   * name from the live title. A token tail stays; a literal one goes, since the site appends its
+   * own name there itself.
+   */
+  test('a token tail is kept after the suggestion, and that is what Undo is offered on', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      A.resetFilled();
+      const f = form({ 'metatags[und][title][value]': '[node:title] | [site:name]' });
+      const shown = A.valueToFill('meta_title', 'New Title', f);
+      const rec = A.fillOne('meta_title', 'New Title', f);
+      return {
+        shown,
+        rec,
+        now: A.readValue(A.findField(f, 'metatags[und][title][value]')),
+        canUndo: A.canUndo(rec, f),
+        marked: A.filledFields(),
+      };
+    });
+    expect(r.shown).toBe('New Title | [site:name]');
+    expect(r.now).toBe('New Title | [site:name]');
+    expect(r.rec).toMatchObject({ previous: '[node:title] | [site:name]', filled: 'New Title | [site:name]' });
+    expect(r.canUndo).toBe(true);
+    expect(r.marked).toEqual(['meta_title']);
+  });
+
+  test('Undo puts the token pattern back', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      const f = form({ 'metatags[und][title][value]': '[node:title] | [site:name]' });
+      const rec = A.fillOne('meta_title', 'New Title', f);
+      const undone = A.undoFill(rec, f);
+      return { undone, now: A.readValue(A.findField(f, 'metatags[und][title][value]')) };
+    });
+    expect(r).toEqual({ undone: true, now: '[node:title] | [site:name]' });
+  });
+
+  test('a literal tail is not kept', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      const f = form({ 'metatags[und][title][value]': 'Old Title | ColumbiaDoctors' });
+      const rec = A.fillOne('meta_title', 'New Title', f);
+      return { filled: rec.filled, now: A.readValue(A.findField(f, 'metatags[und][title][value]')) };
+    });
+    expect(r).toEqual({ filled: 'New Title', now: 'New Title' });
+  });
+
+  test('a field with no tail, or a token with no separator, takes the suggestion as it is', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      const plain = form({ 'metatags[und][title][value]': 'Old Title' });
+      const a = A.fillOne('meta_title', 'New Title', plain).filled;
+      const empty = form({ 'metatags[und][title][value]': '' });
+      const b = A.fillOne('meta_title', 'New Title', empty).filled;
+      const bare = form({ 'metatags[und][title][value]': '[node:title]' });
+      const c = A.fillOne('meta_title', 'New Title', bare).filled;
+      return [a, b, c];
+    });
+    expect(r).toEqual(['New Title', 'New Title', 'New Title']);
+  });
+
+  test('only the LAST segment counts, and a suggestion already ending in the tail is not doubled', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      // One form at a time: form() replaces the page's form, and fields are found by name.
+      const literalLast = form({ 'metatags[und][title][value]': '[node:title] | [site:name] | Columbia' });
+      const a = A.valueToFill('meta_title', 'New', literalLast);
+      const tokenLast = form({ 'metatags[und][title][value]': 'Old | Section | [site:name]' });
+      return [a, A.valueToFill('meta_title', 'New', tokenLast), A.valueToFill('meta_title', 'New | [site:name]', tokenLast)];
+    });
+    expect(r).toEqual(['New', 'New | [site:name]', 'New | [site:name]']);
+  });
+
+  test('the page title and the description are written as they are, whatever they hold', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      const f = form({
+        'title_field[und][0][value]': 'Old | [site:name]',
+        'metatags[und][description][value]': 'Old | [site:name]',
+      });
+      return [A.valueToFill('title', 'New', f), A.valueToFill('meta_description', 'New', f)];
+    });
+    expect(r).toEqual(['New', 'New']);
+  });
+});
+
+// ------------------------------------------------------- where a description goes, in words
+
+test.describe('descriptionPlacement', () => {
+  test('each of the four cases', async ({ page }) => {
+    const r = await run(page, (A, form) => ({
+      summaryFollowed: A.descriptionPlacement(form({
+        'metatags[und][description][value]': '[node:summary]', 'field_summary[und][0][value]': 'S',
+      })),
+      summaryOnly: A.descriptionPlacement(form({ 'field_summary[und][0][value]': 'S' })),
+      overrideOverSummary: A.descriptionPlacement(form({
+        'metatags[und][description][value]': 'Own', 'field_summary[und][0][value]': 'S',
+      })),
+      overrideEmpty: A.descriptionPlacement(form({
+        'metatags[und][description][value]': '', 'field_summary[und][0][value]': 'S',
+      })),
+      overrideOtherToken: A.descriptionPlacement(form({
+        'metatags[und][description][value]': '[node:body]', 'field_summary[und][0][value]': 'S',
+      })),
+      overrideNoSummary: A.descriptionPlacement(form({ 'metatags[und][description][value]': 'Own' })),
+      neither: A.descriptionPlacement(form({ title: 'T' })),
+    }));
+    expect(r).toEqual({
+      summaryFollowed: 'summary_followed',
+      summaryOnly: 'summary_only',
+      overrideOverSummary: 'override_over_summary',
+      overrideEmpty: 'override_only',
+      overrideOtherToken: 'override_only',
+      overrideNoSummary: 'override_only',
+      neither: null,
+    });
+  });
+});
+
+// ------------------------------------------------- fills carried through a re-render (R18)
+
+test.describe('adoptCarriedFills', () => {
+  test('a record is adopted, and its field marked, only while the field still holds the fill', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      A.resetFilled();
+      const before = form({ 'metatags[und][title][value]': 'Old', 'title_field[und][0][value]': 'T' });
+      const meta = A.fillOne('meta_title', 'New', before);
+      const title = A.fillOne('title', 'Better', before);
+      A.resetFilled();
+      // The re-render: the search title still holds the fill, the title was edited by hand.
+      const after = form({ 'metatags[und][title][value]': 'New', 'title_field[und][0][value]': 'Better, by hand' });
+      const adopted = A.adoptCarriedFills({ records: [meta, title], addressKept: false, headings: false }, after);
+      return { kinds: Object.keys(adopted.records), meta: adopted.records.meta_title, marked: A.filledFields() };
+    });
+    expect(r.kinds).toEqual(['meta_title']);
+    expect(r.meta).toMatchObject({ previous: 'Old', filled: 'New' });
+    expect(r.marked).toEqual(['meta_title']);
+  });
+
+  test('an adopted record undoes as it would have before the re-render', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      const before = form({ 'metatags[und][title][value]': 'Old' });
+      const meta = A.fillOne('meta_title', 'New', before);
+      const after = form({ 'metatags[und][title][value]': 'New' });
+      const adopted = A.adoptCarriedFills({ records: [meta], addressKept: false, headings: false }, after);
+      const undone = A.undoFill(adopted.records.meta_title, after);
+      return { undone, now: A.readValue(A.findField(after, 'metatags[und][title][value]')), marked: A.filledFields() };
+    });
+    expect(r).toEqual({ undone: true, now: 'Old', marked: [] });
+  });
+
+  test('the keep-address note comes back only while pathauto is still off; headings come back if marked', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      A.resetFilled();
+      const off = A.adoptCarriedFills({ records: [], addressKept: true, headings: true },
+        form({ 'path[pathauto]': false, 'path[alias]': 'a/b' }));
+      const marked = A.filledFields();
+      A.resetFilled();
+      const on = A.adoptCarriedFills({ records: [], addressKept: true, headings: false },
+        form({ 'path[pathauto]': true, 'path[alias]': 'a/b' }));
+      return { off: off.addressKept, headings: off.headings, marked, on: on.addressKept, after: A.filledFields() };
+    });
+    expect(r).toEqual({ off: true, headings: true, marked: ['headings'], on: false, after: [] });
+  });
+
+  test('nothing carried, or something that is not a carried record, adopts nothing', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      A.resetFilled();
+      const f = form({ 'metatags[und][title][value]': 'New' });
+      const bogus = { kind: 'meta_title', machineName: 'metatags[und][title][value]', filled: 'New' };
+      return [
+        A.adoptCarriedFills(null, f),
+        A.adoptCarriedFills({ records: [bogus], addressKept: false, headings: false }, f),
+        A.adoptCarriedFills({ records: 'no', addressKept: true, headings: true }, f),
+        A.filledFields(),
+      ];
+    });
+    const empty = { records: {}, addressKept: false, headings: false };
+    expect(r).toEqual([empty, empty, empty, []]);
+  });
+});

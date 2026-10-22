@@ -2,8 +2,8 @@ import { test, expect } from '@playwright/test';
 import type { PageState } from '../src/lib/varys/pageState';
 import {
   EXPIRED_COPY, QUEUE_MAX_ENTRIES, UNREACHABLE_COPY, UNTRACKED_COPY,
-  failureOf, isTrackedSite, knownUntracked, mergeCarriedBefore, nextOpenedForm, noteLoading, noticeForResult,
-  outcomeOfNavigation, outcomeOfTimeout, outcomeWhenLoaded, pruneQueue, queueVerdict, storedNoticeFor,
+  carriedFillsFor, failureOf, isTrackedSite, knownUntracked, mergeCarriedBefore, nextOpenedForm, noteLoading,
+  noticeForResult, outcomeOfNavigation, outcomeOfTimeout, outcomeWhenLoaded, pruneQueue, queueVerdict, storedNoticeFor,
   toSaveRequest,
   type OpenedForm, type PendingSubmit, type QueuedSave,
 } from '../src/lib/varys/submissions';
@@ -215,6 +215,60 @@ test.describe('the before a form first opened with', () => {
     const merged = mergeCarriedBefore(opened, pendingNew());
     expect('before' in merged.payload).toBe(true);
     expect(merged.payload.before).toBeNull();
+  });
+});
+
+test.describe('the panel\'s fills, carried with the form as it first opened (ruling R18)', () => {
+  const OPENED = (url = FORM, formPath = '/node/23110/edit') =>
+    ({ kind: 'opened' as const, url, formPath, before: state('Original'), raw: null });
+  const FILLS = {
+    records: [{
+      kind: 'meta_title' as const, machineName: 'metatags[und][title][value]', previous: '', filled: 'New',
+      pathautoWasTicked: false, previousAlias: null, aliasFilled: null, aliasWasDisabled: false,
+    }],
+    addressKept: false,
+    headings: true,
+  };
+  const carry = (url = FORM, formPath = '/node/23110/edit', fills: typeof FILLS | null = FILLS) =>
+    ({ kind: 'fills' as const, url, formPath, fills });
+
+  test('a Preview or a rejected save keeps them, and the re-render announcing itself does not replace them', () => {
+    let opened = nextOpenedForm(nextOpenedForm(undefined, OPENED()), carry());
+    expect(opened?.fills).toEqual(FILLS);
+    // Preview (or a rejected save) re-renders the same path, and the re-render announces itself.
+    opened = nextOpenedForm(opened, { kind: 'navigated', url: FORM });
+    opened = nextOpenedForm(opened, OPENED());
+    expect(opened?.fills).toEqual(FILLS);
+    expect(opened?.before).toEqual(state('Original'));
+  });
+
+  test('a save that goes through, or leaving the form, drops them with the record', () => {
+    const opened = nextOpenedForm(nextOpenedForm(undefined, OPENED()), carry());
+    expect(nextOpenedForm(opened, { kind: 'saved' })).toBeUndefined();
+    expect(nextOpenedForm(opened, { kind: 'navigated', url: `${HOST}/news/foo` })).toBeUndefined();
+  });
+
+  test('fills for another form, or with no form recorded, change nothing', () => {
+    const opened = nextOpenedForm(undefined, OPENED());
+    expect(nextOpenedForm(opened, carry(`${HOST}/node/5/edit`, '/node/5/edit'))).toBe(opened);
+    expect(nextOpenedForm(opened, carry('https://nursing.columbia.edu/node/23110/edit'))).toBe(opened);
+    // Not a record of its own: an empty one would win as the form's first, with no before.
+    expect(nextOpenedForm(undefined, carry())).toBeUndefined();
+  });
+
+  test('they are handed back only to the same form, in the same site', () => {
+    const opened = nextOpenedForm(nextOpenedForm(undefined, OPENED()), carry());
+    expect(carriedFillsFor(opened, FORM, '/node/23110/edit')).toEqual(FILLS);
+    expect(carriedFillsFor(opened, `${HOST}/node/5/edit`, '/node/5/edit')).toBeNull();
+    expect(carriedFillsFor(opened, 'https://nursing.columbia.edu/node/23110/edit', '/node/23110/edit')).toBeNull();
+    expect(carriedFillsFor(undefined, FORM, '/node/23110/edit')).toBeNull();
+    // A record no panel wrote to, or one stored before records carried fills.
+    expect(carriedFillsFor(nextOpenedForm(undefined, OPENED()), FORM, '/node/23110/edit')).toBeNull();
+  });
+
+  test('the panel can clear them', () => {
+    const opened = nextOpenedForm(nextOpenedForm(undefined, OPENED()), carry());
+    expect(nextOpenedForm(opened, carry(FORM, '/node/23110/edit', null))?.fills).toBeNull();
   });
 });
 

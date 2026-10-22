@@ -29,12 +29,16 @@ import type {
   VarysFormOpenedMessage, VarysFormOpenedResponse, VarysSubmitMessage,
 } from '../lib/varys/pageState';
 import { showVarysNotice } from '../lib/varys/notice';
-import { parseSuggestionsAnswer, type SuggestionsReply, type VarysSuggestionsRequest } from '../lib/varys/suggestions';
+import {
+  parseSuggestionsAnswer,
+  type SuggestionsReply, type VarysCarriedFillsRequest, type VarysCarryFillsMessage, type VarysSuggestionsRequest,
+} from '../lib/varys/suggestions';
+import type { CarriedFills } from '../lib/varys/suggestionFill';
 import {
   ACTION_EXPIRED_COPY, ACTION_NOT_CONNECTED_COPY, ACTION_UNREACHABLE_COPY, EXPIRED_COPY,
   PENDING_NOTICE_KEY, PENDING_TIMEOUT_MS, QUEUE_KEY, SITES_TTL_MS, UNREACHABLE_COPY, UNTRACKED_COPY,
-  failureOf, isTrackedSite, knownUntracked, mergeCarriedBefore, nextOpenedForm, noteLoading, noticeForResult,
-  outcomeOfTimeout, outcomeWhenLoaded, pruneQueue, queueVerdict, toSaveRequest,
+  carriedFillsFor, failureOf, isTrackedSite, knownUntracked, mergeCarriedBefore, nextOpenedForm, noteLoading,
+  noticeForResult, outcomeOfTimeout, outcomeWhenLoaded, pruneQueue, queueVerdict, toSaveRequest,
   type FormEvent, type NavigationOutcome, type OpenedForm, type PendingSubmit, type QueuedSave,
   type SaveRequest, type SitesCache, type StoredNotice, type VarysActionRequest, type VarysActionResponse,
   type VarysNotice,
@@ -1048,7 +1052,7 @@ chrome.runtime.onMessage.addListener((
   message: FetchSourceRequest | SyncRichEditorRequest | RichEditorLifecycleRequest
     | CheckForUpdateRequest | ReadRichEditorRequest | VarysStatusRequest | VarysDisconnectRequest
     | VarysFormOpenedMessage | VarysSubmitMessage | VarysActionRequest | VarysSuggestionsRequest
-    | InsertRichEditorHtmlRequest,
+    | InsertRichEditorHtmlRequest | VarysCarryFillsMessage | VarysCarriedFillsRequest,
   sender,
   sendResponse
 ) => {
@@ -1080,6 +1084,38 @@ chrome.runtime.onMessage.addListener((
       void sweepStalePending();
     }
     return false;
+  }
+
+  // The panel's fills, kept with the tab's record of the form (see OpenedForm.fills), in the
+  // tab's order: a re-render's request for them is answered after the navigation that
+  // re-rendered it has been seen, and so after a save that went through has dropped them.
+  if (message?.type === 'varysCarryFills') {
+    const tabId = sender.tab?.id;
+    const url = sender.url;
+    if (tabId !== undefined && url && sender.frameId === 0) {
+      void inTabOrder(tabId, async () => {
+        await applyFormEvent(tabId, { kind: 'fills', url, formPath: message.formPath, fills: message.fills });
+      });
+    }
+    return false;
+  }
+
+  if (message?.type === 'varysCarriedFills') {
+    const tabId = sender.tab?.id;
+    const url = sender.url;
+    if (tabId === undefined || !url || sender.frameId !== 0) {
+      sendResponse(null);
+      return false;
+    }
+    void inTabOrder(tabId, async () => {
+      let fills: CarriedFills | null = null;
+      try {
+        fills = carriedFillsFor(await sessionGet<OpenedForm>(formKey(tabId)), url, message.formPath);
+      } finally {
+        sendResponse(fills);
+      }
+    });
+    return true;
   }
 
   if (message?.type === 'varysUndo' || message?.type === 'varysLogAnyway') {
