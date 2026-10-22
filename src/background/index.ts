@@ -507,8 +507,12 @@ const formKey = (tabId: number) => `varysForm:${tabId}`;
 const pendingKey = (tabId: number) => `varysPending:${tabId}`;
 const SITES_KEY = 'varysSites';
 const VARYS_TIMEOUT_MS = 15_000;
-/** Generate reads the page (snapshot, live probe, Search Console) before it answers 202, which can outlast 15 s. */
-const VARYS_GENERATE_TIMEOUT_MS = 60_000;
+/**
+ * Longer than the usual 15 s because Varys reads the page before it answers 202, and below the
+ * 30 s at which Chrome stops a service worker that is still waiting on a fetch (that would close
+ * the panel's message port with no reply, where a timeout answers `unreachable`).
+ */
+const VARYS_GENERATE_TIMEOUT_MS = 25_000;
 
 /**
  * Runs a tab's state changes one after another, in the order their events arrived. Each is a
