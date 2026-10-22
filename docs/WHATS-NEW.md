@@ -247,14 +247,20 @@ right now. Click its title bar to fold it away.
   reads each site weekly), the panel says so.
 - **Use** puts a suggestion into its field. That is all it does: it never saves and never
   publishes, so you still press Save. **Undo** puts the old text back, as long as you have
-  not edited the field since.
+  not edited the field since. Undo, and the panel's note about the web address, are still
+  there after a Preview or a save Drupal sends back with an error; after a save that goes
+  through they are gone.
+- **A search title keeps the site's name.** If the search title field ends in Drupal's own
+  site-name pattern, such as `| [site:name]`, Use keeps that ending after the suggestion, so
+  the site's name stays in the search result. The panel shows the title as Use will write it.
 - **Using a suggested title keeps the page's web address.** If the address would have
   followed the title, the extension unticks *Generate automatic URL alias* for you, turns the
   address box on if it was off, and, if the box was empty, puts the page's current address
   into it. Undo puts those back, unless you have typed a different address since. If it
   cannot tell what the current address is, it will not change the title.
 - **A suggested description** goes into Summary when the page's search description follows
-  its Summary, and otherwise into the search description field. The panel says which.
+  its Summary (or the form has no search description field), and otherwise into the search
+  description field. The panel says which.
 - **Headings** are suggestions to read. **Copy** copies one to your clipboard; **Insert at
   cursor** puts it into the body as a heading where your cursor is. Click in the body first:
   with no cursor there, it tells you and inserts nothing. The panel has no Undo for an
@@ -267,11 +273,13 @@ right now. Click its title bar to fold it away.
   worked.
 
 **What is sent for this.** When you open the form, the page's public address goes to Varys,
-to fetch its suggestions; **Ask Varys** sends the same address so that Varys can write them.
-Nothing from the form goes with either, and nothing is sent for a site Varys does not track,
-for a new page, or while you are not connected. If you press Ask Varys, the extension keeps a
-small marker in that browser tab for 3 minutes (the address and the time), so that reloading
-the page keeps waiting instead of asking again. `docs/PRIVACY.md` has the full list.
+to fetch its suggestions (if the form does not show that address, the extension first reads
+the page itself on the same site to learn it); **Ask Varys** sends the same address so that
+Varys can write them. Nothing from the form goes with either, and nothing is sent for a site
+Varys does not track, for a new page, or while you are not connected. If you press Ask Varys,
+the extension keeps a small marker in that browser tab for 3 minutes (the address and the
+time), so that reloading the page keeps waiting instead of asking again. `docs/PRIVACY.md`
+has the full list.
 
 ---
 

@@ -45,6 +45,9 @@ values of the form's title, search title and search description fields (and Summ
 some sites use as the search description) in your browser. That reading stays in your
 browser; what is sent when you save is listed below. When you press **Insert at cursor**, it
 also asks the body's editor whether it has a cursor, and reads nothing else from the editor.
+If the edit form does not show the page's public address, it opens that page in the
+background on the same site (a request to the Drupal site, not to Varys) and reads only the
+address the page gives for itself, so that it asks Varys about the right page.
 
 **One more place, and only if you have connected it to Varys.** After you save, Drupal
 usually sends you on to the page's public address, which is outside those paths. There the
@@ -137,7 +140,8 @@ The same cautions as drafts apply, and one more:
 Three kinds of request, and a fourth that exists only if you connect it to Varys:
 
 1. **Requests to the Drupal site you are already logged into**, to read a page's public
-   HTML, to load the full list of a menu's items, or — when pasting a copied page — to
+   HTML (for the Varys panel, only the address a page gives for itself, as described above),
+   to load the full list of a menu's items, or — when pasting a copied page — to
    ask that site whether it has a term or page being referenced, so a value it cannot
    resolve is left blank instead of breaking the form. These go to the same site you are
    already using, and are the same requests your browser would make if you used its own
@@ -315,8 +319,11 @@ In `chrome.storage.session`, which Chrome clears when the browser closes:
 - **The form as it first opened**, for each tab with a node form open, including the raw
   values of its fields and its body. These raw values are never sent to Varys. They are
   kept so that a Preview, or a save Drupal rejected, is compared with the page as it was
-  rather than with your unsaved edit. They are removed when you go to another page of the
-  same site, after a save goes through, or when the tab closes. A detour to another site or
+  rather than with your unsaved edit. With them is what you filled from Varys's suggestions
+  on that form (each field's text before and after, whether the web address was kept, and
+  whether a heading was inserted), so that Undo still works after a Preview or a rejected
+  save; it is never sent to Varys either. They are removed when you go to another page of
+  the same site, after a save goes through, or when the tab closes. A detour to another site or
   to the login page keeps them, for the save you make when you come back. Whatever is left
   is cleared when the browser closes.
 - **Saves being followed across the page change**: the summary of a save you just made,

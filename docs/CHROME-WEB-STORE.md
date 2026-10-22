@@ -100,11 +100,12 @@ URL, and it can be changed later.
     - Copy a node's cleaned-up public HTML to the clipboard.
     - Optional: connect to Varys, Columbia's content-intelligence service, so that your
       search edits (titles, search descriptions, page addresses, headings, internal links)
-      are logged there automatically, and so that Varys's suggestions for the page you are
-      editing (search title, description, title, section headings) appear in a panel on the
-      edit form. A suggestion goes into the form only when you press Use (or Insert at
-      cursor, for a heading), and Undo takes a Use back; a heading inserted into the body is
-      reversed with the editor's own undo. It is off until you click Connect to Varys.
+      are logged there automatically, and so that, on a site Varys tracks, Varys's
+      suggestions for the page you are editing (search title, description, title, section
+      headings) appear in a panel on the edit form. A suggestion goes into the form only
+      when you press Use (or Insert at cursor, for a heading), and Undo takes a Use back; a
+      heading inserted into the body is reversed with the editor's own undo. It is off until
+      you click Connect to Varys.
 
     Everything happens in the browser, unless you connect to Varys. The extension fills
     forms in; it never saves or publishes anything on its own — you press Save.
@@ -116,11 +117,11 @@ URL, and it can be changed later.
     and after of its title, search title, search description, Summary field, web address,
     headings and internal links, how much of the body changed, up to three new sentences, and
     which fields you filled from Varys's suggestions) is sent to Varys; the full body text
-    never is. When you open an existing page's edit form, or press Ask Varys, the page's
-    public address is sent to Varys so it can offer suggestions for the page; nothing from
-    the form is sent for that. After a save, a small notice saying what Varys did can appear
-    on the page you land on, which may be a public page of the same site. See the privacy
-    policy for everything that is sent and kept.
+    never is. When you open an existing page's edit form on a site Varys tracks, or press Ask
+    Varys, the page's public address is sent to Varys so it can offer suggestions for the
+    page; nothing from the form is sent for that. After a save, a small notice saying what
+    Varys did can appear on the page you land on, which may be a public page of the same
+    site. See the privacy policy for everything that is sent and kept.
 
 **Category:** Workflow & Planning
 **Language:** English
@@ -151,7 +152,8 @@ common cause of a slow review. These are accurate as of the current manifest.
     clicks Connect to Varys, it also stores the Varys key and email and a queue of at most
     50 saves waiting to be sent (each kept at most 7 days) in chrome.storage.local, and a
     few short-lived items in chrome.storage.session, which Chrome clears when the browser
-    closes: the form as it first opened (including raw field values, which are never sent),
+    closes: the form as it first opened (including raw field values, which are never sent)
+    with what the user filled from Varys's suggestions on it (so Undo survives a Preview),
     saves being followed across the page change, and a 24-hour cache of which sites Varys
     tracks. Disconnect removes all of that. When the user presses Ask Varys it also keeps
     one marker in the tab's own sessionStorage (not chrome.storage): the page's address and
@@ -312,16 +314,18 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
     with access to that site can see who saved what; it is given to no one outside Varys.
   - Separately, when the user opens an existing page's edit form on a site Varys tracks, or
     presses Ask Varys, the extension sends only that page's public address, to fetch or
-    request Varys's suggestions for it. No content of the form goes with it, and no address
-    is sent for suggestions for a site Varys does not track, for an add form, or when the
-    extension cannot tell which sites Varys tracks. What comes back is Varys's suggestions
-    (search title, description, page title, section headings and an optional clinical review
-    note) and Varys's own copy of the page's current title, description and headings, from
-    its last read of the page; they are shown in a panel on the page and not stored by the
-    extension. A suggestion is put into the form only when the user presses Use, or Insert
-    at cursor for a heading. Use can be undone with Undo; a heading inserted into the body
-    is reversed with the editor's own undo, as the panel has no Undo for it. The extension
-    never saves or publishes.
+    request Varys's suggestions for it. When the edit form does not show that address, the
+    extension reads the page itself on the same Drupal site, in the browser, for the address
+    it gives for itself; nothing else from that page is used. No content of the form goes
+    with it, and no address is sent for suggestions for a site Varys does not track, for an
+    add form, or when the extension cannot tell which sites Varys tracks. What comes back is
+    Varys's suggestions (search title, description, page title, section headings and an
+    optional clinical review note) and Varys's own copy of the page's current title,
+    description and headings, from its last read of the page; they are shown in a panel on
+    the page and not stored by the extension. A suggestion is put into the form only when
+    the user presses Use, or Insert at cursor for a heading. Use can be undone with Undo; a
+    heading inserted into the body is reversed with the editor's own undo, as the panel has
+    no Undo for it. The extension never saves or publishes.
 
 Then certify all three:
 
