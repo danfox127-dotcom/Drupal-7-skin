@@ -3,7 +3,7 @@ import { nodeIdFromPath } from '../lib/extractPublicHtml';
 import { NEVER_CLICK, submitLabel } from '../lib/fieldBinding';
 import {
   bodyChangeRatio, buttonKind, pageStateFrom, textOfHtml,
-  type RawFormValues, type VarysSubmitMessage,
+  type RawFormValues, type VarysFormOpenedMessage, type VarysFormOpenedResponse, type VarysSubmitMessage,
 } from '../lib/varys/pageState';
 import type { ReadRichEditorResponse } from '../background';
 import type { VarysStatus, VarysStatusRequest } from '../lib/varys/connection';
@@ -51,6 +51,21 @@ export async function varysIsConnected(): Promise<boolean> {
 const bodyTextarea = (form: HTMLFormElement) =>
   form.querySelector<HTMLTextAreaElement>(BODY_FIELD);
 
+const isStringOrNull = (v: unknown) => v === null || typeof v === 'string';
+
+/**
+ * Whether the worker's answer is a set of form values for this site. It came from this
+ * extension, but from storage that outlives a version of it, so its shape is checked before
+ * it replaces anything.
+ */
+function isRawFormValues(v: unknown): v is RawFormValues {
+  if (typeof v !== 'object' || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.title === 'string' && isStringOrNull(r.metaTitle) && isStringOrNull(r.metaDescription)
+    && isStringOrNull(r.alias) && typeof r.pathauto === 'boolean' && typeof r.bodyHtml === 'string'
+    && r.host === window.location.host;
+}
+
 /**
  * The form's values, read by field name.
  *
@@ -96,8 +111,11 @@ export async function readBodyHtml(form: HTMLFormElement): Promise<string> {
   return textarea.value;
 }
 
-/** The first tab that is the page itself: not an edit tab, and not one of the node's sub-pages. */
-function viewTab(anchors: HTMLAnchorElement[], base: string): string | null {
+/**
+ * The first tab that is the page itself: not an edit tab, not one of the node's sub-pages, and
+ * on this host. A tab pointing at another host is not this page, whatever it is called.
+ */
+function viewTab(anchors: HTMLAnchorElement[], base: string, host: string): string | null {
   for (const anchor of anchors) {
     const href = anchor.getAttribute('href');
     if (!href) continue;
@@ -108,6 +126,7 @@ function viewTab(anchors: HTMLAnchorElement[], base: string): string | null {
       continue;
     }
     if (url.protocol !== 'https:' && url.protocol !== 'http:') continue;
+    if (url.host !== host) continue;
     const path = url.pathname.replace(/\/+$/, '');
     // /node/N/edit, but also /node/N/revisions, /node/N/devel and an aliased .../edit.
     if (/\/edit$/.test(path) || /^\/node\/\d+\//.test(path)) continue;
@@ -134,7 +153,7 @@ export function publicUrlFor(
   const base = `${scheme}//${location.host}${location.pathname}`;
 
   for (const selector of ['ul.tabs.primary a', '.tabs a']) {
-    const tab = viewTab(Array.from(doc.querySelectorAll<HTMLAnchorElement>(selector)), base);
+    const tab = viewTab(Array.from(doc.querySelectorAll<HTMLAnchorElement>(selector)), base, location.host);
     if (tab) return tab;
   }
   return `${scheme}//${location.host}/node/${nodeId}`;
@@ -156,17 +175,44 @@ export function publicUrlFor(
  *
  * It never calls preventDefault, never awaits before sending, and never lets a fault of its
  * own out: a save that Varys cannot be told about is still a save.
+ *
+ * Once the before is settled the worker is told the form opened (`varysFormOpened`), and it
+ * answers with the values the form FIRST opened with in this tab. They differ when this page
+ * is a re-render: Drupal's Preview and a save that failed validation both come back to the
+ * same edit form filled with what was submitted, which is not what the page held. The answer
+ * is then adopted as the before, so the before, the body comparison and the new sentences are
+ * all measured against the page as it really was. (The worker also puts its first before into
+ * the save itself, so a Save before this answer arrives is still sent with it.)
  */
 export function mountVarysCapture(
   form: HTMLFormElement,
   editorsReady: Promise<unknown> = Promise.resolve(),
 ): void {
-  const isNew = nodeIdFromPath(window.location.pathname) === null;
+  const formPath = window.location.pathname;
+  const isNew = nodeIdFromPath(formPath) === null;
+  // Set at Save. After it, the before is final, and this page has nothing more to announce.
+  let saved = false;
 
   let before = readRawValues(form, bodyTextarea(form)?.value ?? '');
+
+  const announceOpened = async () => {
+    if (saved) return;
+    const message: VarysFormOpenedMessage = {
+      type: 'varysFormOpened',
+      formPath,
+      before: isNew ? null : pageStateFrom(before, null),
+      raw: before,
+    };
+    const answer: VarysFormOpenedResponse | null | undefined = await chrome.runtime.sendMessage(message);
+    if (!saved && isRawFormValues(answer?.raw)) before = answer.raw;
+  };
+
   void editorsReady
     .then(() => readBodyHtml(form))
     .then(html => { before = { ...before, bodyHtml: html }; })
+    .catch(() => undefined)
+    .then(announceOpened)
+    // No worker, or a context that has gone: this page's own before stands.
     .catch(() => undefined);
 
   document.addEventListener('submit', event => {
@@ -195,11 +241,13 @@ export function mountVarysCapture(
         bodyChangeRatio: bodyChangeRatio(textOfHtml(before.bodyHtml), textOfHtml(after.bodyHtml)),
       };
 
+      saved = true;
       // Fire and forget. A worker that is not there answers with a rejection, and nobody is
       // waiting on it.
       Promise.resolve(chrome.runtime.sendMessage(message)).catch(() => undefined);
-    } catch {
-      // Recording is an extra. Whatever went wrong, Drupal's Save carries on.
+    } catch (err) {
+      // Recording is an extra. Whatever went wrong, Drupal's Save carries on; it is only said.
+      console.warn('[D7 Studio] Varys capture failed', err);
     }
   });
 

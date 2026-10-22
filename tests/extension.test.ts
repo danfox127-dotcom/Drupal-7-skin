@@ -135,6 +135,15 @@ export const test = base.extend<{
       });
     });
 
+    /**
+     * Varys, refused unless a test stands in for it.
+     *
+     * Once connected, the worker posts saves to the Varys API, and a test that connects without
+     * stubbing it would otherwise send a request to the real service. A test that talks to
+     * Varys registers its own route, which Playwright consults before this one.
+     */
+    await context.route('**varys.fly.dev/**', route => route.abort('blockedbyclient'));
+
     await context.route(`**columbia.edu/**`, route => {
       const url = route.request().url();
       const match = ROUTES.find(([pattern]) => pattern.test(url));
@@ -3854,7 +3863,13 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
       seen.push({ method: request.method(), authorization: request.headers()['authorization'], url: request.url() });
       return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
     });
-    await settings({ varysConnection: connected });
+    // A save still waiting to go, and a notice not yet shown: this person's, and nobody's
+    // after they disconnect.
+    await settings({
+      varysConnection: connected,
+      varysQueue: [{ request: { page_url: 'https://www.cuimc.columbia.edu/news/foo' }, queuedAt: Date.now(), email: EMAIL }],
+      varysPendingNotice: { host: 'www.cuimc.columbia.edu', notice: { message: 'Logged.' }, storedAt: Date.now() },
+    });
     await page.goto(`chrome-extension://${extensionId}/index.html`);
     await expect(page.getByText(`Connected to Varys as ${EMAIL}`)).toBeVisible();
 
@@ -3864,6 +3879,7 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
     await expect(page.getByRole('button', { name: 'Connect to Varys' })).toBeVisible();
     await expect(page.locator('[data-varys-note]')).toHaveCount(0);
     expect(await storedConnection(context, extensionId)).toBeNull();
+    expect(await page.evaluate(() => chrome.storage.local.get(['varysQueue', 'varysPendingNotice']))).toEqual({});
     expect(seen).toEqual([{
       method: 'DELETE',
       authorization: `Bearer ${KEY}`,
@@ -4025,10 +4041,379 @@ test.describe('Recording a node save for Varys', () => {
       await page.waitForTimeout(500);
 
       expect(await submitsSeen(seen)).toEqual([]);
-      expect((await seen()).filter(m => m.type === 'readRichEditor')).toEqual([]);
+      expect((await seen()).filter(m => m.type === 'readRichEditor' || m.type === 'varysFormOpened')).toEqual([]);
       await expect(page.locator('[data-d7-varys-capture]')).toHaveCount(0);
     });
 
   staysSilent('a browser that never connected', null);
   staysSilent('a connection Varys has refused', () => ({ ...connected, expired: true }));
+});
+
+test.describe('Sending a save to Varys, and telling the editor what happened', () => {
+  const KEY = 'vxk_' + 'a'.repeat(43);
+  const EMAIL = 'x@cumc.columbia.edu';
+  const connected = { key: KEY, email: EMAIL, connectedAt: '2026-10-21T12:00:00.000Z' };
+  const FORM = `${HOST}/node/23110/edit`;
+  /** Where Drupal sends the editor after a good save: the page's alias, a public path. */
+  const PUBLIC = `${HOST}/news/foo`;
+  const SITES = { email: EMAIL, user_id: '00000000-0000-0000-0000-000000000001', sites: ['cuimc.columbia.edu'] };
+  const LOGGED = {
+    save_id: 41, edit_id: 7, outcome: 'logged', change_type: 'meta',
+    message: 'Logged in Varys as a title and description change.',
+  };
+  const UNTRACKED = "This site isn't in Varys, so nothing was logged.";
+  const UNREACHABLE = "Varys couldn't be reached. This save will be sent when it can.";
+  const EXPIRED = 'Your Varys connection has expired. Reconnect from the extension menu to log this save.';
+
+  interface VarysCall { method: string; path: string; authorization: string | undefined; body: any }
+  type Answer = { status: number; body?: unknown } | 'abort';
+
+  /**
+   * Stands in for Varys, and records every request the worker makes to it.
+   *
+   * CORS is answered in full, preflight included, because in a test the optional host
+   * permission for Varys cannot be granted without a prompt nobody can click, so the worker's
+   * fetch is a cross-origin request like any page's. In use, Connect grants that permission.
+   */
+  const stubVarys = async (context: BrowserContext, answer: (call: VarysCall) => Answer | Promise<Answer>) => {
+    const calls: VarysCall[] = [];
+    const cors = {
+      'access-control-allow-origin': '*',
+      'access-control-allow-headers': 'authorization, content-type',
+      'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
+    };
+    await context.route('**varys.fly.dev/**', async route => {
+      const request = route.request();
+      if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+      const call: VarysCall = {
+        method: request.method(),
+        path: new URL(request.url()).pathname,
+        authorization: request.headers()['authorization'],
+        body: request.postData() ? request.postDataJSON() : null,
+      };
+      calls.push(call);
+      const a = await answer(call);
+      if (a === 'abort') return route.abort('failed');
+      return route.fulfill({
+        status: a.status, headers: cors, contentType: 'application/json', body: JSON.stringify(a.body ?? {}),
+      });
+    });
+    return calls;
+  };
+
+  /** Varys as it is when all is well: it tracks this site and logs the save. */
+  const varysUp = (save: Answer = { status: 200, body: LOGGED }, sites = SITES) => (call: VarysCall): Answer => {
+    if (call.path === '/api/extension/connection') return { status: 200, body: sites };
+    if (call.path === '/api/extension/saves') return save;
+    return { status: 404, body: { detail: 'Not Found' } };
+  };
+
+  const savesIn = (calls: VarysCall[]) => calls.filter(c => c.method === 'POST' && c.path === '/api/extension/saves');
+
+  /**
+   * The public page, as the answer to a good Save: a page that moves its own address to
+   * PUBLIC before it finishes loading.
+   *
+   * Drupal answers a good save with a 302 to the page, and so did this, until it turned out
+   * that Playwright does not intercept the request a fulfilled redirect leads to: the browser
+   * fetched the LIVE www.cuimc.columbia.edu/news/foo from the network. history.replaceState
+   * leaves the tab where the redirect would, at the public page and loaded, which is all the
+   * worker looks at, with nothing leaving the machine. The content script does not run on that
+   * address (the manifest matches /admin/* and /node/* only), so anything shown on the page
+   * was put there by the worker.
+   */
+  const publicPage = `<!doctype html><html><head><title>Foo</title>
+    <script>history.replaceState(null, '', ${JSON.stringify(PUBLIC)});</script></head>
+    <body><h1>Foo</h1></body></html>`;
+
+  /** Drupal answering Save the way a good save is answered: with the page. */
+  const saveGoesThrough = (context: BrowserContext) =>
+    context.route(FORM, route => route.request().method() === 'POST'
+      ? route.fulfill({ status: 200, contentType: 'text/html', body: publicPage })
+      : route.fallback());
+
+  const openForm = async (page: Page) => {
+    await page.goto(FORM);
+    await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+  };
+
+  /** Edits the search description (and any other named fields), presses Save and publish, and waits for where it lands. */
+  const saveAndPublish = async (page: Page, fields: Record<string, string> = {}) => {
+    await page.evaluate(values => {
+      for (const [name, value] of Object.entries(values)) {
+        (document.querySelector(`[name="${name}"]`) as HTMLInputElement).value = value;
+      }
+    }, { 'metatags[und][description][value]': 'A clearer description of our faculty.', ...fields });
+    await Promise.all([
+      page.waitForEvent('load'),
+      page.evaluate(() => (document.querySelector('#edit-submit-publish') as HTMLElement).click()),
+    ]);
+  };
+
+  const worker = (context: BrowserContext) => context.serviceWorkers()[0];
+  const stored = (context: BrowserContext, key: string) =>
+    worker(context).evaluate(k => chrome.storage.local.get(k).then(r => r[k]), key);
+  const sessionKeys = (context: BrowserContext) =>
+    worker(context).evaluate(() => chrome.storage.session.get(null).then(r => Object.keys(r)));
+
+  test('logs a search edit', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+    expect(page.url()).toBe(PUBLIC);
+
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    const [save] = savesIn(calls);
+    expect(save.authorization).toBe(`Bearer ${KEY}`);
+    // The page's public address, from where Drupal landed, never the edit form's.
+    expect(save.body.page_url).toBe(PUBLIC);
+    expect(save.body).toMatchObject({ node_id: '23110', content_type: 'list', button: 'publish' });
+    expect('before' in save.body).toBe(true);
+    expect(save.body.after.meta_description).toBe('A clearer description of our faculty.');
+    expect(save.body.before.meta_description).not.toBe(save.body.after.meta_description);
+
+    // Shown on the public page itself, which the content script never runs on: so the worker
+    // injected it, which proves its host permission reaches a path outside /admin and /node.
+    await expect(page.getByText(LOGGED.message)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Undo' })).toBeVisible();
+    expect(await stored(context, 'varysPendingNotice')).toBeUndefined();
+  });
+
+  test('failed save is not sent', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+
+    await openForm(page);
+    // Drupal answers with the edit form again, which is what a validation error looks like.
+    await saveAndPublish(page);
+    expect(page.url()).toBe(FORM);
+    await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+
+    // The worker judged it and let it go: nothing is left waiting to be sent later.
+    await expect.poll(async () => (await sessionKeys(context)).filter(k => k.startsWith('varysPending:'))).toEqual([]);
+    await page.waitForTimeout(1000);
+    expect(calls).toEqual([]);
+    await expect(page.locator('#d7-varys-notice')).toHaveCount(0);
+    expect(await stored(context, 'varysPendingNotice')).toBeUndefined();
+  });
+
+  test('a failed save, then a good one, sends the before the form first opened with', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    // The first Save fails validation, and Drupal re-renders the form with what was submitted.
+    // The second goes through.
+    let attempts = 0;
+    await context.route(FORM, route => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      attempts++;
+      if (attempts > 1) return route.fulfill({ status: 200, contentType: 'text/html', body: publicPage });
+      return route.fulfill({
+        status: 200, contentType: 'text/html',
+        body: read('captured/list-populated.html').replace(
+          'name="title_field[und][0][value]" value=""', 'name="title_field[und][0][value]" value="Attempt one"'),
+      });
+    });
+
+    await openForm(page);
+    // The worker has heard the form open, so it holds the before it opened with.
+    await expect.poll(async () => (await sessionKeys(context)).some(k => k.startsWith('varysForm:'))).toBe(true);
+
+    await saveAndPublish(page, { 'title_field[und][0][value]': 'Attempt one' });
+    expect(page.url()).toBe(FORM);
+    await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+    await expect(page.locator('[name="title_field[und][0][value]"]')).toHaveValue('Attempt one');
+
+    await saveAndPublish(page, { 'title_field[und][0][value]': 'Attempt two' });
+    expect(page.url()).toBe(PUBLIC);
+
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    const [save] = savesIn(calls);
+    // The page started with no title. "Attempt one" was never saved, so it is not the before.
+    expect(save.body.before.title).toBe('');
+    expect(save.body.after.title).toBe('Attempt two');
+  });
+
+  test('unreachable varys queues', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, () => 'abort');
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+
+    await expect(page.getByText(UNREACHABLE)).toBeVisible();
+    expect(savesIn(calls)).toHaveLength(1);
+    const queue = await stored(context, 'varysQueue') as any[];
+    expect(queue).toHaveLength(1);
+    expect(queue[0]).toMatchObject({ email: EMAIL, request: { page_url: PUBLIC, node_id: '23110' } });
+    // Varys was never reached, so the key is not in doubt.
+    expect((await stored(context, 'varysConnection') as any).expired).toBeUndefined();
+  });
+
+  test('expired key queues and flags', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, () => ({ status: 401, body: { detail: 'This key has expired.' } }));
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+
+    await expect(page.getByText(EXPIRED)).toBeVisible();
+    expect((await stored(context, 'varysConnection') as any).expired).toBe(true);
+    expect(await stored(context, 'varysQueue')).toHaveLength(1);
+  });
+
+  test('nothing is sent when not connected', async ({ page, context, settings }) => {
+    /**
+     * Connected when the form opened, so the page records the save, and disconnected by the
+     * time it is pressed. The worker checks the stored connection again for every save,
+     * because the page asked only once, at load.
+     */
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await worker(context).evaluate(() => chrome.storage.local.remove('varysConnection'));
+    await saveAndPublish(page);
+    expect(page.url()).toBe(PUBLIC);
+
+    await page.waitForTimeout(1500);
+    expect(calls).toEqual([]);
+    await expect(page.locator('#d7-varys-notice')).toHaveCount(0);
+    expect(await stored(context, 'varysPendingNotice')).toBeUndefined();
+    expect(await stored(context, 'varysQueue')).toBeUndefined();
+  });
+
+  test('a save on a site Varys does not track is not sent, and says so', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp(undefined, { ...SITES, sites: ['vagelos.columbia.edu'] }));
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+
+    await expect(page.getByText(UNTRACKED)).toBeVisible();
+    expect(calls.map(c => c.path)).toEqual(['/api/extension/connection']);
+  });
+
+  test('Undo on the notice takes the save back out of Varys', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, call => call.path === '/api/extension/saves/41/undo'
+      ? { status: 200, body: { edit_id: 7, status: 'undone', message: 'Removed from Varys.' } }
+      : varysUp()(call));
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+    await page.getByRole('button', { name: 'Undo' }).click();
+
+    await expect(page.getByText('Removed from Varys.')).toBeVisible();
+    const undo = calls.find(c => c.path === '/api/extension/saves/41/undo');
+    expect(undo).toMatchObject({ method: 'POST', authorization: `Bearer ${KEY}` });
+  });
+
+  test('saves queued while Varys was away go first, the next time one is sent', async ({ page, context, settings }) => {
+    const older = {
+      page_url: `${HOST}/news/older`, node_id: '23000', content_type: 'news', button: 'publish',
+      body_change_ratio: 0, before: null, after: { title: 'Older' },
+    };
+    await settings({
+      varysConnection: connected,
+      nodeEditor: false,
+      varysQueue: [{ request: older, queuedAt: Date.now() - 60_000, email: EMAIL }],
+    });
+    const calls = await stubVarys(context, varysUp());
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+
+    await expect.poll(() => savesIn(calls).length).toBe(2);
+    expect(savesIn(calls).map(c => c.body.page_url)).toEqual([`${HOST}/news/older`, PUBLIC]);
+    // Sent, so nothing is left waiting: an empty queue is not kept at all.
+    await expect.poll(() => stored(context, 'varysQueue')).toBeUndefined();
+    await expect(page.getByText(LOGGED.message)).toBeVisible();
+  });
+
+  test('the worker may inject into a public page of a Columbia site, outside /admin and /node', async ({ page, context, extensionId }) => {
+    /**
+     * What the notice depends on, checked directly on pages loaded the ordinary way. The
+     * manifest's host permissions name /admin/* and /node/* paths, but Chrome ignores the path
+     * of a host permission when injecting a script, so the whole Columbia host is reachable.
+     * Another domain is not, which is when the notice waits for the next page instead.
+     */
+    expect(extensionId).toBeTruthy();
+    await context.route(PUBLIC, route => route.fulfill({
+      status: 200, contentType: 'text/html', body: '<!doctype html><html><head><title>Public page</title></head><body></body></html>',
+    }));
+    await context.route('https://elsewhere.example/**', route => route.fulfill({
+      status: 200, contentType: 'text/html', body: '<!doctype html><html><head><title>Elsewhere</title></head><body></body></html>',
+    }));
+    const injectInto = (url: string) => worker(context).evaluate(async u => {
+      const [tab] = await chrome.tabs.query({ url: u });
+      try {
+        const [result] = await chrome.scripting.executeScript({ target: { tabId: tab.id! }, func: () => document.title });
+        return result?.result;
+      } catch (err) {
+        return `refused: ${(err as Error).message}`;
+      }
+    }, url);
+
+    await page.goto(PUBLIC);
+    expect(await injectInto(PUBLIC)).toBe('Public page');
+
+    await page.goto('https://elsewhere.example/page');
+    expect(await injectInto('https://elsewhere.example/page')).toMatch(/^refused:/);
+  });
+
+  test('a notice that cannot be shown in its tab is shown on the next page of the site', async ({ page, context, settings }) => {
+    /**
+     * The worker injects the notice into the tab the save was made in. When it cannot (here
+     * the tab is closed while Varys is still answering; equally a page the extension may not
+     * touch), the notice waits for the content script's next page on the same site.
+     */
+    await settings({ varysConnection: connected, nodeEditor: false });
+    let answerSave!: () => void;
+    const held = new Promise<void>(resolve => { answerSave = resolve; });
+    const calls = await stubVarys(context, async call => {
+      if (call.path === '/api/extension/saves') await held;
+      return varysUp()(call);
+    });
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    const next = await context.newPage();
+    await page.close();
+    answerSave();
+
+    await expect.poll(() => stored(context, 'varysPendingNotice'))
+      .toMatchObject({ host: 'www.cuimc.columbia.edu', notice: { message: LOGGED.message } });
+
+    await next.goto(`${HOST}/admin/content`);
+    await expect(next.getByText(LOGGED.message)).toBeVisible();
+    // Once: it is gone from storage, so the page after this one does not repeat it.
+    await expect.poll(() => stored(context, 'varysPendingNotice')).toBeUndefined();
+  });
+
+  test('a save Varys calls malformed is dropped, never queued', async ({ page, context, settings }) => {
+    /** A 422 is a bug in this extension, and would fail the same way however often it is retried. */
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp({ status: 422, body: { detail: [{ msg: 'field required' }] } }));
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    await page.waitForTimeout(1000);
+    expect(await stored(context, 'varysQueue')).toBeUndefined();
+    await expect(page.locator('#d7-varys-notice')).toHaveCount(0);
+    expect(await stored(context, 'varysPendingNotice')).toBeUndefined();
+  });
 });

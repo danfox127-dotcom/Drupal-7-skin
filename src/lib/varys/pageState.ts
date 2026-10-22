@@ -68,6 +68,26 @@ export interface VarysSubmitMessage {
   bodyChangeRatio: number;
 }
 
+/**
+ * The message the content script gives the service worker when it has read a node form, so the
+ * worker can keep the before the form FIRST opened with (see src/lib/varys/submissions.ts).
+ *
+ * The worker answers with a VarysFormOpenedResponse. `raw` stays in the browser: the worker
+ * keeps it to hand back to a re-render of the same form, and never sends it to Varys.
+ */
+export interface VarysFormOpenedMessage {
+  type: 'varysFormOpened';
+  formPath: string;
+  /** As in VarysSubmitMessage: null on an add form. */
+  before: PageState | null;
+  raw: RawFormValues;
+}
+
+/** The values the form FIRST opened with in this tab, which may be these same ones. */
+export interface VarysFormOpenedResponse {
+  raw: RawFormValues | null;
+}
+
 export function buttonKind(label: string): ButtonKind {
   if (/publish/i.test(label)) return 'publish';
   if (/draft/i.test(label)) return 'draft';
@@ -186,7 +206,9 @@ function newSentences(afterBlocks: string[], beforeBlocks: string[] | null): str
     if (found.length === MAX_NEW_SENTENCES) break;
     if (wordsIn(sentence).length < MIN_SENTENCE_WORDS) continue;
     if (before.includes(key(sentence))) continue;
-    const cut = sentence.slice(0, MAX_SENTENCE_CHARS).trimEnd();
+    // By character, not by UTF-16 unit: a unit cut can keep half of an emoji, a lone surrogate
+    // that is not text, and Varys counts its 200 in characters.
+    const cut = Array.from(sentence).slice(0, MAX_SENTENCE_CHARS).join('').trimEnd();
     if (!found.includes(cut)) found.push(cut);
   }
   return found;

@@ -32,6 +32,8 @@ import { enhanceListForm, isFixedConfigParagraphField } from './listEnhancements
 import { anchorAutocompletePopups } from './autocompletePopups';
 import { mountSpanCleanup } from './spanCleanup';
 import { mountVarysCapture, varysIsConnected } from './varysCapture';
+import { Toast } from '../components/Toast';
+import { PENDING_NOTICE_KEY, storedNoticeFor } from '../lib/varys/submissions';
 import { DoctorBatchAdder } from '../components/editor/DoctorBatchAdder';
 import { copyPage } from '../lib/clone/copyPage';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
@@ -421,6 +423,27 @@ async function startVarysCapture(): Promise<void> {
 }
 
 /**
+ * A Varys notice the worker could not show where the save landed (see showNotice in the
+ * worker), shown here instead: the next admin or node page of the same site. Once, then gone.
+ *
+ * Only the message: Undo and Log it anyway belong to the moment of the save, and Varys's own
+ * list of logged changes has Undo for later.
+ */
+async function showStoredVarysNotice(): Promise<void> {
+  try {
+    const stored = (await chrome.storage.local.get(PENDING_NOTICE_KEY))[PENDING_NOTICE_KEY];
+    const notice = storedNoticeFor(stored, window.location.host, Date.now());
+    if (!notice) return;
+    await chrome.storage.local.remove(PENDING_NOTICE_KEY);
+    const overlay = injectOverlay(
+      <Toast message={notice.message} onDismiss={() => overlay.unmount()} timeoutMs={10000} />,
+    );
+  } catch (err) {
+    console.warn('[D7 Studio] Could not show a Varys notice', err);
+  }
+}
+
+/**
  * Mounts the whole-menu search above Drupal's table, fetching its index once.
  *
  * The index is cached in extension storage per host and menu, so moving between pages does
@@ -507,6 +530,9 @@ const logStamp = () => {
 };
 
 const init = async () => {
+  // Independent of every setting: it reports something that has already happened.
+  void showStoredVarysNotice();
+
   const settings = await getSettings();
   const url = window.location.href;
 

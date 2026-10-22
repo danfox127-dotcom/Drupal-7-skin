@@ -48,10 +48,11 @@ async function open(page: Page, pathname: string, body: string, bodyClass = '') 
 /**
  * Replaces chrome.runtime.sendMessage with one that records every message on
  * window.__sent and answers readRichEditor with `richEditor` (a response object), or
- * with `undefined` (as a worker that does not answer would).
+ * with `undefined` (as a worker that does not answer would). varysFormOpened is answered
+ * with `formOpened` the same way.
  */
-async function stubRuntime(page: Page, richEditor?: unknown) {
-  await page.evaluate(response => {
+async function stubRuntime(page: Page, richEditor?: unknown, formOpened?: unknown) {
+  await page.evaluate(([editorAnswer, openedAnswer]) => {
     const w = window as any;
     w.__sent = [];
     Object.defineProperty(window, 'chrome', {
@@ -60,12 +61,14 @@ async function stubRuntime(page: Page, richEditor?: unknown) {
         runtime: {
           sendMessage: (message: any) => {
             w.__sent.push(message);
-            return Promise.resolve(message?.type === 'readRichEditor' ? response : undefined);
+            if (message?.type === 'readRichEditor') return Promise.resolve(editorAnswer);
+            if (message?.type === 'varysFormOpened') return Promise.resolve(openedAnswer);
+            return Promise.resolve(undefined);
           },
         },
       },
     });
-  }, richEditor);
+  }, [richEditor, formOpened] as const);
 }
 
 const sent = (page: Page) => page.evaluate(() => (window as any).__sent as any[]);
@@ -294,6 +297,18 @@ test.describe('pageStateFrom', () => {
     expect(state.new_sentences[1]).toBe(repeated);
   });
 
+  test('a cut never splits a character in two', async ({ page }) => {
+    // 199 characters, then an emoji: a cut at 200 UTF-16 units would keep half of it, a lone
+    // surrogate that is not text at all. Varys counts 200 characters, not 200 units.
+    const lead = 'alpha beta gamma delta epsilon zeta ';
+    const sentence = `${lead}${'x'.repeat(199 - lead.length)}\u{1F600}\u{1F600} and more words follow it.`;
+    const state = await stateFrom(page, raw({ bodyHtml: `<p>${sentence}</p>` }), '<p></p>');
+    const [cut] = state.new_sentences;
+    expect(Array.from(cut)).toHaveLength(200);
+    expect(cut.endsWith('\u{1F600}')).toBe(true);
+    expect(cut).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/);
+  });
+
   test('nothing in the body markup runs while it is read', async ({ page }) => {
     await stateFrom(page, raw({ bodyHtml: '<p>Text</p><img src="x" onerror="window.__ran = true">' }), null);
     await page.waitForTimeout(200);
@@ -340,6 +355,17 @@ test.describe('publicUrlFor', () => {
   test('with only edit tabs it falls back to the node address', async ({ page }) => {
     const tabs = '<ul class="tabs primary"><li><a href="/node/23110/edit">Edit</a></li></ul>';
     expect(await urlFor(page, '/node/23110/edit', tabs)).toBe(`${HOST}/node/23110`);
+  });
+
+  test('a tab on another host is not this page, so the node address is used', async ({ page }) => {
+    for (const href of ['https://evil.example/conditions/asthma', '//other.columbia.edu/conditions/asthma',
+      'https://cuimc.columbia.edu/conditions/asthma']) {
+      const tabs = `<ul class="tabs primary"><li><a href="${href}">View</a></li></ul>`;
+      expect(await urlFor(page, '/node/23110/edit', tabs), href).toBe(`${HOST}/node/23110`);
+    }
+    // The same host written out in full is still this site.
+    const own = `<ul class="tabs primary"><li><a href="${HOST}/conditions/asthma">View</a></li></ul>`;
+    expect(await urlFor(page, '/node/23110/edit', own)).toBe(`${HOST}/conditions/asthma`);
   });
 });
 
@@ -719,6 +745,93 @@ test.describe('mountVarysCapture', () => {
     const log = await page.evaluate(() => JSON.parse(sessionStorage.getItem('sent') ?? '[]'));
     const [message] = log.filter((m: any) => m.type === 'varysSubmit');
     expect(message).toMatchObject({ button: 'publish', nodeId: '23110', isNew: false });
+  });
+
+  test('a fault in the capture is reported in the console, and still never reaches the save', async ({ page }) => {
+    await open(page, '/node/23110/edit', FORM());
+    const warnings: string[] = [];
+    page.on('console', m => { if (m.type() === 'warning') warnings.push(m.text()); });
+    await page.evaluate(() => {
+      Object.defineProperty(window, 'chrome', {
+        configurable: true,
+        value: { runtime: { sendMessage: (m: any) => {
+          if (m?.type === 'varysSubmit') throw new Error('Extension context invalidated.');
+          return Promise.resolve(undefined);
+        } } },
+      });
+    });
+    await mount(page);
+    expect((await submitWith(page, '#edit-submit')).defaultPrevented).toBe(false);
+    await expect.poll(() => warnings.some(w => w.includes('[D7 Studio] Varys capture failed'))).toBe(true);
+  });
+});
+
+// ------------------------------------------------------- the before the form FIRST opened with
+
+test.describe('the form tells the worker it opened', () => {
+  const opened = async (page: Page) => (await sent(page)).filter(m => m.type === 'varysFormOpened');
+
+  test('once its before is settled, with the before Varys is sent and the values it was read from', async ({ page }) => {
+    await open(page, '/node/23110/edit', FORM());
+    await stubRuntime(page, { ok: true, editor: 'ckeditor', value: '<h2>Rich heading</h2><p>From the editor.</p>' });
+    await mount(page, true);
+
+    await expect.poll(async () => (await opened(page)).length).toBe(1);
+    const [message] = await opened(page);
+    expect(message).toMatchObject({
+      formPath: '/node/23110/edit',
+      before: { title: 'Asthma in adults', headings: [{ level: 2, text: 'Rich heading' }] },
+      raw: { title: 'Asthma in adults', bodyHtml: '<h2>Rich heading</h2><p>From the editor.</p>', pathauto: true },
+    });
+    // Sent after the editor was read, so the body in it is the editor's, not the textarea's.
+    const types = (await sent(page)).map(m => m.type);
+    expect(types.indexOf('readRichEditor')).toBeLessThan(types.indexOf('varysFormOpened'));
+  });
+
+  test('a new page announces a before of null, and the values it opened with', async ({ page }) => {
+    await open(page, '/node/add/news', FORM({ body: '', title: '' }));
+    await stubRuntime(page);
+    await mount(page);
+    await expect.poll(async () => (await opened(page)).length).toBe(1);
+    const [message] = await opened(page);
+    expect('before' in message).toBe(true);
+    expect(message.before).toBeNull();
+    expect(message.raw).toMatchObject({ title: '', bodyHtml: '' });
+  });
+
+  test('a re-render compares against the form as it FIRST opened, which the worker hands back', async ({ page }) => {
+    // The page is a failed save's re-render: Drupal filled the form with what was submitted.
+    const resubmitted = '<p>Wheezing and a tight chest are common signs of asthma in adults.</p>'
+      + '<p>Controller inhalers are the mainstay of treatment for most people.</p>';
+    await open(page, '/node/23110/edit', FORM({ title: 'Attempt one', body: resubmitted }));
+    // The worker kept the values from when the form first opened, before any of this.
+    const original = {
+      title: 'Asthma in adults', metaTitle: 'Asthma | [site:name]', metaDescription: 'Learn about asthma care.',
+      alias: '', pathauto: true, host: 'www.cuimc.columbia.edu',
+      bodyHtml: '<p>Wheezing and a tight chest are common signs of asthma in adults.</p>',
+    };
+    await stubRuntime(page, undefined, { raw: original });
+    await mount(page);
+    await expect.poll(async () => (await opened(page)).length).toBe(1);
+
+    await submitWith(page, '#edit-submit');
+    const [message] = await submits(page);
+    expect(message.before.title).toBe('Asthma in adults');
+    expect(message.after.title).toBe('Attempt one');
+    // Against the ORIGINAL body the second paragraph is new. Against the re-render it is not,
+    // and the body would read as unchanged.
+    expect(message.after.new_sentences).toEqual(['Controller inhalers are the mainstay of treatment for most people.']);
+    expect(message.bodyChangeRatio).toBeGreaterThan(0);
+  });
+
+  test('an answer that is not a set of form values is ignored', async ({ page }) => {
+    await open(page, '/node/23110/edit', FORM());
+    await stubRuntime(page, undefined, { raw: { title: 42 } });
+    await mount(page);
+    await expect.poll(async () => (await opened(page)).length).toBe(1);
+    await submitWith(page, '#edit-submit');
+    const [message] = await submits(page);
+    expect(message.before.title).toBe('Asthma in adults');
   });
 });
 

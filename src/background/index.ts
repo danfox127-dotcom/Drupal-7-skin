@@ -1,5 +1,7 @@
 /**
- * Service worker. Its only job is the cross-origin fetch the import flow needs.
+ * Service worker: the cross-origin fetch the import flow needs, the rich-editor bridge, the
+ * update check, and, once someone connects it, everything that talks to Varys (see "Varys:
+ * following a save" below).
  *
  * Why it exists: a content script runs in the page's origin and cannot read a
  * foreign site, so migration source pages must be fetched from the extension's own
@@ -20,9 +22,22 @@ import {
 import { VARYS_API, VARYS_APP_ORIGINS } from '../lib/varys/config';
 import {
   acceptConnectMessage, getConnection, setConnection, toStatus,
-  type VarysDisconnectRequest, type VarysDisconnectResponse, type VarysRevocation,
+  type VarysConnection, type VarysDisconnectRequest, type VarysDisconnectResponse, type VarysRevocation,
   type VarysStatusRequest,
 } from '../lib/varys/connection';
+import type {
+  VarysFormOpenedMessage, VarysFormOpenedResponse, VarysSubmitMessage,
+} from '../lib/varys/pageState';
+import { showVarysNotice } from '../lib/varys/notice';
+import {
+  ACTION_EXPIRED_COPY, ACTION_NOT_CONNECTED_COPY, ACTION_UNREACHABLE_COPY, EXPIRED_COPY,
+  PENDING_NOTICE_KEY, PENDING_TIMEOUT_MS, QUEUE_KEY, SITES_TTL_MS, UNREACHABLE_COPY, UNTRACKED_COPY,
+  failureOf, isTrackedSite, mergeCarriedBefore, nextOpenedForm, noticeForResult, outcomeOfNavigation,
+  outcomeOfTimeout, pruneQueue, toSaveRequest,
+  type FormEvent, type NavigationOutcome, type OpenedForm, type PendingSubmit, type QueuedSave,
+  type SaveRequest, type SitesCache, type StoredNotice, type VarysActionRequest, type VarysActionResponse,
+  type VarysNotice,
+} from '../lib/varys/submissions';
 
 /** Popup asking for a fresh check, so "Check again" reuses the worker's one fetch path. */
 export interface CheckForUpdateRequest {
@@ -383,6 +398,11 @@ async function varysDisconnect(): Promise<VarysDisconnectResponse> {
   }
 
   await setConnection(null);
+  // Nothing of this person's is left waiting to go to Varys: saves queued under this key, the
+  // site list it fetched, and a notice not yet shown. A later connection, possibly someone
+  // else's, starts clean.
+  await withQueue(() => chrome.storage.local.remove([QUEUE_KEY, PENDING_NOTICE_KEY]));
+  await chrome.storage.session.remove(SITES_KEY);
   try {
     await chrome.permissions.remove({ origins: [VARYS_API + '/*'] });
   } catch (err) {
@@ -390,6 +410,411 @@ async function varysDisconnect(): Promise<VarysDisconnectResponse> {
   }
   return { ok: true, revocation };
 }
+
+// ===================================================================== Varys: following a save
+//
+// The content script tells the worker when a node form opens (varysFormOpened) and when it is
+// saved (varysSubmit), and never waits for an answer to the second. Everything after that is
+// here: following the tab to see whether the save went through, working out the page's public
+// address, sending it to Varys or queueing it, and showing the result in the tab. The
+// decisions are pure functions in src/lib/varys/submissions.ts; this is their storage, network
+// and tab events.
+//
+// Nothing here can delay Drupal's Save: the worker only listens to the tab, it never blocks a
+// request, and the content script has already let the submit go by the time any of it runs.
+//
+// State that lives between events is in chrome.storage.session, because a service worker can
+// be stopped between any two of them: the form a tab opened with (varysForm:<tabId>) and the
+// save being followed (varysPending:<tabId>). It is cleared when the browser closes. The queue
+// is in chrome.storage.local, because it must outlive a restart.
+
+const formKey = (tabId: number) => `varysForm:${tabId}`;
+const pendingKey = (tabId: number) => `varysPending:${tabId}`;
+const SITES_KEY = 'varysSites';
+const VARYS_TIMEOUT_MS = 15_000;
+
+/**
+ * Runs a tab's state changes one after another, in the order their events arrived. Each is a
+ * read-modify-write of that tab's session storage, and two interleaved would lose one. Only
+ * the bookkeeping runs in this order; sending to Varys happens outside it, so a slow Varys
+ * never holds up the next event.
+ */
+const tabWork = new Map<number, Promise<void>>();
+
+function inTabOrder(tabId: number, work: () => Promise<void>): Promise<void> {
+  const next = (tabWork.get(tabId) ?? Promise.resolve())
+    .then(work)
+    .catch(err => console.warn('[D7 Studio] Varys: could not follow a save', err));
+  tabWork.set(tabId, next);
+  void next.then(() => { if (tabWork.get(tabId) === next) tabWork.delete(tabId); });
+  return next;
+}
+
+async function sessionGet<T>(key: string): Promise<T | undefined> {
+  return (await chrome.storage.session.get(key))[key] as T | undefined;
+}
+
+async function putOpenedForm(tabId: number, opened: OpenedForm | undefined): Promise<void> {
+  if (opened) await chrome.storage.session.set({ [formKey(tabId)]: opened });
+  else await chrome.storage.session.remove(formKey(tabId));
+}
+
+async function applyFormEvent(tabId: number, event: FormEvent): Promise<OpenedForm | undefined> {
+  const opened = nextOpenedForm(await sessionGet<OpenedForm>(formKey(tabId)), event);
+  await putOpenedForm(tabId, opened);
+  return opened;
+}
+
+/**
+ * A node form opened in a tab. The worker keeps the first one, and answers with the values it
+ * was first read from (see OpenedForm). Nothing is kept for someone who is not connected.
+ */
+async function formOpened(
+  tabId: number, url: string, m: VarysFormOpenedMessage,
+): Promise<VarysFormOpenedResponse | null> {
+  if (!(await getConnection())) return null;
+  const opened = await applyFormEvent(tabId, {
+    kind: 'opened', url, formPath: m.formPath, before: m.before, raw: m.raw,
+  });
+  return { raw: opened?.raw ?? null };
+}
+
+/**
+ * A node form was saved. Held as the tab's pending submission, with the before the form FIRST
+ * opened with, until the tab shows where Drupal sent it.
+ *
+ * The connection is checked here and again when sending: the page decided whether to record
+ * only once, when it loaded.
+ */
+async function submitted(tabId: number, formUrl: string, m: VarysSubmitMessage): Promise<void> {
+  if (!(await getConnection())) return;
+  // The first record of this form wins, so this only stores the message's before when the
+  // form's opening was never heard (a Save before the page had finished reading itself).
+  const opened = await applyFormEvent(tabId, {
+    kind: 'opened', url: formUrl, formPath: m.formPath, before: m.before, raw: null,
+  });
+  const { type: _type, formPath, ...payload } = m;
+  const pending = mergeCarriedBefore(opened, { tabId, formPath, formUrl, submittedAt: Date.now(), payload });
+  await chrome.storage.session.set({ [pendingKey(tabId)]: pending });
+
+  // Best effort: a worker still running then sends a save whose navigation never finished.
+  // One that has been stopped is caught by the next sweep instead.
+  setTimeout(() => { void sweepStalePending(); }, PENDING_TIMEOUT_MS + 1_000);
+}
+
+/** The tab is at `url`, and with `complete` it has finished loading it. */
+async function tabUpdated(tabId: number, url: string, complete: boolean): Promise<void> {
+  const got = await chrome.storage.session.get([formKey(tabId), pendingKey(tabId)]);
+  const opened = got[formKey(tabId)] as OpenedForm | undefined;
+  const pending = got[pendingKey(tabId)] as PendingSubmit | undefined;
+  if (!opened && !pending) return;
+
+  let nextOpened = nextOpenedForm(opened, { kind: 'navigated', url });
+  if (pending && complete) {
+    await chrome.storage.session.remove(pendingKey(tabId));
+    const outcome = outcomeOfNavigation(pending, url);
+    // A failed save is dropped: the form re-rendered, and its next Save is a new submission
+    // that carries the original before anyway.
+    if (outcome.kind !== 'failed') {
+      nextOpened = nextOpenedForm(nextOpened, { kind: 'saved' });
+      void send(pending, outcome, tabId);
+    }
+  }
+  if (nextOpened !== opened) await putOpenedForm(tabId, nextOpened);
+}
+
+/**
+ * Sends the saves whose navigation was never seen to finish within PENDING_TIMEOUT_MS (a tab
+ * closed mid-save, a server slower than that), with the address the form knew. There is no
+ * alarm to run this on time, which would need the `alarms` permission for one rare case, so it
+ * runs whenever the worker next hears about a form or a closed tab.
+ */
+async function sweepStalePending(): Promise<void> {
+  const all = await chrome.storage.session.get(null);
+  const now = Date.now();
+  for (const [key, value] of Object.entries(all)) {
+    if (!key.startsWith('varysPending:')) continue;
+    const pending = value as PendingSubmit;
+    if (now - pending.submittedAt < PENDING_TIMEOUT_MS) continue;
+    await inTabOrder(pending.tabId, async () => {
+      // Re-read inside the tab's order: its navigation may have been handled meanwhile.
+      const still = await sessionGet<PendingSubmit>(pendingKey(pending.tabId));
+      if (!still || still.submittedAt !== pending.submittedAt) return;
+      await chrome.storage.session.remove(pendingKey(pending.tabId));
+      void send(still, outcomeOfTimeout(still), still.tabId);
+    });
+  }
+}
+
+function send(pending: PendingSubmit, outcome: NavigationOutcome, tabId: number): Promise<void> {
+  if (outcome.kind !== 'saved') {
+    if (outcome.kind === 'noAddress') {
+      console.warn('[D7 Studio] Varys: a new page was saved, but where it lives could not be told, so it was not sent.');
+    }
+    return Promise.resolve();
+  }
+  return sendSave(toSaveRequest(pending.payload, outcome.pageUrl, outcome.nodeId), tabId)
+    .catch(err => console.warn('[D7 Studio] Varys: could not send a save', err));
+}
+
+// ---------------------------------------------------------------------------------- the network
+
+interface VarysAnswer {
+  /** Null when there was no answer at all: offline, blocked, refused by CORS, timed out. */
+  status: number | null;
+  json: unknown;
+}
+
+async function callVarys(
+  connection: VarysConnection, method: 'GET' | 'POST', path: string, body?: unknown,
+): Promise<VarysAnswer> {
+  try {
+    const response = await fetch(`${VARYS_API}${path}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${connection.key}`,
+        ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      credentials: 'omit',
+      signal: AbortSignal.timeout(VARYS_TIMEOUT_MS),
+    });
+    let json: unknown = null;
+    try {
+      json = await response.json();
+    } catch {
+      // Not JSON, or no body. The status still says what happened.
+    }
+    return { status: response.status, json };
+  } catch {
+    return { status: null, json: null };
+  }
+}
+
+const succeeded = (a: VarysAnswer) => a.status !== null && a.status >= 200 && a.status < 300;
+
+/** Marks the key Varys refused as expired, unless it has been replaced since. */
+async function markExpired(refused: VarysConnection): Promise<void> {
+  const current = await getConnection();
+  if (current && current.key === refused.key && !current.expired) {
+    await setConnection({ ...current, expired: true });
+  }
+}
+
+/**
+ * The sites Varys keeps a workspace for, cached for a day. `expired` when Varys refused the
+ * key; null when it could not be asked, in which case the save itself is sent and Varys,
+ * which checks the site again anyway, decides.
+ */
+async function trackedSites(connection: VarysConnection): Promise<string[] | 'expired' | null> {
+  const cached = await sessionGet<SitesCache>(SITES_KEY);
+  const ours = cached && cached.email === connection.email ? cached : undefined;
+  if (ours && Date.now() - ours.fetchedAt < SITES_TTL_MS) return ours.sites;
+
+  const answer = await callVarys(connection, 'GET', '/api/extension/connection');
+  const sites = (answer.json as { sites?: unknown } | null)?.sites;
+  if (succeeded(answer) && Array.isArray(sites) && sites.every(s => typeof s === 'string')) {
+    const fresh: SitesCache = { email: connection.email, sites: sites as string[], fetchedAt: Date.now() };
+    await chrome.storage.session.set({ [SITES_KEY]: fresh });
+    return fresh.sites;
+  }
+  if (answer.status === 401) return 'expired';
+  return ours?.sites ?? null;
+}
+
+// ------------------------------------------------------------------------------------ the queue
+
+/**
+ * The queue is read, changed and written back by more than one path (a failed send adds to
+ * it, a flush drains it), so every change to it goes through this one line.
+ */
+let queueWork: Promise<unknown> = Promise.resolve();
+
+function withQueue<T>(work: () => Promise<T>): Promise<T> {
+  const run = queueWork.then(work, work);
+  queueWork = run.catch(() => undefined);
+  return run;
+}
+
+const readQueue = async (): Promise<QueuedSave[]> =>
+  pruneQueue((await chrome.storage.local.get(QUEUE_KEY))[QUEUE_KEY], Date.now());
+
+/** An empty queue is no queue: nothing is kept for someone with nothing waiting. */
+const writeQueue = (queue: QueuedSave[]): Promise<void> => queue.length === 0
+  ? chrome.storage.local.remove(QUEUE_KEY)
+  : chrome.storage.local.set({ [QUEUE_KEY]: queue });
+
+function enqueue(request: SaveRequest, email: string): Promise<void> {
+  return withQueue(async () => {
+    await writeQueue(pruneQueue([...await readQueue(), { request, queuedAt: Date.now(), email }], Date.now()));
+  });
+}
+
+/**
+ * Sends what the queue holds, oldest first, and stops at the first failure that says Varys is
+ * still unreachable or the key is dead, keeping that save and everything after it.
+ *
+ * A queued save is dropped without being sent when it was made under a different person's
+ * connection, or Varys no longer tracks its site; it is dropped after sending when Varys took
+ * it, or called it malformed (a 422 fails the same way however often it is retried).
+ */
+function flushQueue(): Promise<void> {
+  return withQueue(async () => {
+    const queue = await readQueue();
+    const connection = await getConnection();
+    if (queue.length === 0 || !connection || connection.expired) {
+      await writeQueue(queue);
+      return;
+    }
+
+    const sites = await trackedSites(connection);
+    if (sites === 'expired') {
+      await markExpired(connection);
+      await writeQueue(queue);
+      return;
+    }
+
+    const kept: QueuedSave[] = [];
+    for (let i = 0; i < queue.length; i++) {
+      const entry = queue[i];
+      if (entry.email !== connection.email) continue;
+      if (sites && !isTrackedSite(entry.request.page_url, sites)) continue;
+
+      const answer = await callVarys(connection, 'POST', '/api/extension/saves', entry.request);
+      if (succeeded(answer)) continue;
+      const failure = failureOf(answer.status);
+      if (failure === 'malformed') {
+        console.warn('[D7 Studio] Varys refused a queued save as malformed, so it was dropped', answer.json);
+        continue;
+      }
+      if (failure === 'expired') await markExpired(connection);
+      kept.push(...queue.slice(i));
+      break;
+    }
+    await writeQueue(kept);
+  });
+}
+
+// ---------------------------------------------------------------------------------- sending one
+
+/**
+ * Sends one save to Varys and tells the editor how it went.
+ *
+ * - Not connected: nothing at all.
+ * - An expired key: queued, and the editor is told to reconnect.
+ * - A site Varys does not track: nothing is sent, and the editor is told so.
+ * - Otherwise posted, after anything already queued. Varys's answer is the notice. A 401
+ *   expires the key and queues the save; a 422 is this extension's bug and is only logged;
+ *   anything else (no answer, a 5xx, another 4xx) queues it for later.
+ */
+async function sendSave(request: SaveRequest, tabId: number | null): Promise<void> {
+  const host = new URL(request.page_url).host;
+  const show = (notice: VarysNotice) => showNotice(tabId, host, notice);
+
+  let connection = await getConnection();
+  if (!connection) return;
+  if (!connection.expired) {
+    await flushQueue();
+    connection = await getConnection();
+    if (!connection) return;
+  }
+  if (connection.expired) {
+    await enqueue(request, connection.email);
+    return show({ message: EXPIRED_COPY });
+  }
+
+  const sites = await trackedSites(connection);
+  if (sites === 'expired') {
+    await markExpired(connection);
+    await enqueue(request, connection.email);
+    return show({ message: EXPIRED_COPY });
+  }
+  if (sites && !isTrackedSite(request.page_url, sites)) return show({ message: UNTRACKED_COPY });
+
+  const answer = await callVarys(connection, 'POST', '/api/extension/saves', request);
+  if (succeeded(answer)) {
+    const notice = noticeForResult(answer.json);
+    if (notice) await show(notice);
+    return;
+  }
+  switch (failureOf(answer.status)) {
+    case 'expired':
+      await markExpired(connection);
+      await enqueue(request, connection.email);
+      return show({ message: EXPIRED_COPY });
+    case 'malformed':
+      console.warn('[D7 Studio] Varys refused a save as malformed; it was not queued', answer.json);
+      return;
+    case 'retry':
+      await enqueue(request, connection.email);
+      return show({ message: UNREACHABLE_COPY });
+  }
+}
+
+/**
+ * Shows a notice in the tab the save was made in, injected by the worker: after a save Drupal
+ * usually lands on the page's public alias, where the content script does not run.
+ *
+ * If it cannot be injected (the tab has gone, or is on a page the extension may not touch),
+ * the notice is kept for the content script to show on its next page on the same site.
+ */
+async function showNotice(tabId: number | null, host: string, notice: VarysNotice): Promise<void> {
+  if (tabId !== null) {
+    try {
+      await chrome.scripting.executeScript({ target: { tabId }, func: showVarysNotice, args: [notice] });
+      return;
+    } catch (err) {
+      console.warn('[D7 Studio] Varys: could not show the notice in the tab; keeping it for the next page', err);
+    }
+  }
+  // The text only: the content script shows no action (see showStoredVarysNotice there).
+  const stored: StoredNotice = { host, notice: { message: notice.message }, storedAt: Date.now() };
+  await chrome.storage.local.set({ [PENDING_NOTICE_KEY]: stored });
+}
+
+/** Undo or Log it anyway, from the notice's button. */
+async function actOnSave(request: VarysActionRequest): Promise<VarysActionResponse> {
+  const { saveId } = request;
+  if (!Number.isInteger(saveId) || saveId <= 0) return { ok: false, message: ACTION_UNREACHABLE_COPY };
+
+  const connection = await getConnection();
+  if (!connection) return { ok: false, message: ACTION_NOT_CONNECTED_COPY };
+  if (connection.expired) return { ok: false, message: ACTION_EXPIRED_COPY };
+
+  const verb = request.type === 'varysUndo' ? 'undo' : 'log';
+  const answer = await callVarys(connection, 'POST', `/api/extension/saves/${saveId}/${verb}`);
+  if (succeeded(answer)) {
+    const notice = noticeForResult(answer.json);
+    return {
+      ok: true,
+      message: notice?.message ?? '',
+      // Log it anyway answers like a save: once it counts, the button becomes Undo.
+      ...(notice?.action?.type === 'varysUndo' ? { action: notice.action } : {}),
+    };
+  }
+  if (answer.status === 401) {
+    await markExpired(connection);
+    return { ok: false, message: ACTION_EXPIRED_COPY };
+  }
+  // Varys answered, and said why (a save that is not this person's, or has gone): its words.
+  const detail = (answer.json as { detail?: unknown } | null)?.detail;
+  if (answer.status !== null && typeof detail === 'string') return { ok: false, message: detail };
+  return { ok: false, message: ACTION_UNREACHABLE_COPY };
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const complete = changeInfo.status === 'complete';
+  const url = complete ? tab.url : changeInfo.url;
+  if (!url) return;
+  void inTabOrder(tabId, () => tabUpdated(tabId, url, complete));
+});
+
+chrome.tabs.onRemoved.addListener(tabId => {
+  // The form's record goes with its tab. A save it was following is left for the sweep,
+  // which sends it with the address the form knew.
+  void inTabOrder(tabId, () => chrome.storage.session.remove(formKey(tabId)));
+  void sweepStalePending();
+});
 
 /**
  * The Varys connect page hands over the key here.
@@ -407,7 +832,12 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
 
   void setConnection({ key: verdict.key, email: verdict.email, connectedAt: new Date().toISOString() })
     .then(
-      () => sendResponse({ ok: true }),
+      () => {
+        sendResponse({ ok: true });
+        // A new key may be a different person's, with a different list of sites. Then send
+        // what was queued while the old one was expired or Varys was away.
+        void chrome.storage.session.remove(SITES_KEY).then(flushQueue);
+      },
       () => sendResponse({ ok: false, error: 'storage' }),
     );
   return true;
@@ -415,10 +845,46 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
 
 chrome.runtime.onMessage.addListener((
   message: FetchSourceRequest | SyncRichEditorRequest | RichEditorLifecycleRequest
-    | CheckForUpdateRequest | ReadRichEditorRequest | VarysStatusRequest | VarysDisconnectRequest,
+    | CheckForUpdateRequest | ReadRichEditorRequest | VarysStatusRequest | VarysDisconnectRequest
+    | VarysFormOpenedMessage | VarysSubmitMessage | VarysActionRequest,
   sender,
   sendResponse
 ) => {
+  if (message?.type === 'varysFormOpened') {
+    const tabId = sender.tab?.id;
+    const url = sender.url;
+    if (tabId === undefined || !url || sender.frameId !== 0) {
+      sendResponse(null);
+      return false;
+    }
+    void inTabOrder(tabId, async () => {
+      let answer: VarysFormOpenedResponse | null = null;
+      try {
+        answer = await formOpened(tabId, url, message);
+      } finally {
+        sendResponse(answer);
+      }
+    });
+    void sweepStalePending();
+    return true;
+  }
+
+  if (message?.type === 'varysSubmit') {
+    // No answer: the page is navigating away and nobody is waiting for one.
+    const tabId = sender.tab?.id;
+    const url = sender.url;
+    if (tabId !== undefined && url && sender.frameId === 0) {
+      void inTabOrder(tabId, () => submitted(tabId, url, message));
+      void sweepStalePending();
+    }
+    return false;
+  }
+
+  if (message?.type === 'varysUndo' || message?.type === 'varysLogAnyway') {
+    void actOnSave(message).then(sendResponse);
+    return true;
+  }
+
   if (message?.type === 'fetchSource') {
     void fetchSource(message.url).then(sendResponse);
     // Keeps the message channel open for the async reply.
@@ -536,5 +1002,9 @@ async function checkForUpdate(): Promise<void> {
   }
 }
 
-chrome.runtime.onStartup.addListener(() => { void checkForUpdate(); });
+chrome.runtime.onStartup.addListener(() => {
+  void checkForUpdate();
+  // Saves queued in an earlier session, while Varys was away.
+  void flushQueue();
+});
 chrome.runtime.onInstalled.addListener(() => { void checkForUpdate(); });
