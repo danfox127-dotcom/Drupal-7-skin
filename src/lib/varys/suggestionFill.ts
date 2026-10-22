@@ -86,7 +86,11 @@ export function descriptionTarget(fields: FieldDescriptor[]): 'summary' | 'overr
   return summary ? 'summary' : null;
 }
 
-function fieldFor(kind: FillKind, fields: FieldDescriptor[]): FieldDescriptor | undefined {
+/**
+ * The field a suggestion of this kind would be written into right now: the one `fillOne`
+ * writes, so the panel's "Now" is read from the same place. Undefined when the form has none.
+ */
+export function fieldFor(kind: FillKind, fields: FieldDescriptor[]): FieldDescriptor | undefined {
   switch (kind) {
     case 'title':
       return titleField(fields);

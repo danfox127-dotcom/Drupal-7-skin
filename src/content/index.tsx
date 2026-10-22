@@ -32,6 +32,7 @@ import { enhanceListForm, isFixedConfigParagraphField } from './listEnhancements
 import { anchorAutocompletePopups } from './autocompletePopups';
 import { mountSpanCleanup } from './spanCleanup';
 import { mountVarysCapture, varysIsConnected } from './varysCapture';
+import { startVarysPanel } from './varysPanel';
 import { Toast } from '../components/Toast';
 import { PENDING_NOTICE_KEY, storedNoticeFor } from '../lib/varys/submissions';
 import { DoctorBatchAdder } from '../components/editor/DoctorBatchAdder';
@@ -584,6 +585,8 @@ const init = async () => {
   if (isNodeFormPath()) {
     // Independent of the editor and the schema below, and of the Two-Pane Editor setting.
     void startVarysCapture();
+    // In this same content script, so what it fills is what the capture reports at Save.
+    void startVarysPanel();
 
     /**
      * Before the form is read, not after.

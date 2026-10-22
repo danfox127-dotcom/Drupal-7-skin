@@ -4183,6 +4183,21 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
   const sessionKeys = (context: BrowserContext) =>
     worker(context).evaluate(() => chrome.storage.session.get(null).then(r => Object.keys(r)));
 
+  /**
+   * The suggestions panel asks Varys about a form as it opens: the list of sites, then the
+   * page, when the site is one Varys tracks. Waits for that, so a test can tell what the SAVE
+   * sent from what the panel asked, and so the save's own site check finds the list cached.
+   * Returns how many calls had been made by then.
+   */
+  const panelHasAsked = async (context: BrowserContext, calls: VarysCall[], tracked = true) => {
+    await expect.poll(async () => (await sessionKeys(context)).includes('varysSites')).toBe(true);
+    if (tracked) await expect.poll(() => calls.some(c => c.path === '/api/extension/suggestions')).toBe(true);
+    return calls.length;
+  };
+  /** What reached Varys after call `from`, leaving out the panel asking about each form that opened. */
+  const sentSince = (calls: VarysCall[], from: number) =>
+    calls.slice(from).filter(c => !c.path.startsWith('/api/extension/suggestions'));
+
   test('logs a search edit', async ({ page, context, settings }) => {
     await settings({ varysConnection: connected, nodeEditor: false });
     const calls = await stubVarys(context, varysUp());
@@ -4289,6 +4304,7 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     const calls = await stubVarys(context, varysUp());
 
     await openForm(page);
+    const opened = await panelHasAsked(context, calls);
     // Drupal answers with the edit form again, which is what a validation error looks like.
     await saveAndPublish(page);
     expect(page.url()).toBe(FORM);
@@ -4297,7 +4313,7 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     // The worker judged it and let it go: nothing is left waiting to be sent later.
     await expect.poll(async () => (await sessionKeys(context)).filter(k => k.startsWith('varysPending:'))).toEqual([]);
     await page.waitForTimeout(1000);
-    expect(calls).toEqual([]);
+    expect(sentSince(calls, opened)).toEqual([]);
     await expect(page.locator('#d7-varys-notice')).toHaveCount(0);
     expect(await stored(context, 'varysPendingNotice')).toBeUndefined();
   });
@@ -4379,12 +4395,13 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     await saveGoesThrough(context);
 
     await openForm(page);
+    const opened = await panelHasAsked(context, calls);
     await worker(context).evaluate(() => chrome.storage.local.remove('varysConnection'));
     await saveAndPublish(page);
     expect(page.url()).toBe(PUBLIC);
 
     await page.waitForTimeout(1500);
-    expect(calls).toEqual([]);
+    expect(sentSince(calls, opened)).toEqual([]);
     await expect(page.locator('#d7-varys-notice')).toHaveCount(0);
     expect(await stored(context, 'varysPendingNotice')).toBeUndefined();
     expect(await stored(context, 'varysQueue')).toBeUndefined();
@@ -4396,6 +4413,8 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     await saveGoesThrough(context);
 
     await openForm(page);
+    // The panel fetches the list as the form opens, and is told the site is not tracked.
+    await panelHasAsked(context, calls, false);
     await saveAndPublish(page);
 
     await expect(page.getByText(UNTRACKED)).toBeVisible();
@@ -4567,10 +4586,12 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     await saveGoesThrough(context);
 
     await openForm(page);
+    await panelHasAsked(context, calls);
     await saveAndPublish(page);
 
     await expect(page.getByText(EXPIRED)).toBeVisible();
-    expect(calls.map(c => `${c.method} ${c.path}`)).toEqual(['GET /api/extension/connection', 'POST /api/extension/saves']);
+    expect(sentSince(calls, 0).map(c => `${c.method} ${c.path}`))
+      .toEqual(['GET /api/extension/connection', 'POST /api/extension/saves']);
     expect((await stored(context, 'varysConnection') as any).expired).toBe(true);
     expect(await stored(context, 'varysQueue')).toHaveLength(1);
   });
@@ -4596,6 +4617,8 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     await saveGoesThrough(context);
 
     await openForm(page);
+    // The panel asks for the list as the form opens: the save then finds it cached.
+    await panelHasAsked(context, calls);
     await saveAndPublish(page);
     await expect.poll(() => savesIn(calls).length).toBe(1);
 
@@ -4657,6 +4680,7 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
 
     await openForm(page);
     await expect.poll(async () => (await sessionKeys(context)).some(k => k.startsWith('varysForm:'))).toBe(true);
+    const opened = await panelHasAsked(context, calls);
     await saveAndPublish(page, { 'title_field[und][0][value]': 'Lost to the login page' });
     expect(page.url()).toBe(login);
 
@@ -4664,7 +4688,7 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     await expect.poll(async () => (await sessionKeys(context)).filter(k => k.startsWith('varysPending:'))).toEqual([]);
     expect((await sessionKeys(context)).some(k => k.startsWith('varysForm:'))).toBe(true);
     await page.waitForTimeout(500);
-    expect(calls).toEqual([]);
+    expect(sentSince(calls, opened)).toEqual([]);
 
     await openForm(page);
     await saveAndPublish(page, { 'title_field[und][0][value]': 'Saved after logging in' });
@@ -4999,5 +5023,537 @@ test.describe('Varys suggestions: worker', () => {
 
     expect(reply).toEqual({ ok: false, result: 'no-editor' });
     expect(await page.evaluate(() => (window as any).__inserted)).toEqual([]);
+  });
+});
+
+test.describe('Varys suggestions: panel', () => {
+  const KEY = 'vxk_' + 'a'.repeat(43);
+  const EMAIL = 'x@cumc.columbia.edu';
+  const connected = { key: KEY, email: EMAIL, connectedAt: '2026-10-22T12:00:00.000Z' };
+  const SITES = { email: EMAIL, user_id: '00000000-0000-0000-0000-000000000001', sites: ['cuimc.columbia.edu'] };
+  const LOGGED = {
+    save_id: 41, edit_id: 7, outcome: 'logged', change_type: 'meta',
+    message: 'Logged in Varys as a title and description change.',
+  };
+
+  /** The captured List form: title, Summary, the metatags, pathauto ticked over an empty, disabled alias box. */
+  const FORM = `${HOST}/node/23110/edit`;
+  /** The Specialty form: a CKEditor body whose stub records each insert in window.__inserted. */
+  const SPECIALTY = `${HOST}/node/17176/edit`;
+  /** The List page's alias, for a test that gives its form a View tab. */
+  const ALIAS = '/faculty/our-list';
+
+  const META_TITLE = '[name="metatags[und][title][value]"]';
+  const META_DESCRIPTION = '[name="metatags[und][description][value]"]';
+  const SUMMARY = '[name="field_summary[und][0][value]"]';
+  const TITLE = '[name="title_field[und][0][value]"]';
+  const PATHAUTO = '[name="path[pathauto]"]';
+  const ALIAS_BOX = '[name="path[alias]"]';
+
+  const HEADER = 'Varys · suggestions for this page';
+  const NOT_CRAWLED = "Varys hasn't read this page yet, so it has no suggestions. It reads each site weekly.";
+  const NONE = "Varys hasn't written suggestions for this page yet.";
+  const GENERATING = 'Varys is writing suggestions. This takes about a minute.';
+  const STILL_WRITING = 'Still writing. Check back in a few minutes.';
+  const KEEPS_ADDRESS = 'Using this title keeps the current web address.';
+  const LET_IT_CHANGE = 'Let the address change instead';
+  const NO_ADDRESS = "Varys can't tell this page's current web address, so it won't change the title here. "
+    + 'Change it by hand if you need to.';
+  const INTO_SUMMARY = 'Goes into Summary, which is also the search description.';
+  const INTO_OVERRIDE = 'Goes into the search description field, which overrides Summary on this page.';
+  const EXPIRED = 'Your Varys connection has expired. Reconnect from the extension menu.';
+  const NO_CURSOR = 'Click in the body where the heading should go, then press Insert again.';
+  /** Where the panel remembers an Ask Varys in the tab's sessionStorage, followed by the page's public address. */
+  const PENDING_KEY = 'd7-varys-ask:';
+  const HEADING = 'Fish & chips <b>';
+
+  const ready = (over: Record<string, unknown> = {}) => ({
+    status: 'ready',
+    made_at: new Date(Date.now() - 2 * 86_400_000).toISOString(),
+    clinical_review_note: null,
+    // Varys's `current` keeps the site's suffix and can be stale: the panel never shows it as "Now".
+    current: { meta_title: 'Stale title | CUIMC', meta_description: 'Stale description.', h1: 'Stale', h2s: ['Overview'] },
+    suggested: {
+      meta_title: 'New Search Title',
+      meta_description: 'A new description.',
+      h1: 'A Better Title',
+      h2s: ['Overview', HEADING],
+    },
+    ...over,
+  });
+
+  /** Varys tracking cuimc.columbia.edu and logging saves; `suggestions` answers both suggestion requests. */
+  const varys = (suggestions: (call: VarysCall) => VarysAnswer) => (call: VarysCall): VarysAnswer => {
+    if (call.path === '/api/extension/connection') return { status: 200, body: SITES };
+    if (call.path.startsWith('/api/extension/suggestions')) return suggestions(call);
+    if (call.path === '/api/extension/saves') return { status: 200, body: LOGGED };
+    return { status: 404, body: { detail: 'Not Found' } };
+  };
+  const answering = (body: unknown) => varys(() => ({ status: 200, body }));
+  const suggestionsIn = (calls: VarysCall[]) => calls.filter(c => c.path.startsWith('/api/extension/suggestions'));
+  const generatesIn = (calls: VarysCall[]) => calls.filter(c => c.path === '/api/extension/suggestions/generate');
+  const savesIn = (calls: VarysCall[]) => calls.filter(c => c.method === 'POST' && c.path === '/api/extension/saves');
+
+  const panel = (page: Page) => page.locator('[data-varys-panel]');
+  const row = (page: Page, name: string) => panel(page).getByRole('group', { name, exact: true });
+  const suggestedHeading = (page: Page, text: string) =>
+    panel(page).getByRole('list', { name: 'Varys suggests' }).getByRole('listitem').filter({ hasText: text });
+
+  /** The List form, given a View tab carrying the page's alias, or otherwise changed, when a test asks. */
+  const serveForm = (context: BrowserContext, opts: { viewTab?: string; edit?: (html: string) => string } = {}) =>
+    context.route(FORM, route => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      let html = read('captured/list-populated.html');
+      if (opts.viewTab !== undefined) {
+        html = html.replace(/(<body[^>]*>)/, `$1<ul class="tabs primary"><li><a href="${opts.viewTab}">View</a></li>`
+          + '<li><a href="/node/23110/edit">Edit</a></li></ul>');
+      }
+      if (opts.edit) html = opts.edit(html);
+      return route.fulfill({ status: 200, contentType: 'text/html', body: html });
+    });
+
+  /** Drupal answering a good save: with the public page, without leaving the machine (see publicPage above). */
+  const saveLands = (context: BrowserContext, form: string) =>
+    context.route(form, route => route.request().method() === 'POST'
+      ? route.fulfill({
+        status: 200, contentType: 'text/html',
+        body: `<!doctype html><html><head><script>history.replaceState(null, '', '/news/foo');</script></head>`
+          + '<body><h1>Foo</h1></body></html>',
+      })
+      : route.fallback());
+
+  /** Listens in the service worker for the messages a content script sends it. */
+  const listenInWorker = async (context: BrowserContext) => {
+    const [worker] = context.serviceWorkers();
+    await worker.evaluate(() => {
+      const w = self as unknown as { __seen: unknown[] };
+      w.__seen = [];
+      chrome.runtime.onMessage.addListener(message => {
+        if (message?.type) w.__seen.push(message);
+        return false;
+      });
+    });
+    return () => worker.evaluate(() => (self as unknown as { __seen: any[] }).__seen);
+  };
+
+  const open = async (page: Page, url = FORM) => {
+    await page.goto(url);
+    await expect(panel(page)).toHaveCount(1, { timeout: OVERLAY_MOUNT_TIMEOUT });
+  };
+
+  /** Types into a native field the way a person does: a new value, and the input event Drupal hears. */
+  const typeInto = (page: Page, selector: string, text: string) => page.evaluate(([s, t]) => {
+    const el = document.querySelector(s) as HTMLInputElement;
+    el.value = t;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+  }, [selector, text] as const);
+
+  test('ready suggestions fill the search title, and Undo restores it', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready()));
+    await open(page);
+    const ORIGINAL = await page.inputValue(META_TITLE);
+
+    await expect(panel(page).getByText(HEADER)).toBeVisible();
+    await expect(panel(page).getByText('made 2 days ago')).toBeVisible();
+    // "Now" is the live field, never Varys's own copy of the page.
+    await expect(panel(page).getByText('Stale title | CUIMC')).toHaveCount(0);
+
+    await row(page, 'Search result title').getByRole('button', { name: 'Use' }).click();
+    expect(await page.inputValue(META_TITLE)).toBe('New Search Title');
+    await expect(row(page, 'Search result title').getByRole('button', { name: 'Use' })).toHaveCount(0);
+
+    await row(page, 'Search result title').getByRole('button', { name: 'Undo' }).click();
+    expect(await page.inputValue(META_TITLE)).toBe(ORIGINAL);
+    await expect(row(page, 'Search result title').getByRole('button', { name: 'Use' })).toBeVisible();
+  });
+
+  test('using the title keeps the address', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready()));
+    await serveForm(context, { viewTab: ALIAS });
+    await open(page);
+
+    await row(page, 'Title').getByRole('button', { name: 'Use' }).click();
+
+    expect(await page.inputValue(TITLE)).toBe('A Better Title');
+    expect(await page.isChecked(PATHAUTO)).toBe(false);
+    expect(await page.inputValue(ALIAS_BOX)).toBe('faculty/our-list');
+    await expect(panel(page).getByText(KEEPS_ADDRESS)).toBeVisible();
+
+    await panel(page).getByRole('button', { name: LET_IT_CHANGE }).click();
+    expect(await page.isChecked(PATHAUTO)).toBe(true);
+    await expect(panel(page).getByText(KEEPS_ADDRESS)).toHaveCount(0);
+  });
+
+  test('a title fill that would lose the address is not offered, and says why', async ({ page, context, settings }) => {
+    // No View tab: the page's address is /node/23110, which is not an alias the box can keep.
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready()));
+    await open(page);
+
+    await expect(row(page, 'Title').getByRole('button', { name: 'Use' })).toBeDisabled();
+    await expect(row(page, 'Title').getByText(NO_ADDRESS)).toBeVisible();
+    await row(page, 'Title').getByRole('button', { name: 'Use' }).click({ force: true });
+    expect(await page.inputValue(TITLE)).toBe('');
+    expect(await page.isChecked(PATHAUTO)).toBe(true);
+  });
+
+  test('a save after Use sends varys_filled', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready()));
+    await saveLands(context, FORM);
+    await open(page);
+    await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+
+    await row(page, 'Search result title').getByRole('button', { name: 'Use' }).click();
+    await Promise.all([
+      page.waitForEvent('load'),
+      page.evaluate(() => (document.querySelector('#edit-submit-publish') as HTMLElement).click()),
+    ]);
+
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    expect(savesIn(calls)[0].body.varys_filled).toEqual(['meta_title']);
+    expect(savesIn(calls)[0].body.after.meta_title).toBe('New Search Title');
+  });
+
+  test('Undo goes once the person edits the field, and Use comes back', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready()));
+    await open(page);
+
+    await row(page, 'Search result title').getByRole('button', { name: 'Use' }).click();
+    await expect(row(page, 'Search result title').getByRole('button', { name: 'Undo' })).toBeVisible();
+
+    await typeInto(page, META_TITLE, 'Typed by hand');
+
+    await expect(row(page, 'Search result title').getByRole('button', { name: 'Undo' })).toHaveCount(0);
+    await expect(row(page, 'Search result title').getByRole('button', { name: 'Use' })).toBeVisible();
+    await expect(row(page, 'Search result title').getByText('Typed by hand')).toBeVisible();
+    expect(await page.inputValue(META_TITLE)).toBe('Typed by hand');
+  });
+
+  test('the description says where it goes, and goes there', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready()));
+    // The live sites' default: the search description follows Summary.
+    await serveForm(context, {
+      edit: html => html.replace('name="metatags[und][description][value]" cols="60" rows="2"><',
+        'name="metatags[und][description][value]" cols="60" rows="2">[node:summary]<'),
+    });
+    await open(page);
+
+    await expect(row(page, 'Search result description').getByText(INTO_SUMMARY)).toBeVisible();
+    await row(page, 'Search result description').getByRole('button', { name: 'Use' }).click();
+    expect(await page.inputValue(SUMMARY)).toBe('A new description.');
+    expect(await page.inputValue(META_DESCRIPTION)).toBe('[node:summary]');
+  });
+
+  test('an empty search description field is written as the override, and says so', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready()));
+    await open(page);
+
+    await expect(row(page, 'Search result description').getByText(INTO_OVERRIDE)).toBeVisible();
+    await row(page, 'Search result description').getByRole('button', { name: 'Use' }).click();
+    expect(await page.inputValue(META_DESCRIPTION)).toBe('A new description.');
+    expect(await page.inputValue(SUMMARY)).toBe('');
+  });
+
+  test('a row with nothing to change has no button', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const base = ready();
+    await stubVarys(context, answering({ ...base, suggested: { ...base.suggested, meta_description: null } }));
+    await serveForm(context, {
+      edit: html => html.replace('name="title_field[und][0][value]" value=""',
+        'name="title_field[und][0][value]" value="A Better Title"'),
+    });
+    await open(page);
+
+    await expect(row(page, 'Search result title').getByRole('button', { name: 'Use' })).toBeVisible();
+    await expect(row(page, 'Title').getByRole('button')).toHaveCount(0);
+    await expect(row(page, 'Search result description').getByRole('button')).toHaveCount(0);
+  });
+
+  test('a note from clinical review comes first, and no time is claimed when Varys has none', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready({
+      made_at: null, clinical_review_note: 'Check the 30% figure with the clinic before this goes live.',
+    })));
+    await open(page);
+
+    await expect(panel(page).getByText('Check the 30% figure with the clinic before this goes live.')).toBeVisible();
+    await expect(panel(page).getByText(/\bmade\b/)).toHaveCount(0);
+  });
+
+  test('Ask Varys polls until ready', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    let polls = 0;
+    const calls = await stubVarys(context, varys(call => {
+      if (call.method === 'POST') return { status: 202, body: { status: 'generating' } };
+      if (generatesIn(calls).length === 0) return { status: 200, body: { status: 'none' } };
+      // Asked: the first poll still finds nothing, which must keep the panel waiting.
+      polls++;
+      return { status: 200, body: polls < 2 ? { status: 'none' } : ready() };
+    }));
+    await open(page);
+
+    await expect(panel(page).getByText(NONE)).toBeVisible();
+    await panel(page).getByRole('button', { name: 'Ask Varys' }).click();
+
+    await expect(panel(page).getByText(GENERATING)).toBeVisible();
+    await expect(panel(page).getByRole('button', { name: 'Ask Varys' })).toBeDisabled();
+    await expect(row(page, 'Search result title')).toBeVisible({ timeout: 25_000 });
+    expect(generatesIn(calls)).toHaveLength(1);
+    expect(generatesIn(calls)[0].body).toEqual({ page_url: `${HOST}/node/23110` });
+    expect(polls).toBeGreaterThanOrEqual(2);
+  });
+
+  test('Ask Varys still polls when the request to start it gets no answer', async ({ page, context, settings }) => {
+    // Varys may have started writing before the answer was lost, so the panel looks anyway.
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varys(call => {
+      if (call.method === 'POST') return 'abort';
+      return { status: 200, body: generatesIn(calls).length === 0 ? { status: 'none' } : ready() };
+    }));
+    await open(page);
+
+    await panel(page).getByRole('button', { name: 'Ask Varys' }).click();
+
+    await expect(row(page, 'Search result title')).toBeVisible({ timeout: 25_000 });
+    expect(generatesIn(calls)).toHaveLength(1);
+  });
+
+  test('a reload while Varys is writing goes on waiting, and never asks twice', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    let written = false;
+    const calls = await stubVarys(context, varys(call => {
+      if (call.method === 'POST') return { status: 202, body: { status: 'generating' } };
+      return { status: 200, body: written ? ready() : { status: 'none' } };
+    }));
+    await open(page);
+    await panel(page).getByRole('button', { name: 'Ask Varys' }).click();
+    await expect(panel(page).getByText(GENERATING)).toBeVisible();
+    await expect.poll(() => generatesIn(calls).length).toBe(1);
+
+    await page.reload();
+    await expect(panel(page)).toHaveCount(1, { timeout: OVERLAY_MOUNT_TIMEOUT });
+    await expect(panel(page).getByText(GENERATING)).toBeVisible();
+    await expect(panel(page).getByRole('button', { name: 'Ask Varys' })).toBeDisabled();
+
+    written = true;
+    await expect(row(page, 'Search result title')).toBeVisible({ timeout: 25_000 });
+    expect(generatesIn(calls)).toHaveLength(1);
+  });
+
+  test('a wait that outlives three minutes ends in Still writing', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, answering({ status: 'none' }));
+    await open(page);
+    await expect(panel(page).getByText(NONE)).toBeVisible();
+
+    // An Ask Varys made a little under three minutes ago, in this tab.
+    await page.evaluate(key => sessionStorage.setItem(key, String(Date.now() - 178_000)),
+      `${PENDING_KEY}${HOST}/node/23110`);
+    await page.reload();
+    await expect(panel(page)).toHaveCount(1, { timeout: OVERLAY_MOUNT_TIMEOUT });
+
+    await expect(panel(page).getByText(STILL_WRITING)).toBeVisible({ timeout: 20_000 });
+    expect(generatesIn(calls)).toEqual([]);
+  });
+
+  test('expired connection shows reconnect copy and fills nothing', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys(() => ({ status: 401, body: { detail: 'This key has expired.' } })));
+    const before = async () => Promise.all([TITLE, META_TITLE, META_DESCRIPTION, SUMMARY].map(s => page.inputValue(s)));
+    await page.goto(FORM);
+    const values = await before();
+    await expect(panel(page)).toHaveCount(1, { timeout: OVERLAY_MOUNT_TIMEOUT });
+
+    await expect(panel(page).getByText(EXPIRED)).toBeVisible();
+    await expect(panel(page).getByRole('button', { name: 'Use' })).toHaveCount(0);
+    expect(await before()).toEqual(values);
+  });
+
+  test('not crawled says so in words', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering({ status: 'not_crawled' }));
+    await open(page);
+
+    await expect(panel(page).getByText(NOT_CRAWLED)).toBeVisible();
+    await expect(panel(page).getByRole('button', { name: 'Ask Varys' })).toHaveCount(0);
+  });
+
+  test('untracked host shows no panel', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready()));
+    const seen = await listenInWorker(context);
+
+    await page.goto('https://vagelos.columbia.edu/node/23110/edit');
+    // The panel asked, and was told the site is not one Varys tracks.
+    await expect.poll(async () => (await seen()).some(m => m.type === 'varysSuggestions')).toBe(true);
+    await page.waitForTimeout(1000);
+
+    await expect(panel(page)).toHaveCount(0);
+    expect(suggestionsIn(calls)).toEqual([]);
+  });
+
+  test('a browser that is not connected shows no panel and asks nothing', async ({ page, context, settings }) => {
+    await settings({ nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready()));
+    const seen = await listenInWorker(context);
+
+    await page.goto(FORM);
+    await expect.poll(async () => (await seen()).some(m => m.type === 'varysStatus')).toBe(true);
+    await page.waitForTimeout(1000);
+
+    await expect(panel(page)).toHaveCount(0);
+    expect((await seen()).filter(m => m.type === 'varysSuggestions')).toEqual([]);
+    expect(calls).toEqual([]);
+  });
+
+  test('Insert at cursor puts the heading in the body, escaped, and the save says so', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready()));
+    await saveLands(context, SPECIALTY);
+    await open(page, SPECIALTY);
+    await expect(page.locator('form[data-d7-varys-capture]')).toHaveCount(1);
+
+    await expect(panel(page).getByRole('list', { name: 'On the page now' }).getByText('Overview')).toBeVisible();
+    await suggestedHeading(page, HEADING).getByRole('button', { name: 'Insert at cursor' }).click();
+
+    await expect.poll(() => page.evaluate(() => (window as any).__inserted))
+      .toEqual(['<h2>Fish &amp; chips &lt;b&gt;</h2>']);
+    // The insert is marked once the worker's answer is back, which is when the panel says so.
+    await expect(panel(page).getByText('Inserted into the body.')).toBeVisible();
+
+    await Promise.all([
+      page.waitForEvent('load'),
+      page.evaluate(() => (document.querySelector('#edit-submit') as HTMLElement).click()),
+    ]);
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    expect(savesIn(calls)[0].body.varys_filled).toEqual(['headings']);
+  });
+
+  test('Insert with no cursor asks the person to click in the body, and marks nothing', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready()));
+    await saveLands(context, SPECIALTY);
+    await open(page, SPECIALTY);
+    await expect(page.locator('form[data-d7-varys-capture]')).toHaveCount(1);
+    // The editor as it is before anyone has clicked in the body.
+    await page.evaluate(() => {
+      (window as any).CKEDITOR.instances['edit-body-und-0-value'].getSelection = () => ({ getRanges: () => [] });
+    });
+
+    await suggestedHeading(page, HEADING).getByRole('button', { name: 'Insert at cursor' }).click();
+
+    await expect(panel(page).getByText(NO_CURSOR)).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__inserted)).toEqual([]);
+
+    await Promise.all([
+      page.waitForEvent('load'),
+      page.evaluate(() => (document.querySelector('#edit-submit') as HTMLElement).click()),
+    ]);
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    expect(savesIn(calls)[0].body.varys_filled).toEqual([]);
+  });
+
+  test('Copy puts the suggested heading on the clipboard', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await context.grantPermissions(['clipboard-read', 'clipboard-write'], { origin: HOST });
+    await stubVarys(context, answering(ready()));
+    await open(page, SPECIALTY);
+
+    await suggestedHeading(page, HEADING).getByRole('button', { name: 'Copy' }).click();
+
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(HEADING);
+    expect(await page.evaluate(() => (window as any).__inserted)).toEqual([]);
+  });
+
+  test('the panel works with the Two-Pane Editor on, clear of its Save buttons', async ({ page, context, settings }) => {
+    /**
+     * The Specialty form whose CKEditor attaches late, made later still: the Two-Pane Editor
+     * waits for it, so the editor's bar of Save buttons arrives well after the panel, and the
+     * panel must move clear of it with nothing scrolled or resized.
+     */
+    const LATE = `${HOST}/node/17177/edit`;
+    await context.route(LATE, route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: read('node-edit-specialty-async.html').replace(
+        'setTimeout(function () { Drupal.attachBehaviors(document); }, 600);',
+        'setTimeout(function () { Drupal.attachBehaviors(document); }, 3000);'),
+    }));
+    await settings({ varysConnection: connected, nodeEditor: true });
+    // Long enough that, left alone, the panel would reach the top of the window and the editor's bar.
+    await stubVarys(context, answering(ready({ clinical_review_note: 'A long note. '.repeat(60) })));
+    await open(page, LATE);
+    await expect(page.locator('.d7-proxy-ui-form-host')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Publish', exact: true })).toBeVisible({ timeout: OVERLAY_MOUNT_TIMEOUT });
+
+    const overlaps = async () => {
+      const box = await panel(page).boundingBox();
+      const buttons = await Promise.all([
+        page.getByRole('button', { name: 'Publish', exact: true }).boundingBox(),
+        page.getByRole('button', { name: 'Save draft to Drupal' }).boundingBox(),
+      ]);
+      return buttons.some(b => box && b && b.x < box.x + box.width && box.x < b.x + b.width
+        && b.y < box.y + box.height && box.y < b.y + b.height);
+    };
+    // Before anything is touched: the bar arrived after the panel, which has moved clear of it.
+    await expect.poll(overlaps).toBe(false);
+
+    await row(page, 'Search result title').getByRole('button', { name: 'Use' }).click();
+    expect(await page.inputValue(META_TITLE)).toBe('New Search Title');
+
+    await page.setViewportSize({ width: 760, height: 700 });
+    await expect.poll(overlaps).toBe(false);
+  });
+
+  test("the panel never covers Drupal's Save or Preview buttons, and one click folds it to a line", async ({ page, context, settings }) => {
+    /**
+     * A form whose own buttons are on screen (the captured List form was taken with the
+     * Two-Pane Editor on, so its native form is hidden), with room above and below to scroll
+     * them anywhere in the window.
+     */
+    const FORM_WITH_BUTTONS = `${HOST}/node/26981/edit`;
+    await context.route(FORM_WITH_BUTTONS, route => route.fulfill({
+      status: 200, contentType: 'text/html',
+      body: read('node-edit-two-save-buttons.html')
+        .replace('<body class="node-type-page">', '<body class="node-type-page"><div style="height:1200px"></div>')
+        .replace('</body>', '<div style="height:1200px"></div></body>'),
+    }));
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready({ clinical_review_note: 'A long note. '.repeat(20) })));
+    // Narrow enough that the panel and Drupal's row of buttons share the same columns.
+    await page.setViewportSize({ width: 760, height: 640 });
+    await open(page, FORM_WITH_BUTTONS);
+
+    const BUTTONS = ['#edit-submit', '#edit-submit-publish', '#edit-preview-changes'];
+    const overlaps = async () => {
+      const box = await panel(page).boundingBox();
+      if (!box) return 'no panel';
+      for (const selector of BUTTONS) {
+        const b = await page.locator(selector).boundingBox();
+        if (!b) return `${selector} has no box`;
+        if (b.x < box.x + box.width && box.x < b.x + b.width && b.y < box.y + box.height && box.y < b.y + b.height) {
+          return selector;
+        }
+      }
+      return 'clear';
+    };
+    const top = await page.evaluate(() =>
+      (document.querySelector('#edit-submit-publish') as HTMLElement).getBoundingClientRect().top + window.scrollY);
+    // The buttons near the bottom of the window, in its middle, and near its top.
+    for (const at of [600, 400, 300, 120]) {
+      await page.evaluate(y => window.scrollTo(0, y), top - at);
+      await expect.poll(overlaps).toBe('clear');
+    }
+
+    await panel(page).getByRole('button', { name: new RegExp(HEADER) }).click();
+    await expect(row(page, 'Search result title')).toHaveCount(0);
+    expect((await panel(page).boundingBox())!.height).toBeLessThan(60);
+    await panel(page).getByRole('button', { name: new RegExp(HEADER) }).click();
+    await expect(row(page, 'Search result title')).toBeVisible();
   });
 });
