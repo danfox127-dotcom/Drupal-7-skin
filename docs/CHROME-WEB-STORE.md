@@ -7,8 +7,8 @@
 | **Item ID** | `ebooneiidohdlmcddhnlnnolhjehpcec` |
 | **Listing** | https://chromewebstore.google.com/detail/ebooneiidohdlmcddhnlnnolhjehpcec |
 | **Visibility** | Unlisted — never appears in store search; the link above is the only way in |
-| **Version published** | 0.2.2 |
-| **Approved** | 17 September 2026 |
+| **Version published** | 0.5.0 (optional Connect to Varys) |
+| **Approved** | 22 October 2026 (0.2.2 was first approved 17 September 2026) |
 
 The id is also in `src/lib/updateCheck.ts` as `STORE_ID`, where it does real work: a
 build compares `chrome.runtime.id` against it to know whether it is the store copy
