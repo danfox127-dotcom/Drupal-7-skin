@@ -35,10 +35,11 @@ test.beforeAll(async () => {
 /**
  * `form(values)` builds a real node form holding those named controls and returns what
  * discoverSchema() reads from it. A boolean value is a checkbox (path[pathauto]); a name
- * holding "description" or a summary is a textarea; anything else is a text input.
+ * holding "description" or a summary is a textarea; anything else is a text input. Names in
+ * `disabled` are rendered disabled, as Drupal renders the alias box while pathauto is ticked.
  */
 const HELPER = `
-window.form = function (values) {
+window.form = function (values, disabled = []) {
   document.body.replaceChildren();
   const form = document.createElement('form');
   form.className = 'node-form';
@@ -59,6 +60,7 @@ window.form = function (values) {
       el.value = value;
     }
     el.name = name;
+    el.disabled = disabled.includes(name);
     item.appendChild(el);
     form.appendChild(item);
   }
@@ -75,7 +77,7 @@ async function ready(page: Page) {
 }
 
 /** Runs `fn` in the page with the module's API and the form helper in hand. */
-function run<T>(page: Page, fn: (api: any, form: (values: Record<string, string | boolean>) => any[]) => T) {
+function run<T>(page: Page, fn: (api: any, form: (values: Record<string, string | boolean>, disabled?: string[]) => any[]) => T) {
   // A string is evaluated as an expression in the page, so `fn` runs there with the module's
   // API and the helper as its arguments.
   return page.evaluate(`(${fn.toString()})(window.Fill, window.form)`) as Promise<T>;
@@ -220,14 +222,13 @@ test.describe('fillOne', () => {
       const rec = A.fillOne('title', 'New', f);
       return {
         pathautoWasTicked: rec.pathautoWasTicked,
-        aliasMissing: rec.aliasMissing,
         previousAlias: rec.previousAlias,
         title: A.readValue(A.titleField(f)),
         alias: A.readValue(A.findField(f, 'path[alias]')),
       };
     });
     expect(r).toEqual({
-      pathautoWasTicked: false, aliasMissing: false, previousAlias: 'specialties/x',
+      pathautoWasTicked: false, previousAlias: 'specialties/x',
       title: 'New', alias: 'specialties/x',
     });
   });
@@ -238,11 +239,10 @@ test.describe('fillOne', () => {
       const rec = A.fillOne('title', 'New', f, { currentAlias: '/news/foo' });
       return {
         pathautoWasTicked: rec.pathautoWasTicked,
-        aliasMissing: rec.aliasMissing,
         alias: A.readValue(A.findField(f, 'path[alias]')),
       };
     });
-    expect(r).toEqual({ pathautoWasTicked: false, aliasMissing: false, alias: '' });
+    expect(r).toEqual({ pathautoWasTicked: false, alias: '' });
   });
 
   test('filling the title leaves the other fields alone', async ({ page }) => {
@@ -303,8 +303,8 @@ test.describe('the title and the address', () => {
       const during = {
         alias: A.readValue(A.findField(f, 'path[alias]')),
         pathauto: A.readValue(A.findField(f, 'path[pathauto]')),
-        aliasMissing: rec.aliasMissing,
         previousAlias: rec.previousAlias,
+        aliasWasDisabled: rec.aliasWasDisabled,
       };
       const undone = A.undoFill(rec, f);
       return {
@@ -315,7 +315,7 @@ test.describe('the title and the address', () => {
         title: A.readValue(A.titleField(f)),
       };
     });
-    expect(r.during).toEqual({ alias: 'news/café', pathauto: false, aliasMissing: false, previousAlias: '' });
+    expect(r.during).toEqual({ alias: 'news/café', pathauto: false, previousAlias: '', aliasWasDisabled: false });
     expect(r.undone).toBe(true);
     expect(r.alias).toBe('');
     expect(r.pathauto).toBe(true);
@@ -346,8 +346,8 @@ test.describe('the title and the address', () => {
       const rec = A.fillOne('title', 'New', f, { currentAlias: '/news/other' });
       const during = {
         alias: A.readValue(A.findField(f, 'path[alias]')),
-        aliasMissing: rec.aliasMissing,
         previousAlias: rec.previousAlias,
+        aliasWasDisabled: rec.aliasWasDisabled,
         pathauto: A.readValue(A.findField(f, 'path[pathauto]')),
         aliasEvents,
       };
@@ -359,59 +359,181 @@ test.describe('the title and the address', () => {
       };
     });
     expect(r.during).toEqual({
-      alias: 'news/foo', aliasMissing: false, previousAlias: 'news/foo', pathauto: false, aliasEvents: 0,
+      alias: 'news/foo', previousAlias: 'news/foo', aliasWasDisabled: false, pathauto: false, aliasEvents: 0,
     });
     expect(r.alias).toBe('news/foo');
     expect(r.aliasEventsAfterUndo).toBe(0);
   });
 
-  test('with pathauto ticked, an empty box and no current address, it still unticks and says the address is missing', async ({ page }) => {
+  // R8a: Drupal renders the alias box disabled while pathauto is ticked, and a disabled input is
+  // not submitted, so a filled alias would still be dropped on save.
+  test('a disabled alias box is enabled to take the address, and undo disables it again', async ({ page }) => {
     const r = await run(page, (A, form) => {
-      const f = form({ 'title_field[und][0][value]': 'Old', 'path[pathauto]': true, 'path[alias]': '' });
-      const rec = A.fillOne('title', 'New', f);
+      const f = form(
+        { 'title_field[und][0][value]': 'Old', 'path[pathauto]': true, 'path[alias]': '' },
+        ['path[alias]'],
+      );
+      const box = f.find((x: any) => x.machineName === 'path[alias]').elements[0] as HTMLInputElement;
+      const rec = A.fillOne('title', 'New', f, { currentAlias: '/news/foo' });
+      const during = { value: box.value, disabled: box.disabled, aliasWasDisabled: rec.aliasWasDisabled };
+      const undone = A.undoFill(rec, f);
       return {
-        aliasMissing: rec.aliasMissing,
-        pathauto: A.readValue(A.findField(f, 'path[pathauto]')),
-        alias: A.readValue(A.findField(f, 'path[alias]')),
-        title: A.readValue(A.titleField(f)),
+        during, undone, value: box.value, disabled: box.disabled,
+        pathauto: A.readValue(A.findField(f, 'path[pathauto]')), title: A.readValue(A.titleField(f)),
       };
     });
-    expect(r).toEqual({ aliasMissing: true, pathauto: false, alias: '', title: 'New' });
+    expect(r.during).toEqual({ value: 'news/foo', disabled: false, aliasWasDisabled: true });
+    expect(r.undone).toBe(true);
+    expect(r.value).toBe('');
+    expect(r.disabled).toBe(true);
+    expect(r.pathauto).toBe(true);
+    expect(r.title).toBe('Old');
   });
 
-  test('a null current address is no address either', async ({ page }) => {
+  test('an alias box that was already enabled is left enabled, and undo does not disable it', async ({ page }) => {
     const r = await run(page, (A, form) => {
       const f = form({ 'title_field[und][0][value]': 'Old', 'path[pathauto]': true, 'path[alias]': '' });
-      const rec = A.fillOne('title', 'New', f, { currentAlias: null });
-      return { aliasMissing: rec.aliasMissing, alias: A.readValue(A.findField(f, 'path[alias]')) };
-    });
-    expect(r).toEqual({ aliasMissing: true, alias: '' });
-  });
-
-  test('with pathauto ticked and no alias box at all, the address cannot be kept and that is reported', async ({ page }) => {
-    const r = await run(page, (A, form) => {
-      const f = form({ 'title_field[und][0][value]': 'Old', 'path[pathauto]': true });
+      const box = f.find((x: any) => x.machineName === 'path[alias]').elements[0] as HTMLInputElement;
       const rec = A.fillOne('title', 'New', f, { currentAlias: '/news/foo' });
-      return { aliasMissing: rec.aliasMissing, previousAlias: rec.previousAlias, pathauto: rec.pathautoWasTicked };
+      A.undoFill(rec, f);
+      return { aliasWasDisabled: rec.aliasWasDisabled, disabled: box.disabled };
     });
-    expect(r).toEqual({ aliasMissing: true, previousAlias: null, pathauto: true });
+    expect(r).toEqual({ aliasWasDisabled: false, disabled: false });
   });
 
-  test('a /node/N address is not an alias', async ({ page }) => {
+  test('a disabled alias box is not touched when no alias is written', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      const f = form(
+        { 'title_field[und][0][value]': 'Old', 'path[pathauto]': true, 'path[alias]': 'news/foo' },
+        ['path[alias]'],
+      );
+      const box = f.find((x: any) => x.machineName === 'path[alias]').elements[0] as HTMLInputElement;
+      const rec = A.fillOne('title', 'New', f, { currentAlias: '/news/other' });
+      const during = { value: box.value, disabled: box.disabled, aliasWasDisabled: rec.aliasWasDisabled };
+      A.undoFill(rec, f);
+      return { during, value: box.value, disabled: box.disabled };
+    });
+    expect(r).toEqual({
+      during: { value: 'news/foo', disabled: true, aliasWasDisabled: false }, value: 'news/foo', disabled: true,
+    });
+  });
+
+  // R8b: unticking pathauto over an empty alias box with nothing to put in it would delete the
+  // page's alias on save. Refuse outright instead of half-applying.
+  test('with pathauto ticked, an empty box and no current address, nothing is filled', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      A.resetFilled();
+      const f = form({ 'title_field[und][0][value]': 'Old', 'path[pathauto]': true, 'path[alias]': '' });
+      const wouldLose = A.titleFillWouldLoseAddress(f);
+      const rec = A.fillOne('title', 'New', f);
+      return {
+        wouldLose,
+        rec,
+        title: A.readValue(A.titleField(f)),
+        pathauto: A.readValue(A.findField(f, 'path[pathauto]')),
+        alias: A.readValue(A.findField(f, 'path[alias]')),
+        marked: A.filledFields(),
+      };
+    });
+    expect(r).toEqual({ wouldLose: true, rec: null, title: 'Old', pathauto: true, alias: '', marked: [] });
+  });
+
+  test('a null, empty or /node/N current address is no address, and the fill is refused', async ({ page }) => {
     // Each form replaces the last, so each is read before the next is built.
     const r = await run(page, (A, form) => {
       const out: Record<string, unknown> = {};
-      for (const [label, currentAlias] of [['slash', '/node/123'], ['bare', 'node/9/']]) {
+      const cases: [string, string | null | undefined][] = [
+        ['null', null], ['empty', ''], ['spaces', '   '], ['slash', '/'],
+        ['node', '/node/123'], ['bare', 'node/9/'], ['url', 'https://www.cuimc.columbia.edu/node/123'],
+      ];
+      for (const [label, currentAlias] of cases) {
+        A.resetFilled();
         const f = form({ 'title_field[und][0][value]': 'Old', 'path[pathauto]': true, 'path[alias]': '' });
+        const wouldLose = A.titleFillWouldLoseAddress(f, { currentAlias });
         const rec = A.fillOne('title', 'New', f, { currentAlias });
-        out[label] = { aliasMissing: rec.aliasMissing, alias: A.readValue(A.findField(f, 'path[alias]')) };
+        out[label] = {
+          wouldLose, rec,
+          title: A.readValue(A.titleField(f)),
+          pathauto: A.readValue(A.findField(f, 'path[pathauto]')),
+          alias: A.readValue(A.findField(f, 'path[alias]')),
+          marked: A.filledFields(),
+        };
       }
       return out;
     });
+    const refused = { wouldLose: true, rec: null, title: 'Old', pathauto: true, alias: '', marked: [] };
     expect(r).toEqual({
-      slash: { aliasMissing: true, alias: '' },
-      bare: { aliasMissing: true, alias: '' },
+      null: refused, empty: refused, spaces: refused, slash: refused,
+      node: refused, bare: refused, url: refused,
     });
+  });
+
+  test('titleFillWouldLoseAddress is false everywhere the address is kept or was never at risk', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      const named = { 'title_field[und][0][value]': 'Old' };
+      return {
+        // an address to put in the box
+        withAddress: A.titleFillWouldLoseAddress(
+          form({ ...named, 'path[pathauto]': true, 'path[alias]': '' }), { currentAlias: '/news/foo' }),
+        // the box already holds one
+        boxHolds: A.titleFillWouldLoseAddress(
+          form({ ...named, 'path[pathauto]': true, 'path[alias]': 'news/foo' })),
+        // pathauto is already off: nothing is unticked
+        pathautoOff: A.titleFillWouldLoseAddress(
+          form({ ...named, 'path[pathauto]': false, 'path[alias]': '' })),
+        // no pathauto on the form at all
+        noPathauto: A.titleFillWouldLoseAddress(form({ ...named, 'path[alias]': '' })),
+        // no alias box to lose anything from
+        noAliasBox: A.titleFillWouldLoseAddress(form({ ...named, 'path[pathauto]': true })),
+      };
+    });
+    expect(r).toEqual({
+      withAddress: false, boxHolds: false, pathautoOff: false, noPathauto: false, noAliasBox: false,
+    });
+  });
+
+  test('if the page will not keep the address in the box, everything is put back', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      A.resetFilled();
+      const f = form(
+        { 'title_field[und][0][value]': 'Old', 'path[pathauto]': true, 'path[alias]': '' },
+        ['path[alias]'],
+      );
+      const box = f.find((x: any) => x.machineName === 'path[alias]').elements[0] as HTMLInputElement;
+      // Something on the page empties the box as soon as it is written.
+      box.addEventListener('input', () => { box.value = ''; });
+      const rec = A.fillOne('title', 'New', f, { currentAlias: '/news/foo' });
+      return {
+        rec,
+        title: A.readValue(A.titleField(f)),
+        pathauto: A.readValue(A.findField(f, 'path[pathauto]')),
+        value: box.value,
+        disabled: box.disabled,
+        marked: A.filledFields(),
+      };
+    });
+    expect(r).toEqual({ rec: null, title: 'Old', pathauto: true, value: '', disabled: true, marked: [] });
+  });
+
+  test('with pathauto ticked and no alias box at all there is nothing to keep, so the fill goes ahead', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      const f = form({ 'title_field[und][0][value]': 'Old', 'path[pathauto]': true });
+      const rec = A.fillOne('title', 'New', f);
+      return { previousAlias: rec.previousAlias, ticked: rec.pathautoWasTicked, aliasWasDisabled: rec.aliasWasDisabled };
+    });
+    expect(r).toEqual({ previousAlias: null, ticked: true, aliasWasDisabled: false });
+  });
+
+  test('the title fill does not refuse when only another kind of field is involved', async ({ page }) => {
+    // A search title never touches the address, whatever the alias box holds.
+    const r = await run(page, (A, form) => {
+      const f = form({
+        'metatags[und][title][value]': 'Old', 'path[pathauto]': true, 'path[alias]': '',
+      });
+      const rec = A.fillOne('meta_title', 'New', f);
+      return { filled: rec?.filled, pathauto: A.readValue(A.findField(f, 'path[pathauto]')) };
+    });
+    expect(r).toEqual({ filled: 'New', pathauto: true });
   });
 
   test('the address may arrive as a full web address, or with a stray escape, and is still a usable alias', async ({ page }) => {

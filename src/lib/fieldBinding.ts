@@ -90,7 +90,7 @@ export function hasRichEditor(field: FieldDescriptor): boolean {
  * re-resolved against the live form — a name survives any number of AJAX replacements,
  * which is exactly why Drupal keys its own form state on it.
  */
-function liveElements(field: FieldDescriptor): HTMLElement[] {
+export function liveElements(field: FieldDescriptor): HTMLElement[] {
   const els = field.elements;
   if (els.length === 0) return els;
   if (els.some(el => el.isConnected)) return els;

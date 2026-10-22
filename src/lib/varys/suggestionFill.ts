@@ -8,7 +8,7 @@
  */
 
 import type { FieldDescriptor } from '../formSchema/types';
-import { readValue, writeValue } from '../fieldBinding';
+import { liveElements, readValue, writeValue } from '../fieldBinding';
 import { markFilled, unmarkFilled } from './filled';
 
 export type FillKind = 'meta_title' | 'meta_description' | 'title';
@@ -28,11 +28,11 @@ export type FillRecord = {
    */
   previousAlias: string | null;
   /**
-   * The title was filled with pathauto unticked, but the alias box holds nothing and no
-   * address was available to put in it. Saving like that deletes the page's alias in
-   * Drupal 7, so the panel must not leave the title filled in that state.
+   * The fill wrote the page's address into the alias box and that box was disabled, so it
+   * was enabled to take it (a disabled input is not submitted). Undo disables it again.
+   * False whenever no address was written, which leaves `disabled` alone.
    */
-  aliasMissing: boolean;
+  aliasWasDisabled: boolean;
 };
 
 const TITLE_FIELD = 'title_field[und][0][value]';
@@ -123,20 +123,49 @@ function usableAlias(currentAlias: string | null | undefined): string | null {
   return alias;
 }
 
+const isBlank = (value: string | null): boolean => (value ?? '').trim() === '';
+
+/**
+ * True when filling the title would lose the page's address: pathauto is ticked, the alias
+ * box is empty, and there is no usable `currentAlias` to put in it. `fillOne` refuses in
+ * exactly this case, so the panel can ask first and disable the title's Use with a reason.
+ *
+ * A form with no alias box, or with pathauto off or absent, is not this case: there is
+ * nothing for unticking to lose.
+ */
+export function titleFillWouldLoseAddress(
+  fields: FieldDescriptor[],
+  opts: { currentAlias?: string | null } = {},
+): boolean {
+  const pathauto = findField(fields, PATHAUTO);
+  if (!pathauto || readValue(pathauto) !== true) return false;
+
+  const alias = findField(fields, ALIAS);
+  if (!alias || !isBlank(String(readValue(alias)))) return false;
+
+  return usableAlias(opts.currentAlias) === null;
+}
+
+/** The alias box's control as it is in the page right now (Drupal's AJAX can replace it). */
+function aliasInput(alias: FieldDescriptor): HTMLInputElement | undefined {
+  return liveElements(alias).find(el => el.isConnected) as HTMLInputElement | undefined;
+}
+
 /**
  * Writes `value` into the field a suggestion of this kind belongs in.
  *
- * Returns what Undo needs, or null when nothing was filled: the form has no such field, or
- * the page refused a write (in which case whatever was written is put back).
+ * Returns what Undo needs, or null when nothing was filled: the form has no such field, the
+ * title fill was refused (below), or the page refused a write (whatever was written is put
+ * back). A null leaves the form exactly as it was and marks nothing.
  *
  * Filling the TITLE also unticks "Generate automatic URL alias": with it ticked, Drupal
  * rebuilds the address from the new title on save, which changes the page's address and
  * breaks every link to it. Unticking keeps the address, but Drupal 7 then saves the alias
  * box as it stands, and an EMPTY box deletes the alias, moving the page to /node/N. The
  * box can be empty while pathauto is ticked (pathauto owns the alias, and the form need not
- * show it), so the page's current address, from `opts.currentAlias`, goes in first. With no
- * usable address the title is still filled and pathauto still unticked, and `aliasMissing`
- * says the address is not safe.
+ * show it), so the page's current address, from `opts.currentAlias`, goes in first, and the
+ * box is enabled if it was disabled, since a disabled input is not submitted. With no usable
+ * address the fill is REFUSED rather than half-applied (see `titleFillWouldLoseAddress`).
  */
 export function fillOne(
   kind: FillKind,
@@ -146,6 +175,7 @@ export function fillOne(
 ): FillRecord | null {
   const field = fieldFor(kind, fields);
   if (!field) return null;
+  if (kind === 'title' && titleFillWouldLoseAddress(fields, opts)) return null;
 
   const alias = findField(fields, ALIAS);
   const previous = String(readValue(field));
@@ -160,7 +190,7 @@ export function fillOne(
     filled: value,
     pathautoWasTicked: false,
     previousAlias,
-    aliasMissing: false,
+    aliasWasDisabled: false,
   };
 
   if (kind === 'title') {
@@ -172,14 +202,19 @@ export function fillOne(
       }
       record.pathautoWasTicked = true;
 
-      if (alias) {
-        if ((previousAlias ?? '').trim() === '') {
-          const keep = usableAlias(opts.currentAlias);
-          if (keep !== null) writeValue(alias, keep);
+      if (alias && isBlank(previousAlias)) {
+        // Not null: the refusal above covers every way this can be empty-handed.
+        const keep = usableAlias(opts.currentAlias) as string;
+        const input = aliasInput(alias);
+        const wasDisabled = input?.disabled === true;
+        if (input && wasDisabled) input.disabled = false;
+        record.aliasWasDisabled = wasDisabled;
+
+        if (!writeValue(alias, keep) || isBlank(String(readValue(alias)))) {
+          // The address could not be kept, so nothing is kept of the fill.
+          restore(record, fields);
+          return null;
         }
-        record.aliasMissing = String(readValue(alias)).trim() === '';
-      } else {
-        record.aliasMissing = true;
       }
     }
   }
@@ -195,26 +230,43 @@ export function canUndo(record: FillRecord, fields: FieldDescriptor[]): boolean 
 }
 
 /**
- * Puts the fill back: the old text, the alias box, and the pathauto tick if the fill
- * removed it. Does nothing and returns false when Undo is no longer safe (see `canUndo`),
- * so it can never overwrite something typed since.
+ * Puts a fill's changes back: the old text, the alias box and its disabled state, and the
+ * pathauto tick. Shared by Undo and by a fill that had to give up part-way.
  */
-export function undoFill(record: FillRecord, fields: FieldDescriptor[]): boolean {
+function restore(record: FillRecord, fields: FieldDescriptor[]): boolean {
   const field = findField(fields, record.machineName);
-  if (!field || !canUndo(record, fields)) return false;
-  if (!writeValue(field, record.previous)) return false;
+  if (!field || !writeValue(field, record.previous)) return false;
 
   let ok = true;
   if (record.pathautoWasTicked) {
     const alias = findField(fields, ALIAS);
-    if (alias && record.previousAlias !== null && String(readValue(alias)) !== record.previousAlias) {
-      ok = writeValue(alias, record.previousAlias) && ok;
+    if (alias && record.previousAlias !== null) {
+      if (String(readValue(alias)) !== record.previousAlias) {
+        ok = writeValue(alias, record.previousAlias) && ok;
+      }
+      if (record.aliasWasDisabled) {
+        const input = aliasInput(alias);
+        if (input) input.disabled = true;
+        else ok = false;
+      }
     }
     const pathauto = findField(fields, PATHAUTO);
     ok = (pathauto ? writeValue(pathauto, true) : false) && ok;
   }
+  return ok;
+}
 
-  unmarkFilled(record.kind);
+/**
+ * Puts the fill back: the old text, the alias box (and whether it was disabled), and the
+ * pathauto tick if the fill removed it. Does nothing and returns false when Undo is no
+ * longer safe (see `canUndo`), so it can never overwrite something typed since.
+ */
+export function undoFill(record: FillRecord, fields: FieldDescriptor[]): boolean {
+  if (!canUndo(record, fields)) return false;
+  const ok = restore(record, fields);
+  // Marked as filled only while it is; a restore that failed on the title leaves it so.
+  const field = findField(fields, record.machineName);
+  if (field && String(readValue(field)) === record.previous) unmarkFilled(record.kind);
   return ok;
 }
 
