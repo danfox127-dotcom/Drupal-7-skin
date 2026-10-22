@@ -401,21 +401,46 @@ test.describe('the title and the address', () => {
     expect(r).toEqual({ aliasWasDisabled: false, disabled: false });
   });
 
-  test('a disabled alias box is not touched when no alias is written', async ({ page }) => {
+  // R8a': the box needs enabling whether or not it needed the address, or it is not submitted.
+  test('a disabled alias box that already holds the address is enabled, and undo disables it again', async ({ page }) => {
     const r = await run(page, (A, form) => {
       const f = form(
         { 'title_field[und][0][value]': 'Old', 'path[pathauto]': true, 'path[alias]': 'news/foo' },
         ['path[alias]'],
       );
       const box = f.find((x: any) => x.machineName === 'path[alias]').elements[0] as HTMLInputElement;
+      let aliasEvents = 0;
+      box.addEventListener('change', () => { aliasEvents++; });
       const rec = A.fillOne('title', 'New', f, { currentAlias: '/news/other' });
-      const during = { value: box.value, disabled: box.disabled, aliasWasDisabled: rec.aliasWasDisabled };
-      A.undoFill(rec, f);
-      return { during, value: box.value, disabled: box.disabled };
+      const during = {
+        value: box.value, disabled: box.disabled, aliasWasDisabled: rec.aliasWasDisabled, aliasEvents,
+      };
+      const undone = A.undoFill(rec, f);
+      return {
+        during, undone, value: box.value, disabled: box.disabled, aliasEvents,
+        pathauto: A.readValue(A.findField(f, 'path[pathauto]')), title: A.readValue(A.titleField(f)),
+      };
     });
-    expect(r).toEqual({
-      during: { value: 'news/foo', disabled: true, aliasWasDisabled: false }, value: 'news/foo', disabled: true,
+    expect(r.during).toEqual({ value: 'news/foo', disabled: false, aliasWasDisabled: true, aliasEvents: 0 });
+    expect(r.undone).toBe(true);
+    expect(r.value).toBe('news/foo');
+    expect(r.disabled).toBe(true);
+    expect(r.aliasEvents).toBe(0);
+    expect(r.pathauto).toBe(true);
+    expect(r.title).toBe('Old');
+  });
+
+  test('a disabled alias box is left alone when pathauto was not ticked', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      const f = form(
+        { 'title_field[und][0][value]': 'Old', 'path[pathauto]': false, 'path[alias]': 'news/foo' },
+        ['path[alias]'],
+      );
+      const box = f.find((x: any) => x.machineName === 'path[alias]').elements[0] as HTMLInputElement;
+      const rec = A.fillOne('title', 'New', f);
+      return { disabled: box.disabled, aliasWasDisabled: rec.aliasWasDisabled };
     });
+    expect(r).toEqual({ disabled: true, aliasWasDisabled: false });
   });
 
   // R8b: unticking pathauto over an empty alias box with nothing to put in it would delete the

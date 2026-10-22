@@ -28,9 +28,9 @@ export type FillRecord = {
    */
   previousAlias: string | null;
   /**
-   * The fill wrote the page's address into the alias box and that box was disabled, so it
-   * was enabled to take it (a disabled input is not submitted). Undo disables it again.
-   * False whenever no address was written, which leaves `disabled` alone.
+   * Filling the title unticked pathauto while the alias box was disabled, so the box was
+   * enabled: a disabled input is not submitted, and Drupal would then delete the alias.
+   * Undo disables it again. False when pathauto was not unticked or the box was enabled.
    */
   aliasWasDisabled: boolean;
 };
@@ -163,9 +163,10 @@ function aliasInput(alias: FieldDescriptor): HTMLInputElement | undefined {
  * breaks every link to it. Unticking keeps the address, but Drupal 7 then saves the alias
  * box as it stands, and an EMPTY box deletes the alias, moving the page to /node/N. The
  * box can be empty while pathauto is ticked (pathauto owns the alias, and the form need not
- * show it), so the page's current address, from `opts.currentAlias`, goes in first, and the
- * box is enabled if it was disabled, since a disabled input is not submitted. With no usable
- * address the fill is REFUSED rather than half-applied (see `titleFillWouldLoseAddress`).
+ * show it), so the page's current address, from `opts.currentAlias`, goes in first. The box
+ * is enabled if it was disabled, whether or not it needed the address: a disabled input is
+ * not submitted. With no usable address the fill is REFUSED rather than half-applied (see
+ * `titleFillWouldLoseAddress`).
  */
 export function fillOne(
   kind: FillKind,
@@ -202,18 +203,23 @@ export function fillOne(
       }
       record.pathautoWasTicked = true;
 
-      if (alias && isBlank(previousAlias)) {
-        // Not null: the refusal above covers every way this can be empty-handed.
-        const keep = usableAlias(opts.currentAlias) as string;
+      if (alias) {
+        // Whatever the box holds, it must be submitted: Drupal's own script is expected to
+        // enable it when pathauto is unticked, but one that does not would drop the alias.
         const input = aliasInput(alias);
-        const wasDisabled = input?.disabled === true;
-        if (input && wasDisabled) input.disabled = false;
-        record.aliasWasDisabled = wasDisabled;
+        if (input?.disabled === true) {
+          input.disabled = false;
+          record.aliasWasDisabled = true;
+        }
 
-        if (!writeValue(alias, keep) || isBlank(String(readValue(alias)))) {
-          // The address could not be kept, so nothing is kept of the fill.
-          restore(record, fields);
-          return null;
+        if (isBlank(previousAlias)) {
+          // Not null: the refusal above covers every way this can be empty-handed.
+          const keep = usableAlias(opts.currentAlias) as string;
+          if (!writeValue(alias, keep) || isBlank(String(readValue(alias)))) {
+            // The address could not be kept, so nothing is kept of the fill.
+            restore(record, fields);
+            return null;
+          }
         }
       }
     }
