@@ -154,6 +154,79 @@ What it deliberately leaves alone:
 The popup shows what you currently have copied, so a copy from last week does not surprise
 you. It keeps the last five.
 
+### Connect to Varys — optional, off until you connect
+
+Varys is Columbia's content-intelligence tool: it keeps track of how our web pages do in
+search. This is the one part of the extension that sends anything about your edits
+anywhere, so it is **off until you connect it**. Until you click **Connect to Varys**, the
+extension sends nothing to Varys.
+
+**What it does once you have connected.** When you save a page on a site Varys tracks, the
+extension tells Varys about the save: the page's address; what its title, search title,
+search description, URL alias, headings and internal links were before and after; how much
+of the body changed; up to three new sentences, so Varys can check the change really went
+live; and which button you pressed. It never sends the full text of the page. Varys decides
+whether the save counts as a **search edit** (a change to the title, search description,
+URL, headings or internal links, or a substantial rewrite of the body; a typo fix is not
+one), and later reads the live page to see whether the change went out. Changes that count
+appear on Varys's **What's Working** page, with who made them, so their effect on search can
+be read later. `docs/PRIVACY.md` lists everything that is sent and kept, and for how long.
+
+**To connect:**
+
+1. Click the extension's icon, then **Connect to Varys**. Chrome asks whether the extension
+   may contact Varys. Say yes.
+2. A Varys page opens. Sign in if it asks you to, then press **Allow**.
+3. The extension's menu now reads "Connected to Varys as" and your email address.
+
+**Only the Chrome Web Store copy can connect.** The Varys connect page accepts only the
+copy installed from the Chrome Web Store, because it recognises that copy by its fixed id
+(and the store has to have the version that includes this feature). A copy loaded from a
+folder with *Load unpacked* has a different id, so the page will tell you to install the
+store copy instead.
+
+**After that, you work as usual.** Press Save as you always do. When the page you land on has
+loaded, a small box appears at the bottom of the screen saying what Varys did with your save.
+It stays for about ten seconds, longer while your mouse is on it, and **Dismiss** closes it.
+What it can say:
+
+- **"Logged in Varys as …"** (a title and description change, a headings change, an internal
+  links change, a new section, a body rewrite, a new page, or a page address change). Your
+  save counted. If it should not have, because you were only trying something, press
+  **Undo** and Varys removes it.
+- **"Not logged in Varys: this didn't look like a search edit."** Varys saw your save and
+  decided it did not count, such as a typo fix. If you disagree, press **Log it anyway**.
+  The box then says it was logged, and the button becomes **Undo**. Do this while the box is
+  there: the button lives only in the box, and Varys keeps a save that did not count for just
+  7 days.
+- **"This site isn't in Varys, so nothing was logged."** Varys does not track this site, so
+  nothing about your save was sent.
+- **"Varys couldn't be reached. This save will be sent when it can."** The save waits on your
+  computer (up to 50 saves, each for up to a week) and goes out when Varys answers again.
+- **"Your Varys connection has expired. Reconnect from the extension menu to log this
+  save."** Click the extension's icon and press **Reconnect**. The save is sent once you
+  have.
+
+The box needs the extension to follow your save to the page it lands on. If it cannot show
+the box there (you closed the tab, or Chrome will not let the extension in), the message
+waits and appears, without buttons, on the next admin page of that site you open within the
+hour. If the extension never sees the save finish, it sends the save after a short wait
+instead, on a best-effort basis, so the box can be late. If the browser is closed before
+then, that save is not sent.
+
+**Undo later.** The box goes away, but the change stays on Varys's **What's Working** page,
+where **Undo** is also offered: to the person who saved it, and to Varys administrators.
+
+**To disconnect:** click the extension's icon and press **Disconnect**. The extension asks
+Varys to cancel its key, deletes the key and anything still waiting to be sent from your
+computer, and gives back its permission to contact Varys. If Varys cannot be reached, it
+still disconnects here and tells you the key may still work there. You can also disconnect
+from Varys itself, under **Your connections** on its Drupal extension page, but this browser
+keeps its copy of the key until it next tries to use it, so the extension's own Disconnect
+is the one that clears everything. Disconnecting does not delete changes Varys has already
+logged; use Undo for those. A connection nobody uses for 90 days expires by itself; the menu
+then says so, and **Reconnect** puts it back.
+
 ---
 
 ## The settings
@@ -169,6 +242,10 @@ Click the extension icon. Each feature has a switch:
 | Modern Content List | On | The `/admin/content` replacement |
 | **Two-Pane Node Editor** | **Off** | The full editing overlay |
 | Log Form Schema | Off | Diagnostic — see below |
+
+**Connect to Varys** is not in this list. It is its own section near the top of the menu,
+because it involves signing in and a key rather than a switch, and it is off until you
+connect.
 
 ---
 
@@ -195,6 +272,8 @@ Worth knowing, so they don't look like faults:
 
 - **It never saves for you.** Every write goes into Drupal's own form fields, and Drupal's
   own Save button submits them.
+- **It does not send anything to Varys until you connect it**, and even then never the full
+  text of a page.
 - **It doesn't upload files.** Image fields use Drupal's own picker, moved into the panel.
 - **It doesn't guess taxonomy on import.** Topics and Related Content are editorial
   judgement, so it leaves them to you and says so.
@@ -214,6 +293,9 @@ Worth knowing, so they don't look like faults:
   with its values so you can rebuild that one by hand
 - Import always targets News; to import into a Page, open a Page form first
 - Headings render in Georgia rather than EB Garamond until the font files are added
+- Varys's result box depends on the extension following your save to the page it lands on.
+  If you close the tab or quit the browser in the middle, the save is sent later on a
+  best-effort basis or, if the browser was closed, not at all
 
 ---
 

@@ -98,12 +98,22 @@ URL, and it can be changed later.
     - Import a page from another URL into a node form, with a review screen showing what
       it proposes to fill, how confident it is, and what it cannot bring across.
     - Copy a node's cleaned-up public HTML to the clipboard.
+    - Optional: connect to Varys, Columbia's content-intelligence service, so that your
+      search edits (titles, search descriptions, page addresses, headings, internal links)
+      are logged there automatically. It is off until you click Connect to Varys.
 
-    Everything happens in the browser. The extension fills forms in; it never saves or
-    publishes anything on its own — you press Save.
+    Everything happens in the browser, unless you connect to Varys. The extension fills
+    forms in; it never saves or publishes anything on its own — you press Save.
 
-    Runs only on columbia.edu and columbiadoctors.org administrative paths (/admin/ and
-    /node/). It does nothing on any other page, including the public side of those sites.
+    Its interface runs only on columbia.edu and columbiadoctors.org administrative paths
+    (/admin/ and /node/); it does not run on any other page, apart from the Varys notice
+    described below. Nothing about you or your pages is sent anywhere unless you click
+    Connect to Varys. If you do, a summary of each page you save (its address, the before
+    and after of its title, search description, URL alias, headings and internal links, how
+    much of the body changed, and up to three new sentences) is sent to Varys; the full body
+    text never is. After a save, a small notice saying what Varys did can appear on the page
+    you land on, which may be a public page of the same site. See the privacy policy for
+    everything that is sent and kept.
 
 **Category:** Workflow & Planning
 **Language:** English
@@ -128,14 +138,26 @@ common cause of a slow review. These are accurate as of the current manifest.
 
 **`storage`**
 
-    Stores the user's feature toggles and their queue of URLs to import, using
-    chrome.storage.local. Nothing leaves the browser.
+    Stores the user's feature toggles, their queue of URLs to import, their local drafts
+    and copied pages, a cached menu index and the last update-check result, using
+    chrome.storage.local. Never chrome.storage.sync. These stay in the browser. If the user
+    clicks Connect to Varys, it also stores the Varys key and email and a queue of at most
+    50 saves waiting to be sent (each kept at most 7 days) in chrome.storage.local, and a
+    few short-lived items in chrome.storage.session, which Chrome clears when the browser
+    closes: the form as it first opened (including raw field values, which are never sent),
+    saves being followed across the page change, and a 24-hour cache of which sites Varys
+    tracks. Disconnect removes all of it. Nothing leaves the browser except what the
+    privacy policy lists under "If you connect it to Varys", and only after the user has
+    connected.
 
 **`tabs`**
 
     Reads the active tab's URL to tell the user whether the extension applies to the page
     they are on, and opens admin pages from the popup's quick links and the command
-    palette.
+    palette. Once the user has connected to Varys it also watches the one tab a save was
+    made in, until that save has finished loading, to learn whether the save went through
+    and the public address of the page it landed on; it ignores every other tab's address,
+    and opens the Varys connect page in a new tab when the user clicks Connect to Varys.
 
 **`scripting`**
 
@@ -145,6 +167,18 @@ common cause of a slow review. These are accurate as of the current manifest.
     in the page's main world, which chrome.scripting provides. The alternative — injecting
     an inline script tag — fails on any site with a Content Security Policy that omits
     'unsafe-inline', which was verified during development.
+
+    The same page-world access also reads a field's current content out of that instance:
+    for the Remove span tags button and, once the user has connected to Varys, to measure
+    how much of the body changed when a node is saved. It is read in the browser, and the
+    full body text is never sent; the privacy policy lists the few things that are.
+
+    Also shows the Varys result notice, only once the user has connected to Varys: after a
+    save, a small box saying whether Varys logged it, with Undo or Log it anyway, is
+    injected into the page the save landed on. Drupal usually lands on the page's public
+    address, outside /admin/ and /node/, where the content script does not run, so the
+    extension injects the notice itself. The notice only draws a box; it reads nothing from
+    the page.
 
 **`clipboardWrite`**
 
@@ -158,17 +192,41 @@ common cause of a slow review. These are accurate as of the current manifest.
     *://*.columbiadoctors.org/node/*
 
 
-    The Drupal 7 sites the extension exists to improve. Scoped to the two administrative
-    path prefixes rather than the whole host, so ordinary pages on those domains are not
-    matched. The wildcard subdomain is required because the university runs many Drupal 7
-    sites across columbia.edu subdomains and they are added and renamed regularly.
+    The Drupal 7 sites the extension exists to improve. The content scripts that read and
+    redraw forms are matched only to those administrative path prefixes, so the extension
+    does not run its interface on ordinary pages of those domains. The host permission
+    itself is wider than that in practice: Chrome ignores the path of a host permission when
+    an extension injects a script through chrome.scripting, so the permission reaches every
+    page of those hosts, and the Varys result notice (see scripting above) can appear on a
+    site's public pages. Nothing else uses that reach. The wildcard subdomain is required
+    because the university runs many Drupal 7 sites across columbia.edu subdomains and they
+    are added and renamed regularly.
 
 **Optional host permission — `*://*/*`**
 
-    Required only for importing a page from an arbitrary URL, and requested at runtime for
-    one specific origin at a time, via chrome.permissions.request, immediately after the
-    user clicks that URL in their own import queue. It is not granted at install. The
-    extension cannot read any site until a user names it and approves the prompt.
+    Used for two things only, each requested at runtime for one specific origin at a time,
+    via chrome.permissions.request, immediately after the user's click. It is not granted at
+    install, and the extension cannot read any site until a user names it and approves the
+    prompt.
+
+    1. Importing a page from an arbitrary URL, requested right after the user clicks that
+       URL in their own import queue.
+    2. Contacting the Varys server, requested only when you click Connect to Varys. The
+       origin is https://varys.fly.dev, and the permission is given back when the user
+       clicks Disconnect. Until then the extension contacts Varys in no way.
+
+**`externally_connectable`** (a manifest key, not a permission; it is added to the built
+manifest by `vite.config.ts`, not written in `manifest.json`)
+
+    "externally_connectable": { "matches": ["https://varys-wine.vercel.app/*"] }
+
+    Lets one web page, the Varys app at https://varys-wine.vercel.app, call
+    chrome.runtime.sendMessage on this extension, once, to hand over the Varys key when the
+    user clicks Allow on Varys's connect page. No extension ids are listed, so no other
+    extension can message it, and a production build never lists a development origin. The
+    extension checks the sender's origin again itself and refuses any other page or any
+    message that is not a well-formed key hand-off. It adds no install-time permission
+    warning.
 
 **Remote code:** none. All JavaScript is bundled by Vite and served from the extension
 package. `tests/packaging.spec.ts` asserts the popup loads no remote script.
@@ -177,23 +235,44 @@ package. `tests/packaging.spec.ts` asserts the popup loads no remote script.
 
 Answer the dashboard's questionnaire as follows. Each is accurate; do not soften them.
 
-- **Personally identifiable information:** No
+- **Personally identifiable information:** **Yes**, only once the user connects to Varys.
+  The extension stores the email address of the user's Varys account (on this computer,
+  and shown in the popup) and identifies the user to Varys, as the person who saved, by the
+  key. It does not send the email address itself.
 - **Health information:** No
 - **Financial information:** No
-- **Authentication information:** No
+- **Authentication information:** **Yes**, only once the user connects to Varys. The Varys
+  key, which is a credential for the user's Varys account. It is stored locally and is sent
+  only to Varys, to authenticate that user's requests.
 - **Personal communications:** No
 - **Location:** No
-- **Web history:** No
-- **User activity:** No
+- **Web history:** No. The extension does not collect a browsing history. When connected,
+  it sends the address of a page the user has just **saved** on a site Varys tracks, not
+  pages the user visited, and it reads the address of a tab only to follow that one save.
+- **User activity:** **Yes**, only once the user connects to Varys, and only this: that a
+  save was made on a Drupal node form, which button was pressed (Publish, Save draft or
+  Save), and when Varys received it. No clicks, keystrokes, mouse position or scrolling are
+  recorded.
 - **Website content:** **Yes.** The extension reads the content of the Drupal admin form
   on the page, and — only for an origin the user has explicitly approved — the content of
-  a page they asked to import. This content is processed in the browser and written into
-  the form in front of the user. It is not transmitted anywhere and not stored beyond the
-  browser's local storage.
+  a page they asked to import.
+  - Without the Varys connection, this content is processed in the browser and written into
+    the form in front of the user. It is not transmitted anywhere and not stored beyond the
+    browser's local storage.
+  - Once the user has connected to Varys, on each save on a site Varys tracks the extension
+    **transmits to Varys** a summary of the form: the page's address, node id and content
+    type; before and after of the title, search title, search description, URL alias,
+    headings (H2 and H3) and internal body links; the body's word count; how much of the
+    body changed; and up to three new sentences (at most 200 characters each) used only to
+    confirm the change went live. The full body text is never sent. It is kept as the
+    privacy policy states: a save that does not count is deleted after 7 days, an undone
+    entry after 30 days, and one that counts stays in Varys's record of changes until it is
+    undone or an administrator removes it.
 
 Then certify all three:
 
-- Not being sold to third parties — true, it is not sold or transmitted at all.
+- Not being sold to third parties — true. It is not sold, and the extension sends data to
+  no one except Varys, which the user chooses to connect.
 - Not being used for purposes unrelated to the single purpose — true.
 - Not being used to determine creditworthiness or for lending — true.
 
@@ -201,14 +280,24 @@ Then certify all three:
 
     A faster administrative interface for Drupal 7 websites at Columbia University.
 
+Left unchanged for the Varys connection, which is optional and part of the same workflow
+(editing Drupal pages). **Held in reserve:** if review asks how Varys fits the single
+purpose, answer with this wording rather than weakening the claim:
+
+    A faster administrative interface for Drupal 7 websites at Columbia University,
+    including, if the user chooses, logging their search edits to Varys, Columbia's
+    content-intelligence service.
+
 **Privacy policy URL:** required whenever "Website content" is declared. Written, and in
 the repository at `docs/PRIVACY.md`. Paste this URL into the dashboard:
 
     https://github.com/danfox127-dotcom/Drupal-7-skin/blob/main/docs/PRIVACY.md
 
 It is checked against the source by `tests/packaging.spec.ts`: every remote host the code
-contacts must appear in the policy, the local-only storage claim fails if anything starts
-using `chrome.storage.sync`, and the draft disclosure must stay.
+contacts must appear in the policy (the two Varys hosts included), the local-only storage
+claim fails if anything starts using `chrome.storage.sync`, the "If you connect it to
+Varys" section and its "off until you connect" wording must stay, and the draft disclosure
+must stay.
 
 ---
 

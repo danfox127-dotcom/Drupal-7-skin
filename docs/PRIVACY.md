@@ -1,27 +1,53 @@
 # Privacy Policy — D7 Studio (D7 Admin Proxy UI)
 
-**Last updated:** 18 September 2026
-**Applies to:** the "D7 Admin Proxy UI" Chrome extension, all versions from 0.2.2
+**Last updated:** 21 October 2026
+**Applies to:** the "D7 Admin Proxy UI" Chrome extension, all versions from 0.2.2. The
+section "If you connect it to Varys" applies only to versions that have a **Connect to
+Varys** button; earlier versions have no such connection and send nothing to Varys.
 
 ## The short version
 
-This extension collects nothing, transmits nothing about you, and has no server. It
-reads the administrative page you have open, stores your own settings and drafts on your
-own computer, and makes network requests only to the site you are already using and to
-one fixed URL that tells it whether a newer version exists.
+This extension collects nothing and transmits nothing about you, unless you connect it to
+Varys, and it has no server of its own. It reads the administrative page you have open,
+stores your own settings and drafts on your own computer, and makes network requests only
+to the site you are already using and to one fixed URL that tells it whether a newer
+version exists.
+
+**The one exception is optional, and it is off until you connect it.** If you click
+**Connect to Varys**, the extension also sends a summary of each page you save in Drupal, on
+a site Varys tracks, to Varys, Columbia's content-intelligence service, so that Varys can
+log your search edits.
+Until you click that button, nothing is sent to Varys. The section "If you connect it to
+Varys" says exactly what is sent, where it goes, what the extension keeps on your computer,
+and how long Varys keeps it.
 
 There is no analytics, no telemetry, no tracking, no advertising, and no third-party
-service of any kind. The source is public and can be read at
+service of any kind. (Varys, the optional connection, is operated by the maintainer of this
+extension.) The source is public and can be read at
 <https://github.com/danfox127-dotcom/Drupal-7-skin>.
 
 ## What it reads
 
-**The Drupal administrative page you have open.** The extension only runs on addresses
-matching `*://*.columbia.edu/admin/*`, `*://*.columbia.edu/node/*`, and the same two
-paths on `*://*.columbiadoctors.org`. On every other page — including the public side of
-those same sites — it does not run at all. On the pages where it does run, it reads the
-form and page content in order to redraw the interface. That reading happens in your
-browser and the result stays there.
+**The Drupal administrative page you have open.** The extension only runs its interface
+and reads forms on addresses matching `*://*.columbia.edu/admin/*`,
+`*://*.columbia.edu/node/*`, and the same two paths on `*://*.columbiadoctors.org`. On
+every other page — including the public side of those same sites — it does not run its
+interface and does not read the page. On the pages where it does run, it reads the form
+and page content in order to redraw the interface. That reading happens in your browser and
+the result stays there, with one exception: if you have connected the extension to Varys,
+a summary of the node form you save is sent to Varys, as described below.
+
+**One more place, and only if you have connected it to Varys.** After you save, Drupal
+usually sends you on to the page's public address, which is outside those paths. There the
+extension can show its small result notice, which says whether Varys logged the save and
+offers Undo or Log it anyway. To show it, the extension draws a box on that page; it does
+not read the page. It can do this on any page of the `columbia.edu` and
+`columbiadoctors.org` hosts above, because Chrome ignores the path of a host permission
+when an extension adds something to a page through its scripting API. To learn where your
+save landed, the extension also watches the address of the one tab you pressed Save in,
+until that save has finished loading. Chrome tells it when any tab changes address, and it
+ignores those for every tab it is not following. When you are not connected there is
+nothing to follow, and it follows nothing.
 
 **A page you explicitly ask it to import.** If you add a URL to the import queue and
 click it, the extension fetches that page so it can propose values for the Drupal form in
@@ -35,9 +61,12 @@ anonymous visitor would and cannot reach anything private on the source site.
 
 ## What it stores, and where
 
-Everything is stored using `chrome.storage.local`, which keeps data **on this computer
-only**. The extension does not use `chrome.storage.sync`, so nothing is copied to your
-Google account or to any other device.
+Your settings, drafts, copied pages and the other items in the table below are stored using
+`chrome.storage.local`, which keeps data **on this computer only**.
+The extension does not use `chrome.storage.sync`, so nothing is copied to your Google
+account or to any other device. If you connect it to Varys it stores a little more, some of
+it locally and some of it only for the browser session; that is listed in its own section
+below.
 
 | What | Why |
 |---|---|
@@ -47,6 +76,7 @@ Google account or to any other device.
 | The result of the last update check | So the popup can tell you a new version exists |
 | **Local drafts of nodes you are editing** | See below |
 | **Pages you copied to paste onto another site** | See below |
+| Only if you connect it to Varys: your Varys key and email, a queue of saves waiting to be sent, and a notice | See "If you connect it to Varys" |
 
 ### About drafts
 
@@ -56,9 +86,11 @@ the site and node id. This is so that closing a tab does not lose your work.
 
 Two things worth being clear about:
 
-- **Drafts are local only.** They are never sent anywhere. Only pressing "Save draft to
-  Drupal" or "Publish" writes anything to the website, and those actions use Drupal's own
-  form, as if you had clicked its buttons yourself.
+- **Drafts are local only.** The draft the editor keeps is never sent anywhere. Only
+  pressing "Save draft to Drupal" or "Publish" writes anything to the website, and those
+  actions use Drupal's own form, as if you had clicked its buttons yourself. (If you are
+  connected to Varys, a save to Drupal is also what Varys is told about, as described
+  below. The local draft is not.)
 - **Drafts contain the content you typed**, which may include unpublished material. They
   stay in your browser's local storage until the draft is discarded or the extension is
   removed. If you share a computer, treat them the way you would treat an unsaved
@@ -85,7 +117,7 @@ The same cautions as drafts apply, and one more:
 
 ## What leaves your computer
 
-Exactly three kinds of request, and no others:
+Three kinds of request, and a fourth that exists only if you connect it to Varys:
 
 1. **Requests to the Drupal site you are already logged into**, to read a page's public
    HTML, to load the full list of a menu's items, or — when pasting a copied page — to
@@ -103,10 +135,14 @@ Exactly three kinds of request, and no others:
    browsing, or the pages you have open — it only asks "what is the newest version".
    GitHub, like any web server, will see the IP address the request came from. This
    happens when the browser or the extension starts, not continuously.
+4. **Requests to Varys, only after you click Connect to Varys.** They are described in the
+   next section. Until you click it, there are none.
 
-Nothing else is contacted. No data about you, your pages, your drafts, or your Drupal
-content is transmitted to the author of this extension or to anyone else. There is no
-server to transmit it to.
+Nothing else is contacted. Unless you connect it to Varys, no data about you, your pages,
+your drafts, or your Drupal content is transmitted to anyone: not to the maintainer of
+this extension and not to any other party, and the extension has no server of its own to
+transmit it to. If you do connect it, the only place anything goes is Varys, and only what
+the next section lists.
 
 ### One link, which is not a request
 
@@ -119,14 +155,137 @@ Chrome keeps them current.
 
 ## If you connect it to Varys
 
-<!-- STUB. The full text, covering exactly what is sent once connected, is written
-     before the release that ships the feature. -->
+Varys is the content-intelligence service for Columbia's websites, operated by the
+maintainer of this extension. The extension can optionally be connected to it, so that
+Varys can log the search edits you make in Drupal (a changed title, search description,
+page address, heading or internal link, or a substantial rewrite of the body) and later
+check whether they went live.
 
-The extension can optionally be connected to Varys, the content-intelligence service for
-Columbia's websites, at `https://varys.fly.dev` (its server) and
-`https://varys-wine.vercel.app` (the web app where you sign in to connect). This feature
-is off until you connect: nothing is sent to either address unless you choose **Connect to
-Varys** in the popup.
+**This is off until you connect it.** Unless you click **Connect to Varys** in the popup,
+nothing is sent to Varys, no form is recorded, no tab is followed on its behalf, and
+nothing is stored for it.
+
+### The two addresses, and how connecting works
+
+- **`https://varys.fly.dev`** is Varys's server (its API). It is the only address the
+  extension sends anything to for this feature. Every request carries your key (below) and
+  no cookies.
+- **`https://varys-wine.vercel.app`** is the Varys web app, where you sign in. The
+  extension makes no request to it, apart from opening it in a tab when you click Connect
+  to Varys (the address includes the extension's own id, so the page knows which extension
+  to hand the key to). That page can send one message to the extension, to hand over the
+  key, through Chrome's `externally_connectable` feature. Only pages at that exact origin
+  can do so, and the extension checks the sender again itself and refuses any other.
+
+To connect, you click **Connect to Varys**; Chrome asks whether the extension may contact
+`https://varys.fly.dev`, which you must approve (this is the optional `*://*/*`
+permission, requested for that one address and never granted at install); a Varys page
+opens, where you sign in and press **Allow**; and that page gives the extension a **key**.
+The key is a long random secret that stands for your Varys account in this browser. Varys
+keeps only a hash of it. It expires after 90 days without use.
+
+### What is sent each time you save
+
+When you press a Save button on a Drupal node form, the extension waits for Drupal to
+finish saving. If the save went through, and the page is on a site Varys tracks, it sends
+one request to `https://varys.fly.dev` containing exactly this:
+
+- **The page's public address**, its Drupal **node id** when it has one, and its **content
+  type** (Drupal's machine name for it, such as `news`).
+- **The page before your edit** (as the form first opened; empty for a new page) **and
+  after it**. Each is limited to the title, the search title (meta title), the search
+  description (meta description), the URL alias, the body's headings (H2 and H3, with their
+  text), the body's links to pages on the same site, and a count of the body's words.
+- **How much of the body changed**, as one number between 0 and 1.
+- **Up to three new sentences** from the body, at most 200 characters each. Varys looks for
+  them on the live page to confirm that the change went live, which is the only way to
+  confirm an edit that changed nothing but the body.
+- **Which button you pressed**: Publish, Save draft, or a plain Save.
+- **Who saved it, and when.** The request carries your key, and Varys knows which account
+  the key belongs to; the extension does not send your name or email with it. Varys records
+  the time it received the save.
+
+**The full body text is never sent.** The body is read in your browser, and only its
+headings, links, word count, the measure of how much changed, and those few sentences leave
+it. No other field of the form is sent, and neither are images, your Drupal login, or any
+cookie.
+
+Three other kinds of request go to the same address, each carrying only your key unless
+noted:
+
+- **A list of the sites Varys tracks.** Before sending a save, the extension asks Varys
+  which sites it tracks, so that nothing is sent about a save on any other site. The answer
+  is cached for 24 hours in the browser session. If Varys cannot be asked, the save is sent
+  anyway and Varys discards it, keeping nothing, when the site is not one it tracks.
+- **Undo and Log it anyway.** Pressing either sends the number of that save.
+- **Disconnect.** Asks Varys to cancel your key.
+
+Nothing is sent for a save that Drupal rejected (the form came back with an error), for the
+Preview, Delete and Cancel buttons, for a save that landed on the login page or on another
+site, for a new page whose address the extension cannot work out, or for any save made
+while you are not connected.
+
+### What the extension keeps on your computer while you are connected
+
+In `chrome.storage.local`, which survives closing the browser:
+
+- **Your Varys key, the email of your Varys account, and when you connected.** The key
+  is a credential for your Varys account. Only the extension's background script reads it;
+  the popup is told your email and whether the connection has expired, never the key.
+- **A queue of saves Varys could not take** (Varys unreachable, or your key expired), so
+  they can be sent later: at most 50 saves, each kept for at most 7 days. Each is held
+  as it would have been sent, with the email it was made under, and is only ever sent under
+  that same person's key.
+- **A notice**, when the result could not be shown on the page you landed on: its text, the
+  site it is for, and when it was stored. It is shown once on the next admin page of that
+  site, then deleted. After an hour it is no longer shown; it stays stored until a newer
+  notice replaces it or you disconnect.
+
+In `chrome.storage.session`, which Chrome clears when the browser closes:
+
+- **The form as it first opened**, for each tab with a node form open, including the raw
+  values of its fields and its body. These raw values are never sent to Varys. They are
+  kept so that a Preview, or a save Drupal rejected, is compared with the page as it was
+  rather than with your unsaved edit. They are removed when you leave the form, after a save
+  goes through, or when the tab closes.
+- **Saves being followed across the page change**: the summary of a save you just made,
+  held until the extension knows where Drupal landed and has sent it or queued it. If it
+  never sees the save finish (for example, you closed the tab), it sends the save with the
+  address the form knew, after a short wait, on a best-effort basis. There is no guarantee
+  of when. If the browser closes first, that save is not sent and is not kept.
+- **The list of sites Varys tracks**, cached for 24 hours.
+
+### How long Varys keeps what it receives
+
+- **A save that does not count as a search edit** (a typo fix, say) is not logged. Varys
+  keeps it for 7 days, so that **Log it anyway** can still use it, and then deletes it.
+- **An entry you undo** is kept for 30 days as a marker, so that when Varys later detects
+  the same change on the live page it dismisses it instead of raising it again, and then
+  deleted.
+- **A save that counts** is kept in Varys as part of its record of changes made to that
+  site. People signed in to Varys with access to the site can see it on its What's Working
+  page, with who made it and what changed. It stays until it is undone or an administrator
+  removes it.
+- **Your key** expires after 90 days without use.
+
+After a save, Varys also reads the saved page's public address to check that the change is
+live. That request comes from Varys's own servers, not from the extension.
+
+### Disconnecting
+
+Click **Disconnect** in the popup. The extension asks Varys to cancel your key, then
+deletes from this computer the key and email, the queue of waiting saves, any notice not
+yet shown, the saves and forms it was following, and the cached list of sites, and gives
+back its permission to contact Varys. If Varys cannot be reached, the extension still
+forgets the key and says so; the key then keeps working on Varys until it is cancelled
+there or expires.
+
+You can also disconnect from the Varys side: **Your connections** on Varys's Drupal
+extension page cancels a key. This browser keeps its copy until it next tries to use it and
+is refused, so use Disconnect in the popup to clear it.
+
+Disconnecting does not delete changes Varys has already logged. **Undo** does that: from
+the result notice right after a save, or from What's Working in Varys.
 
 ## Clipboard
 
@@ -135,22 +294,30 @@ The extension does not read your clipboard.
 
 ## Data sharing and sale
 
-None. No data is collected, so none is shared, sold, transferred, or used for advertising,
-credit assessment, or lending. Nothing is used for any purpose unrelated to the
-extension's single purpose: providing a faster administrative interface for Drupal 7
-websites at Columbia University.
+The extension sells nothing, and shares nothing with any third party. Without the Varys
+connection no data is collected, so none is transferred anywhere. With it, the data
+described above goes to Varys, the service you chose to connect, and to no one else. None
+of it is used for advertising, credit assessment, or lending, or for any purpose unrelated
+to the extension's single purpose: providing a faster administrative interface for Drupal 7
+websites at Columbia University, including, if you choose, logging your search edits in
+Varys.
 
 ## How to remove everything
 
 Removing the extension from `chrome://extensions` deletes all of its local storage,
-including settings, the import queue, cached menus, copied pages, and any saved drafts.
-Nothing is left
-behind, and nothing exists elsewhere to delete.
+including settings, the import queue, cached menus, copied pages, and any saved drafts,
+and, if you connected it to Varys, your key and anything waiting to be sent.
+
+If you connected it to Varys, **Disconnect first**. Removing the extension does not tell
+Varys to cancel your key, which then stays valid until you cancel it on Varys or it expires
+after 90 days unused, and Varys keeps what it has already logged for the periods above. If
+you never connected it, nothing is left behind, and nothing exists elsewhere to delete.
 
 ## Children
 
 The extension is a tool for staff administering university websites. It is not directed
-at children and collects no information from anyone.
+at children. Apart from the optional Varys connection described above, which staff choose
+to turn on, it collects no information from anyone.
 
 ## Changes to this policy
 
