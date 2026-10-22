@@ -132,6 +132,7 @@
   <input type="submit" id="edit-submit" name="op" value="Save" />
 </form>
 <script>
+window.__inserted = [];
 window.CKEDITOR = {
   instances: {},
   config: { toolbar: ['Bold', 'Italic', 'Link'] },
@@ -162,6 +163,10 @@ window.CKEDITOR = {
       getData: function () { return this._data; },
       setData: function (v) { this._data = v; },
       updateElement: function () { this._t.value = this._data; },
+      // As in node-add-news-ckeditor.html: one range, and insertHtml recorded.
+      getSelection: function () { return { getRanges: function () { return [{}]; } }; },
+      focus: function () {},
+      insertHtml: function (html) { window.__inserted.push(html); this._data += html; },
       destroy: function (noUpdate) {
         if (!noUpdate) this.updateElement();
         if (this._c.parentNode) this._c.parentNode.removeChild(this._c);

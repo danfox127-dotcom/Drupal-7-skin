@@ -29,6 +29,7 @@ import type {
   VarysFormOpenedMessage, VarysFormOpenedResponse, VarysSubmitMessage,
 } from '../lib/varys/pageState';
 import { showVarysNotice } from '../lib/varys/notice';
+import { parseSuggestionsAnswer, type SuggestionsReply, type VarysSuggestionsRequest } from '../lib/varys/suggestions';
 import {
   ACTION_EXPIRED_COPY, ACTION_NOT_CONNECTED_COPY, ACTION_UNREACHABLE_COPY, EXPIRED_COPY,
   PENDING_NOTICE_KEY, PENDING_TIMEOUT_MS, QUEUE_KEY, SITES_TTL_MS, UNREACHABLE_COPY, UNTRACKED_COPY,
@@ -194,6 +195,76 @@ async function readRichEditor(tabId: number, elementId: string): Promise<ReadRic
   } catch (err) {
     console.warn('[D7 Studio] Could not read the rich text editor', err);
     return { ok: false };
+  }
+}
+
+/** Puts HTML into a field's rich editor at the cursor, which the person placed by clicking in the body. */
+export interface InsertRichEditorHtmlRequest {
+  type: 'insertRichEditorHtml';
+  elementId: string;
+  html: string;
+}
+
+export interface InsertRichEditorHtmlResponse {
+  /** True only when the HTML went in. */
+  ok: boolean;
+  /**
+   * 'no-cursor': the editor has no selection (nobody has clicked in the body), so nothing was
+   * inserted, and the answer is to tell the person to click where it should go.
+   * 'no-editor': no CKEditor 4 instance has that id.
+   */
+  result: 'inserted' | 'no-cursor' | 'no-editor' | 'error';
+}
+
+/**
+ * The counterpart of syncRichEditor for adding to what is there instead of replacing it.
+ *
+ * CKEditor 4 only, which is what Drupal's rich fields are. It never guesses a place: without a
+ * range to insert at (`getSelection()` is null, or has no ranges), nothing is inserted.
+ * The panel's button takes focus from the editing surface, so this relies on CKEditor still
+ * reporting the range the person last had there (checked against a stub, not a live editor).
+ * `html` goes in as markup: whoever builds it escapes any text that is not meant as markup.
+ */
+async function insertRichEditorHtml(
+  tabId: number, elementId: string, html: string,
+): Promise<InsertRichEditorHtmlResponse> {
+  try {
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      args: [elementId, html],
+      func: (id: string, markup: string) => {
+        const w = window as unknown as {
+          CKEDITOR?: {
+            instances?: Record<string, {
+              getSelection(): { getRanges(): unknown[] } | null;
+              focus(): void;
+              insertHtml(html: string): void;
+              updateElement(): void;
+            }>;
+          };
+        };
+        try {
+          const ck = w.CKEDITOR?.instances?.[id];
+          if (!ck) return 'no-editor';
+          if (!ck.getSelection()?.getRanges().length) return 'no-cursor';
+          ck.focus();
+          ck.insertHtml(markup);
+          // The textarea is what the form submits, and CKEditor only syncs it on submit.
+          ck.updateElement();
+          return 'inserted';
+        } catch {
+          return 'error';
+        }
+      },
+    });
+    const result = injection?.result;
+    return result === 'inserted' || result === 'no-cursor' || result === 'no-editor'
+      ? { ok: result === 'inserted', result }
+      : { ok: false, result: 'error' };
+  } catch (err) {
+    console.warn('[D7 Studio] Could not insert into the rich text editor', err);
+    return { ok: false, result: 'error' };
   }
 }
 
@@ -860,6 +931,49 @@ async function actOnSave(request: VarysActionRequest): Promise<VarysActionRespon
   return { ok: false, message: ACTION_UNREACHABLE_COPY };
 }
 
+/**
+ * What Varys has for a page's Page Health suggestions, or asks it to make them, for the panel.
+ * The same steps as a save, in the same order, and the panel is told which one stopped it:
+ *
+ * - Not connected, or the key already expired: nothing is sent.
+ * - A site Varys does not track: `not_tracked`, and nothing is sent. The page's address leaves
+ *   the browser only for a site on the list Varys gave this person. (When Varys cannot even be
+ *   asked for that list the request is sent, as a save is, and Varys answers `not_tracked`.)
+ * - A 401, on the list or on the request: the key is marked expired.
+ * - No answer at all: unreachable. Another status, or an answer that is not a shape Varys
+ *   documents: an error, with Varys's own words when it gave any.
+ */
+async function suggestionsFor(request: VarysSuggestionsRequest): Promise<SuggestionsReply> {
+  const { pageUrl } = request;
+  const connection = await getConnection();
+  if (!connection) return { ok: false, reason: 'not_connected', message: ACTION_NOT_CONNECTED_COPY };
+  if (connection.expired) return { ok: false, reason: 'expired', message: ACTION_EXPIRED_COPY };
+
+  const sites = await trackedSites(connection);
+  if (sites === 'expired') {
+    await markExpired(connection);
+    return { ok: false, reason: 'expired', message: ACTION_EXPIRED_COPY };
+  }
+  if (sites && !isTrackedSite(pageUrl, sites)) return { ok: true, answer: { status: 'not_tracked' } };
+
+  const answer = request.type === 'varysGenerateSuggestions'
+    ? await callVarys(connection, 'POST', '/api/extension/suggestions/generate', { page_url: pageUrl })
+    : await callVarys(connection, 'GET', `/api/extension/suggestions?page_url=${encodeURIComponent(pageUrl)}`);
+  if (succeeded(answer)) {
+    const parsed = parseSuggestionsAnswer(answer.json);
+    if (parsed) return { ok: true, answer: parsed };
+    console.warn('[D7 Studio] Varys answered suggestions with a shape this version does not know', answer.json);
+    return { ok: false, reason: 'error', message: ACTION_UNREACHABLE_COPY };
+  }
+  if (answer.status === 401) {
+    await markExpired(connection);
+    return { ok: false, reason: 'expired', message: ACTION_EXPIRED_COPY };
+  }
+  if (answer.status === null) return { ok: false, reason: 'unreachable', message: ACTION_UNREACHABLE_COPY };
+  const detail = (answer.json as { detail?: unknown } | null)?.detail;
+  return { ok: false, reason: 'error', message: typeof detail === 'string' ? detail : ACTION_UNREACHABLE_COPY };
+}
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') {
     // Stamped as it arrives, before any queued work, so the time is the event's own.
@@ -913,7 +1027,8 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
 chrome.runtime.onMessage.addListener((
   message: FetchSourceRequest | SyncRichEditorRequest | RichEditorLifecycleRequest
     | CheckForUpdateRequest | ReadRichEditorRequest | VarysStatusRequest | VarysDisconnectRequest
-    | VarysFormOpenedMessage | VarysSubmitMessage | VarysActionRequest,
+    | VarysFormOpenedMessage | VarysSubmitMessage | VarysActionRequest | VarysSuggestionsRequest
+    | InsertRichEditorHtmlRequest,
   sender,
   sendResponse
 ) => {
@@ -952,6 +1067,11 @@ chrome.runtime.onMessage.addListener((
     return true;
   }
 
+  if (message?.type === 'varysSuggestions' || message?.type === 'varysGenerateSuggestions') {
+    void suggestionsFor(message).then(sendResponse);
+    return true;
+  }
+
   if (message?.type === 'fetchSource') {
     void fetchSource(message.url).then(sendResponse);
     // Keeps the message channel open for the async reply.
@@ -966,6 +1086,16 @@ chrome.runtime.onMessage.addListener((
     }
     void syncRichEditor(tabId, message.elementId, message.value)
       .then(ok => sendResponse({ ok }));
+    return true;
+  }
+
+  if (message?.type === 'insertRichEditorHtml') {
+    const tabId = sender.tab?.id;
+    if (tabId === undefined) {
+      sendResponse({ ok: false, result: 'error' } satisfies InsertRichEditorHtmlResponse);
+      return false;
+    }
+    void insertRichEditorHtml(tabId, message.elementId, message.html).then(sendResponse);
     return true;
   }
 

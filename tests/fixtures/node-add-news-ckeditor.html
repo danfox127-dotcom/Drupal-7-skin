@@ -53,6 +53,7 @@
 
 <script>
 // ---- Minimal but behaviourally honest CKEditor 4 stub ----------------------
+window.__inserted = [];
 window.CKEDITOR = {
   instances: {},
   // The site's configured buttons. A reimplemented toolbar could not know these.
@@ -95,6 +96,13 @@ window.CKEDITOR = {
       getData: function () { return this._data; },
       setData: function (v) { this._data = v; },
       updateElement: function () { this._textarea.value = this._data; },
+      // What a click in the body leaves behind: one range. A test that wants the editor as
+      // it is before anyone has clicked in it returns no ranges here, as CKEditor does.
+      getSelection: function () { return { getRanges: function () { return [{}]; } }; },
+      focus: function () {},
+      // Recorded, and appended to the data (the stub has no caret to put it at), so
+      // updateElement() has something to carry to the textarea.
+      insertHtml: function (html) { window.__inserted.push(html); this._data += html; },
       destroy: function (noUpdate) {
         if (!noUpdate) this.updateElement();
         this._container.parentNode && this._container.parentNode.removeChild(this._container);

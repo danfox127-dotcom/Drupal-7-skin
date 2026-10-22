@@ -4067,6 +4067,51 @@ test.describe('Recording a node save for Varys', () => {
   // editor told to reconnect. See "an expired connection still records the save" below.
 });
 
+interface VarysCall {
+  method: string;
+  path: string;
+  /** The query string with its `?`, or '' when there is none. */
+  search: string;
+  authorization: string | undefined;
+  body: any;
+}
+type VarysAnswer = { status: number; body?: unknown } | 'abort';
+
+/**
+ * Stands in for Varys, and records every request the worker makes to it.
+ *
+ * CORS is answered in full, preflight included, because in a test the optional host
+ * permission for Varys cannot be granted without a prompt nobody can click, so the worker's
+ * fetch is a cross-origin request like any page's. In use, Connect grants that permission.
+ */
+const stubVarys = async (context: BrowserContext, answer: (call: VarysCall) => VarysAnswer | Promise<VarysAnswer>) => {
+  const calls: VarysCall[] = [];
+  const cors = {
+    'access-control-allow-origin': '*',
+    'access-control-allow-headers': 'authorization, content-type',
+    'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
+  };
+  await context.route('**varys.fly.dev/**', async route => {
+    const request = route.request();
+    if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    const url = new URL(request.url());
+    const call: VarysCall = {
+      method: request.method(),
+      path: url.pathname,
+      search: url.search,
+      authorization: request.headers()['authorization'],
+      body: request.postData() ? request.postDataJSON() : null,
+    };
+    calls.push(call);
+    const a = await answer(call);
+    if (a === 'abort') return route.abort('failed');
+    return route.fulfill({
+      status: a.status, headers: cors, contentType: 'application/json', body: JSON.stringify(a.body ?? {}),
+    });
+  });
+  return calls;
+};
+
 test.describe('Sending a save to Varys, and telling the editor what happened', () => {
   const KEY = 'vxk_' + 'a'.repeat(43);
   const EMAIL = 'x@cumc.columbia.edu';
@@ -4083,44 +4128,8 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
   const UNREACHABLE = "Varys couldn't be reached. This save will be sent when it can.";
   const EXPIRED = 'Your Varys connection has expired. Reconnect from the extension menu to log this save.';
 
-  interface VarysCall { method: string; path: string; authorization: string | undefined; body: any }
-  type Answer = { status: number; body?: unknown } | 'abort';
-
-  /**
-   * Stands in for Varys, and records every request the worker makes to it.
-   *
-   * CORS is answered in full, preflight included, because in a test the optional host
-   * permission for Varys cannot be granted without a prompt nobody can click, so the worker's
-   * fetch is a cross-origin request like any page's. In use, Connect grants that permission.
-   */
-  const stubVarys = async (context: BrowserContext, answer: (call: VarysCall) => Answer | Promise<Answer>) => {
-    const calls: VarysCall[] = [];
-    const cors = {
-      'access-control-allow-origin': '*',
-      'access-control-allow-headers': 'authorization, content-type',
-      'access-control-allow-methods': 'GET, POST, DELETE, OPTIONS',
-    };
-    await context.route('**varys.fly.dev/**', async route => {
-      const request = route.request();
-      if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
-      const call: VarysCall = {
-        method: request.method(),
-        path: new URL(request.url()).pathname,
-        authorization: request.headers()['authorization'],
-        body: request.postData() ? request.postDataJSON() : null,
-      };
-      calls.push(call);
-      const a = await answer(call);
-      if (a === 'abort') return route.abort('failed');
-      return route.fulfill({
-        status: a.status, headers: cors, contentType: 'application/json', body: JSON.stringify(a.body ?? {}),
-      });
-    });
-    return calls;
-  };
-
   /** Varys as it is when all is well: it tracks this site and logs the save. */
-  const varysUp = (save: Answer = { status: 200, body: LOGGED }, sites = SITES) => (call: VarysCall): Answer => {
+  const varysUp = (save: VarysAnswer = { status: 200, body: LOGGED }, sites = SITES) => (call: VarysCall): VarysAnswer => {
     if (call.path === '/api/extension/connection') return { status: 200, body: sites };
     if (call.path === '/api/extension/saves') return save;
     return { status: 404, body: { detail: 'Not Found' } };
@@ -4704,5 +4713,247 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     await expect.poll(async () => (await sessionKeys(context)).includes('varysPending:4242')).toBe(false);
     await page.waitForTimeout(500);
     expect(savesIn(calls)).toEqual([]);
+  });
+});
+
+test.describe('Varys suggestions: worker', () => {
+  const KEY = 'vxk_' + 'a'.repeat(43);
+  const EMAIL = 'x@cumc.columbia.edu';
+  const connected = { key: KEY, email: EMAIL, connectedAt: '2026-10-22T12:00:00.000Z' };
+  const SITES = { email: EMAIL, user_id: '00000000-0000-0000-0000-000000000001', sites: ['cuimc.columbia.edu'] };
+  /** The page being edited, by its public address: what the panel asks Varys about. */
+  const PAGE = 'https://www.cuimc.columbia.edu/heart-failure';
+  /** A form with a rich editor on it, which is the tab the panel's messages come from. */
+  const EDITOR_FORM = `${HOST}/node/add/news-ckeditor`;
+  const BODY = 'edit-body-value';
+  const HEADING = '<h2>Myths about Down syndrome</h2>';
+
+  const NOT_CONNECTED = "This browser isn't connected to Varys any more, so nothing changed.";
+  const EXPIRED = 'Your Varys connection has expired. Reconnect from the extension menu.';
+  const UNREACHABLE = "Varys couldn't be reached, so nothing changed. Try again in a moment.";
+
+  const READY = {
+    status: 'ready',
+    made_at: '2026-10-21T09:30:00Z',
+    clinical_review_note: 'Check the 30% figure with the clinic before this goes live.',
+    current: { meta_title: 'Heart failure', meta_description: null, h1: 'Heart failure', h2s: ['Overview'] },
+    suggested: {
+      meta_title: 'Heart failure: symptoms and treatment | CUIMC',
+      meta_description: 'Learn what heart failure is and how our specialists treat it.',
+      h1: 'Heart failure',
+      h2s: ['Overview', 'Myths about heart failure'],
+    },
+  };
+
+  /** Varys as it is when all is well: it tracks this site, and answers the one `suggestions` says. */
+  const varysUp = (suggestions: VarysAnswer = { status: 200, body: { status: 'none' } }) =>
+    (call: VarysCall): VarysAnswer => {
+      if (call.path === '/api/extension/connection') return { status: 200, body: SITES };
+      if (call.path.startsWith('/api/extension/suggestions')) return suggestions;
+      return { status: 404, body: { detail: 'Not Found' } };
+    };
+
+  const suggestionsIn = (calls: VarysCall[]) => calls.filter(c => c.path.startsWith('/api/extension/suggestions'));
+  const worker = (context: BrowserContext) => context.serviceWorkers()[0];
+
+  /**
+   * Sends the worker a message the way the panel will, from a content script in the tab.
+   *
+   * A message from an extension page would reach the worker too, but with that page as its
+   * sender, and the insert acts on the SENDER's tab. So this evaluates in the content script's
+   * own isolated world, over CDP, and the worker sees the fixture tab.
+   */
+  const asContentScript = async (page: Page, context: BrowserContext, extensionId: string, message: unknown) => {
+    const cdp = await context.newCDPSession(page);
+    try {
+      const worlds: { id: number; origin: string; auxData?: { frameId?: string } }[] = [];
+      cdp.on('Runtime.executionContextCreated', e => worlds.push(e.context));
+      await cdp.send('Runtime.enable');
+      const { frameTree } = await cdp.send('Page.getFrameTree');
+      const ours = () => worlds.find(w =>
+        w.origin === `chrome-extension://${extensionId}` && w.auxData?.frameId === frameTree.frame.id);
+      // The content script is injected once the page is idle, which can be just after `load`.
+      for (let waited = 0; !ours() && waited < 10_000; waited += 100) await page.waitForTimeout(100);
+      const world = ours();
+      if (!world) throw new Error('The extension has no content script in this tab.');
+
+      const { result, exceptionDetails } = await cdp.send('Runtime.evaluate', {
+        contextId: world.id,
+        awaitPromise: true,
+        returnByValue: true,
+        expression: `new Promise(resolve => chrome.runtime.sendMessage(${JSON.stringify(message)}, response =>
+          resolve(response === undefined ? { noAnswer: chrome.runtime.lastError?.message } : response)))`,
+      });
+      if (exceptionDetails) throw new Error(exceptionDetails.text);
+      return result.value;
+    } finally {
+      await cdp.detach();
+    }
+  };
+
+  const openEditor = async (page: Page) => {
+    await page.goto(EDITOR_FORM);
+    await expect(page.locator(`#${BODY}`)).toHaveCount(1);
+  };
+
+  test('suggestions are fetched with the page URL and the key', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await openEditor(page);
+
+    const reply = await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE });
+
+    expect(reply).toEqual({ ok: true, answer: { status: 'none' } });
+    const [call] = suggestionsIn(calls);
+    expect(suggestionsIn(calls)).toHaveLength(1);
+    expect(call.method).toBe('GET');
+    expect(call.path).toBe('/api/extension/suggestions');
+    expect(call.search).toBe('?page_url=' + encodeURIComponent(PAGE));
+    expect(call.authorization).toBe(`Bearer ${KEY}`);
+  });
+
+  test('a ready answer reaches the panel whole', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varysUp({ status: 200, body: READY }));
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE }))
+      .toEqual({ ok: true, answer: READY });
+  });
+
+  test('asking Varys to make them posts the page URL, and says it is generating', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp({ status: 200, body: { status: 'generating' } }));
+    await openEditor(page);
+
+    const reply = await asContentScript(page, context, extensionId, { type: 'varysGenerateSuggestions', pageUrl: PAGE });
+
+    expect(reply).toEqual({ ok: true, answer: { status: 'generating' } });
+    const [call] = suggestionsIn(calls);
+    expect(suggestionsIn(calls)).toHaveLength(1);
+    expect(call.method).toBe('POST');
+    expect(call.path).toBe('/api/extension/suggestions/generate');
+    expect(call.body).toEqual({ page_url: PAGE });
+    expect(call.authorization).toBe(`Bearer ${KEY}`);
+  });
+
+  test('an untracked host sends nothing', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await openEditor(page);
+
+    for (const type of ['varysSuggestions', 'varysGenerateSuggestions']) {
+      expect(await asContentScript(page, context, extensionId, { type, pageUrl: 'https://vagelos.columbia.edu/heart-failure' }))
+        .toEqual({ ok: true, answer: { status: 'not_tracked' } });
+    }
+    expect(suggestionsIn(calls)).toEqual([]);
+  });
+
+  test('a 401 marks the connection expired', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varysUp({ status: 401, body: { detail: 'This key has expired.' } }));
+    await openEditor(page);
+
+    const reply = await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE });
+
+    expect(reply).toEqual({ ok: false, reason: 'expired', message: EXPIRED });
+    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    expect(stored.varysConnection.expired).toBe(true);
+  });
+
+  test('a 401 on the list of sites marks it expired too, before anything is asked about the page', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, () => ({ status: 401, body: { detail: 'This key has expired.' } }));
+    await openEditor(page);
+
+    const reply = await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE });
+
+    expect(reply).toEqual({ ok: false, reason: 'expired', message: EXPIRED });
+    expect(suggestionsIn(calls)).toEqual([]);
+    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    expect(stored.varysConnection.expired).toBe(true);
+  });
+
+  test('an already expired connection is not asked', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: { ...connected, expired: true }, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE }))
+      .toEqual({ ok: false, reason: 'expired', message: EXPIRED });
+    expect(calls).toEqual([]);
+  });
+
+  test('a browser that is not connected is not asked either', async ({ page, context, extensionId, settings }) => {
+    await settings({ nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE }))
+      .toEqual({ ok: false, reason: 'not_connected', message: NOT_CONNECTED });
+    expect(calls).toEqual([]);
+  });
+
+  test('no answer from Varys is unreachable, and the key is not in doubt', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, call => call.path === '/api/extension/connection'
+      ? { status: 200, body: SITES }
+      : 'abort');
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE }))
+      .toEqual({ ok: false, reason: 'unreachable', message: UNREACHABLE });
+    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    expect(stored.varysConnection.expired).toBeUndefined();
+  });
+
+  test('an answer that is not one of Varys\'s shapes is an error, not something for the panel to guess at', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varysUp({ status: 200, body: { status: 'ready', made_at: '2026-10-21T09:30:00Z' } }));
+    await openEditor(page);
+
+    const reply = await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE }) as
+      { ok: boolean; reason?: string };
+    expect(reply).toMatchObject({ ok: false, reason: 'error' });
+  });
+
+  test('insert without a selection reports no-cursor', async ({ page, context, extensionId, settings }) => {
+    await settings({ nodeEditor: false });
+    await openEditor(page);
+    // The editor as it is before anyone has clicked in the body: no ranges.
+    await page.evaluate(id => {
+      (window as any).CKEDITOR.instances[id].getSelection = () => ({ getRanges: () => [] });
+    }, BODY);
+
+    const reply = await asContentScript(page, context, extensionId,
+      { type: 'insertRichEditorHtml', elementId: BODY, html: HEADING });
+
+    expect(reply).toEqual({ ok: false, result: 'no-cursor' });
+    expect(await page.evaluate(() => (window as any).__inserted)).toEqual([]);
+    expect(await page.locator(`#${BODY}`).inputValue()).toBe('Original body text.');
+  });
+
+  test('insert at cursor inserts the heading', async ({ page, context, extensionId, settings }) => {
+    await settings({ nodeEditor: false });
+    await openEditor(page);
+
+    const reply = await asContentScript(page, context, extensionId,
+      { type: 'insertRichEditorHtml', elementId: BODY, html: HEADING });
+
+    expect(reply).toEqual({ ok: true, result: 'inserted' });
+    expect(await page.evaluate(() => (window as any).__inserted)).toEqual([HEADING]);
+    // updateElement() ran, so the textarea the form submits carries it too.
+    expect(await page.locator(`#${BODY}`).inputValue()).toContain(HEADING);
+  });
+
+  test('insert into an editor that is not there reports no-editor', async ({ page, context, extensionId, settings }) => {
+    await settings({ nodeEditor: false });
+    await openEditor(page);
+
+    const reply = await asContentScript(page, context, extensionId,
+      { type: 'insertRichEditorHtml', elementId: 'edit-nothing-here', html: HEADING });
+
+    expect(reply).toEqual({ ok: false, result: 'no-editor' });
+    expect(await page.evaluate(() => (window as any).__inserted)).toEqual([]);
   });
 });
