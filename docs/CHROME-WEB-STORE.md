@@ -154,10 +154,13 @@ common cause of a slow review. These are accurate as of the current manifest.
 
     Reads the active tab's URL to tell the user whether the extension applies to the page
     they are on, and opens admin pages from the popup's quick links and the command
-    palette. Once the user has connected to Varys it also watches the one tab a save was
-    made in, until that save has finished loading, to learn whether the save went through
-    and the public address of the page it landed on; it ignores every other tab's address,
-    and opens the Varys connect page in a new tab when the user clicks Connect to Varys.
+    palette. Once the user has connected to Varys it also follows a tab in two cases,
+    comparing only the host and path of its address: a tab with a node form open, until it
+    leaves that form, closes or saves (nothing is sent for this; it lets a Preview or a
+    rejected save be compared with the form as it first opened), and the tab a save was made
+    in, until that save has finished loading, to learn whether it went through and the
+    public address of the page it landed on. It ignores every other tab's address, and
+    opens the Varys connect page in a new tab when the user clicks Connect to Varys.
 
 **`scripting`**
 
@@ -265,14 +268,14 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
     headings (H2 and H3) and internal body links; the body's word count; how much of the
     body changed; and up to three new sentences (at most 200 characters each) used only to
     confirm the change went live. The full body text is never sent. It is kept as the
-    privacy policy states: a save that does not count is deleted after 7 days, an undone
-    entry after 30 days, and one that counts stays in Varys's record of changes until it is
+    privacy policy states: a page's edits that never counted as a search edit are deleted
+    after 7 days, an undone entry after 30 days, and one that counts stays in Varys's record of changes until it is
     undone or an administrator removes it.
 
 Then certify all three:
 
-- Not being sold to third parties — true. It is not sold, and the extension sends data to
-  no one except Varys, which the user chooses to connect.
+- Not being sold to third parties — true. It is not sold, and the extension sends no user
+  data to anyone except Varys, which the user chooses to connect.
 - Not being used for purposes unrelated to the single purpose — true.
 - Not being used to determine creditworthiness or for lending — true.
 

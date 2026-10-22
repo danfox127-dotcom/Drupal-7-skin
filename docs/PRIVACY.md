@@ -21,10 +21,8 @@ Until you click that button, nothing is sent to Varys. The section "If you conne
 Varys" says exactly what is sent, where it goes, what the extension keeps on your computer,
 and how long Varys keeps it.
 
-There is no analytics, no telemetry, no tracking, no advertising, and no third-party
-service of any kind. (Varys, the optional connection, is operated by the maintainer of this
-extension.) The source is public and can be read at
-<https://github.com/danfox127-dotcom/Drupal-7-skin>.
+There is no analytics, no telemetry, no tracking, and no advertising. The source is public
+and can be read at <https://github.com/danfox127-dotcom/Drupal-7-skin>.
 
 ## What it reads
 
@@ -43,11 +41,18 @@ extension can show its small result notice, which says whether Varys logged the 
 offers Undo or Log it anyway. To show it, the extension draws a box on that page; it does
 not read the page. It can do this on any page of the `columbia.edu` and
 `columbiadoctors.org` hosts above, because Chrome ignores the path of a host permission
-when an extension adds something to a page through its scripting API. To learn where your
-save landed, the extension also watches the address of the one tab you pressed Save in,
-until that save has finished loading. Chrome tells it when any tab changes address, and it
-ignores those for every tab it is not following. When you are not connected there is
-nothing to follow, and it follows nothing.
+when an extension adds something to a page through its scripting API.
+
+**Tabs it follows, and only if you have connected it to Varys.** Chrome tells the extension
+when any tab changes address, and it ignores those for every tab it is not following. It
+follows a tab in two cases, and in both it looks only at the host and path of the tab's
+address (and at whether the form's own address carries a `destination`, which says where
+Drupal will send you after saving). A tab with a node form open is followed until it leaves
+that form, closes, or saves; nothing is sent for this, and it is how a Preview, or a save
+Drupal rejected, can be compared with the page as it first opened. A tab you pressed Save
+in is followed until that save has finished loading, to learn whether it went through and
+where it landed; the address it landed on is the page address sent with the save, as listed
+below. When you are not connected there is nothing to follow, and it follows nothing.
 
 **A page you explicitly ask it to import.** If you add a URL to the import queue and
 click it, the extension fetches that page so it can propose values for the Drupal form in
@@ -155,8 +160,9 @@ Chrome keeps them current.
 
 ## If you connect it to Varys
 
-Varys is the content-intelligence service for Columbia's websites, operated by the
-maintainer of this extension. The extension can optionally be connected to it, so that
+Varys is the content-intelligence service used by Columbia's web teams. It runs on Fly.io
+(its API), Vercel (its web app) and Supabase (its database). Data sent to Varys is stored
+there and shared with no one else. The extension can optionally be connected to it, so that
 Varys can log the search edits you make in Drupal (a changed title, search description,
 page address, heading or internal link, or a substantial rewrite of the body) and later
 check whether they went live.
@@ -257,11 +263,13 @@ In `chrome.storage.session`, which Chrome clears when the browser closes:
 
 ### How long Varys keeps what it receives
 
-- **A save that does not count as a search edit** (a typo fix, say) is not logged. Varys
-  keeps it for 7 days, so that **Log it anyway** can still use it, and then deletes it.
-- **An entry you undo** is kept for 30 days as a marker, so that when Varys later detects
-  the same change on the live page it dismisses it instead of raising it again, and then
-  deleted.
+- **A page's edits that never counted as a search edit** (a typo fix, say) are not logged.
+  Varys keeps them for 7 days after the last of them, so that **Log it anyway** can still
+  use them, and then deletes them. Varys keeps one entry per page per day, so a save that
+  does not count on its own but joins an entry that does is kept for as long as that entry.
+- **An entry you undo** is taken out of Varys's record, but kept for 30 days as a marker, so
+  that when Varys later detects the same change on the live page it dismisses it instead of
+  raising it again, and then deleted.
 - **A save that counts** is kept in Varys as part of its record of changes made to that
   site. People signed in to Varys with access to the site can see it on its What's Working
   page, with who made it and what changed. It stays until it is undone or an administrator
@@ -284,8 +292,9 @@ You can also disconnect from the Varys side: **Your connections** on Varys's Dru
 extension page cancels a key. This browser keeps its copy until it next tries to use it and
 is refused, so use Disconnect in the popup to clear it.
 
-Disconnecting does not delete changes Varys has already logged. **Undo** does that: from
-the result notice right after a save, or from What's Working in Varys.
+Disconnecting does not delete changes Varys has already logged. **Undo** takes a change
+out of Varys's record, from the result notice right after a save or from What's Working in
+Varys; the undone entry is then kept for 30 days and deleted.
 
 ## Clipboard
 
@@ -296,11 +305,11 @@ The extension does not read your clipboard.
 
 The extension sells nothing, and shares nothing with any third party. Without the Varys
 connection no data is collected, so none is transferred anywhere. With it, the data
-described above goes to Varys, the service you chose to connect, and to no one else. None
-of it is used for advertising, credit assessment, or lending, or for any purpose unrelated
-to the extension's single purpose: providing a faster administrative interface for Drupal 7
-websites at Columbia University, including, if you choose, logging your search edits in
-Varys.
+described above goes to Varys, the service you chose to connect, which stores it as
+described above and shares it with no one else. None of it is used for advertising, credit
+assessment, or lending, or for any purpose unrelated to the extension's single purpose:
+providing a faster administrative interface for Drupal 7 websites at Columbia University,
+including, if you choose, logging your search edits in Varys.
 
 ## How to remove everything
 

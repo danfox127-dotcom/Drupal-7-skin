@@ -193,14 +193,16 @@ What it can say:
 - **"Logged in Varys as …"** (a title and description change, a headings change, an internal
   links change, a new section, a body rewrite, a new page, or a page address change). Your
   save counted. If it should not have, because you were only trying something, press
-  **Undo** and Varys removes it.
+  **Undo** and Varys takes it out of its record.
 - **"Not logged in Varys: this didn't look like a search edit."** Varys saw your save and
   decided it did not count, such as a typo fix. If you disagree, press **Log it anyway**.
   The box then says it was logged, and the button becomes **Undo**. Do this while the box is
-  there: the button lives only in the box, and Varys keeps a save that did not count for just
-  7 days.
+  there: the button lives only in the box, and Varys keeps a page's edits that never counted
+  for just 7 days after the last one.
 - **"This site isn't in Varys, so nothing was logged."** Varys does not track this site, so
-  nothing about your save was sent.
+  nothing was logged. Normally nothing about your save was sent either. The one exception:
+  if the extension could not fetch Varys's list of tracked sites, it sends the save anyway,
+  and Varys discards it without keeping anything.
 - **"Varys couldn't be reached. This save will be sent when it can."** The save waits on your
   computer (up to 50 saves, each for up to a week) and goes out when Varys answers again.
 - **"Your Varys connection has expired. Reconnect from the extension menu to log this
@@ -224,7 +226,8 @@ still disconnects here and tells you the key may still work there. You can also 
 from Varys itself, under **Your connections** on its Drupal extension page, but this browser
 keeps its copy of the key until it next tries to use it, so the extension's own Disconnect
 is the one that clears everything. Disconnecting does not delete changes Varys has already
-logged; use Undo for those. A connection nobody uses for 90 days expires by itself; the menu
+logged; use Undo to take those out of Varys's record (an undone entry is deleted after 30
+days). A connection nobody uses for 90 days expires by itself; the menu
 then says so, and **Reconnect** puts it back.
 
 ---
@@ -243,9 +246,9 @@ Click the extension icon. Each feature has a switch:
 | **Two-Pane Node Editor** | **Off** | The full editing overlay |
 | Log Form Schema | Off | Diagnostic — see below |
 
-**Connect to Varys** is not in this list. It is its own section near the top of the menu,
-because it involves signing in and a key rather than a switch, and it is off until you
-connect.
+**Connect to Varys** is not in this list. It is its own section of the menu, after the quick
+links and before the features, because it involves signing in and a key rather than a
+switch, and it is off until you connect.
 
 ---
 
