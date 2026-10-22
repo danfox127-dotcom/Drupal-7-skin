@@ -246,39 +246,43 @@ export function canUndo(record: FillRecord, fields: FieldDescriptor[]): boolean 
 }
 
 /**
- * Puts a fill's changes back: the old text, the pathauto tick, and the alias box with its
- * disabled state. The box is put back only while it still holds what the fill left in it; if
- * the person has typed another alias since, the box and its enabled state are theirs and are
- * left alone. Shared by Undo and by a fill that had to give up part-way.
+ * Puts a fill's changes back. The title always goes back. The alias box and the pathauto
+ * tick go back together, and only while the box still holds what the fill left in it.
+ *
+ * Once the person has typed another alias, that alias is theirs, and so is the unticked
+ * pathauto it depends on: in Drupal 7 a ticked pathauto regenerates the alias on save and
+ * ignores the box, so re-ticking it would throw their typing away later instead of now. Both
+ * are left exactly as they were left. Shared by Undo and by a fill that had to give up
+ * part-way (where the box still holds what was just written, so everything goes back).
  */
 function restore(record: FillRecord, fields: FieldDescriptor[]): boolean {
   const field = findField(fields, record.machineName);
   if (!field || !writeValue(field, record.previous)) return false;
+  if (!record.pathautoWasTicked) return true;
 
   let ok = true;
-  if (record.pathautoWasTicked) {
-    const alias = findField(fields, ALIAS);
-    const untouched = alias !== undefined && String(readValue(alias)) === record.aliasFilled;
-    if (alias && untouched && record.previousAlias !== null) {
-      if (String(readValue(alias)) !== record.previousAlias) {
-        ok = writeValue(alias, record.previousAlias) && ok;
-      }
-      if (record.aliasWasDisabled) {
-        const input = aliasInput(alias);
-        if (input) input.disabled = true;
-        else ok = false;
-      }
+  const alias = findField(fields, ALIAS);
+  if (alias) {
+    if (String(readValue(alias)) !== record.aliasFilled) return true;
+
+    if (record.previousAlias !== null && String(readValue(alias)) !== record.previousAlias) {
+      ok = writeValue(alias, record.previousAlias) && ok;
     }
-    const pathauto = findField(fields, PATHAUTO);
-    ok = (pathauto ? writeValue(pathauto, true) : false) && ok;
+    if (record.aliasWasDisabled) {
+      const input = aliasInput(alias);
+      if (input) input.disabled = true;
+      else ok = false;
+    }
   }
-  return ok;
+  const pathauto = findField(fields, PATHAUTO);
+  return (pathauto ? writeValue(pathauto, true) : false) && ok;
 }
 
 /**
- * Puts the fill back: the old text, the alias box (and whether it was disabled), and the
- * pathauto tick if the fill removed it. Does nothing and returns false when Undo is no
- * longer safe (see `canUndo`), so it can never overwrite something typed since.
+ * Puts the fill back: the old text, and (while the alias box still holds what the fill left
+ * there) the alias box with whether it was disabled, and the pathauto tick the fill removed.
+ * Does nothing and returns false when Undo is no longer safe (see `canUndo`), so it can never
+ * overwrite the title typed since; an alias typed since is left alone too (see `restore`).
  */
 export function undoFill(record: FillRecord, fields: FieldDescriptor[]): boolean {
   if (!canUndo(record, fields)) return false;

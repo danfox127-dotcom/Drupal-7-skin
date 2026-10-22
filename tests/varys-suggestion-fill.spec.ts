@@ -448,8 +448,9 @@ test.describe('the title and the address', () => {
     expect(r).toEqual({ disabled: true, aliasWasDisabled: false });
   });
 
-  // Once pathauto is off the box is editable, and what is typed there is the person's.
-  test('undo leaves an alias typed after the fill alone, and does not disable the box again', async ({ page }) => {
+  // Once pathauto is off the box is editable, and what is typed there is the person's. So is the
+  // unticked pathauto: ticked, Drupal 7 regenerates the alias on save and ignores the box.
+  test('undo leaves an alias typed after the fill alone: the box, its enabled state and pathauto', async ({ page }) => {
     const r = await run(page, (A, form) => {
       A.resetFilled();
       const f = form(
@@ -475,13 +476,13 @@ test.describe('the title and the address', () => {
     expect(r.canUndo).toBe(true);
     expect(r.undone).toBe(true);
     expect(r.title).toBe('Old');
-    expect(r.pathauto).toBe(true);
+    expect(r.pathauto).toBe(false);
     expect(r.value).toBe('news/bar');
     expect(r.disabled).toBe(false);
     expect(r.marked).toEqual([]);
   });
 
-  test('undo leaves an alias edited after the fill alone when the box already held one', async ({ page }) => {
+  test('undo leaves an alias edited after the fill alone, and pathauto unticked, when the box already held one', async ({ page }) => {
     const r = await run(page, (A, form) => {
       const f = form(
         { 'title_field[und][0][value]': 'Old', 'path[pathauto]': true, 'path[alias]': 'news/foo' },
@@ -493,7 +494,7 @@ test.describe('the title and the address', () => {
       const undone = A.undoFill(rec, f);
       return { undone, value: box.value, disabled: box.disabled, pathauto: A.readValue(A.findField(f, 'path[pathauto]')) };
     });
-    expect(r).toEqual({ undone: true, value: 'news/foo-2', disabled: false, pathauto: true });
+    expect(r).toEqual({ undone: true, value: 'news/foo-2', disabled: false, pathauto: false });
   });
 
   // R8b: unticking pathauto over an empty alias box with nothing to put in it would delete the
