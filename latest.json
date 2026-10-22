@@ -1,5 +1,5 @@
 {
-  "version": "0.4.0",
-  "notes": "Supports the List content type, condenses the editor's right rail (one panel at a time, a visual menu position), adds a Remove span tags button to formatted text fields, and fixes Title order, hero image removal and related-content suggestions.",
-  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.4.0/d7-studio-extension-0.4.0.zip"
+  "version": "0.5.0",
+  "notes": "Optional Connect to Varys: logs your search edits in Varys automatically, with Undo and Log it anyway. Off until you connect.",
+  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.5.0/d7-studio-extension-0.5.0.zip"
 }
