@@ -28,6 +28,12 @@ export type FillRecord = {
    */
   previousAlias: string | null;
   /**
+   * What the alias box held right after the fill, whether the fill wrote it or it was already
+   * there; null when the form has no alias box. The box is editable once pathauto is off, so
+   * Undo puts it back only while it still holds this: an alias typed since is the person's.
+   */
+  aliasFilled: string | null;
+  /**
    * Filling the title unticked pathauto while the alias box was disabled, so the box was
    * enabled: a disabled input is not submitted, and Drupal would then delete the alias.
    * Undo disables it again. False when pathauto was not unticked or the box was enabled.
@@ -191,6 +197,7 @@ export function fillOne(
     filled: value,
     pathautoWasTicked: false,
     previousAlias,
+    aliasFilled: null,
     aliasWasDisabled: false,
   };
 
@@ -215,7 +222,9 @@ export function fillOne(
         if (isBlank(previousAlias)) {
           // Not null: the refusal above covers every way this can be empty-handed.
           const keep = usableAlias(opts.currentAlias) as string;
-          if (!writeValue(alias, keep) || isBlank(String(readValue(alias)))) {
+          const written = writeValue(alias, keep);
+          record.aliasFilled = String(readValue(alias));
+          if (!written || isBlank(record.aliasFilled)) {
             // The address could not be kept, so nothing is kept of the fill.
             restore(record, fields);
             return null;
@@ -225,6 +234,7 @@ export function fillOne(
     }
   }
 
+  record.aliasFilled = alias ? String(readValue(alias)) : null;
   markFilled(kind);
   return record;
 }
@@ -236,8 +246,10 @@ export function canUndo(record: FillRecord, fields: FieldDescriptor[]): boolean 
 }
 
 /**
- * Puts a fill's changes back: the old text, the alias box and its disabled state, and the
- * pathauto tick. Shared by Undo and by a fill that had to give up part-way.
+ * Puts a fill's changes back: the old text, the pathauto tick, and the alias box with its
+ * disabled state. The box is put back only while it still holds what the fill left in it; if
+ * the person has typed another alias since, the box and its enabled state are theirs and are
+ * left alone. Shared by Undo and by a fill that had to give up part-way.
  */
 function restore(record: FillRecord, fields: FieldDescriptor[]): boolean {
   const field = findField(fields, record.machineName);
@@ -246,7 +258,8 @@ function restore(record: FillRecord, fields: FieldDescriptor[]): boolean {
   let ok = true;
   if (record.pathautoWasTicked) {
     const alias = findField(fields, ALIAS);
-    if (alias && record.previousAlias !== null) {
+    const untouched = alias !== undefined && String(readValue(alias)) === record.aliasFilled;
+    if (alias && untouched && record.previousAlias !== null) {
       if (String(readValue(alias)) !== record.previousAlias) {
         ok = writeValue(alias, record.previousAlias) && ok;
       }

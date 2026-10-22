@@ -304,6 +304,7 @@ test.describe('the title and the address', () => {
         alias: A.readValue(A.findField(f, 'path[alias]')),
         pathauto: A.readValue(A.findField(f, 'path[pathauto]')),
         previousAlias: rec.previousAlias,
+        aliasFilled: rec.aliasFilled,
         aliasWasDisabled: rec.aliasWasDisabled,
       };
       const undone = A.undoFill(rec, f);
@@ -315,7 +316,9 @@ test.describe('the title and the address', () => {
         title: A.readValue(A.titleField(f)),
       };
     });
-    expect(r.during).toEqual({ alias: 'news/café', pathauto: false, previousAlias: '', aliasWasDisabled: false });
+    expect(r.during).toEqual({
+      alias: 'news/café', pathauto: false, previousAlias: '', aliasFilled: 'news/café', aliasWasDisabled: false,
+    });
     expect(r.undone).toBe(true);
     expect(r.alias).toBe('');
     expect(r.pathauto).toBe(true);
@@ -347,6 +350,7 @@ test.describe('the title and the address', () => {
       const during = {
         alias: A.readValue(A.findField(f, 'path[alias]')),
         previousAlias: rec.previousAlias,
+        aliasFilled: rec.aliasFilled,
         aliasWasDisabled: rec.aliasWasDisabled,
         pathauto: A.readValue(A.findField(f, 'path[pathauto]')),
         aliasEvents,
@@ -359,7 +363,8 @@ test.describe('the title and the address', () => {
       };
     });
     expect(r.during).toEqual({
-      alias: 'news/foo', previousAlias: 'news/foo', aliasWasDisabled: false, pathauto: false, aliasEvents: 0,
+      alias: 'news/foo', previousAlias: 'news/foo', aliasFilled: 'news/foo', aliasWasDisabled: false,
+      pathauto: false, aliasEvents: 0,
     });
     expect(r.alias).toBe('news/foo');
     expect(r.aliasEventsAfterUndo).toBe(0);
@@ -441,6 +446,54 @@ test.describe('the title and the address', () => {
       return { disabled: box.disabled, aliasWasDisabled: rec.aliasWasDisabled };
     });
     expect(r).toEqual({ disabled: true, aliasWasDisabled: false });
+  });
+
+  // Once pathauto is off the box is editable, and what is typed there is the person's.
+  test('undo leaves an alias typed after the fill alone, and does not disable the box again', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      A.resetFilled();
+      const f = form(
+        { 'title_field[und][0][value]': 'Old', 'path[pathauto]': true, 'path[alias]': '' },
+        ['path[alias]'],
+      );
+      const box = f.find((x: any) => x.machineName === 'path[alias]').elements[0] as HTMLInputElement;
+      const rec = A.fillOne('title', 'New', f, { currentAlias: '/news/foo' });
+      const filled = { aliasFilled: rec.aliasFilled, value: box.value, disabled: box.disabled };
+      A.writeValue(A.findField(f, 'path[alias]'), 'news/bar');
+      const canUndo = A.canUndo(rec, f);
+      const undone = A.undoFill(rec, f);
+      return {
+        filled, canUndo, undone,
+        title: A.readValue(A.titleField(f)),
+        pathauto: A.readValue(A.findField(f, 'path[pathauto]')),
+        value: box.value,
+        disabled: box.disabled,
+        marked: A.filledFields(),
+      };
+    });
+    expect(r.filled).toEqual({ aliasFilled: 'news/foo', value: 'news/foo', disabled: false });
+    expect(r.canUndo).toBe(true);
+    expect(r.undone).toBe(true);
+    expect(r.title).toBe('Old');
+    expect(r.pathauto).toBe(true);
+    expect(r.value).toBe('news/bar');
+    expect(r.disabled).toBe(false);
+    expect(r.marked).toEqual([]);
+  });
+
+  test('undo leaves an alias edited after the fill alone when the box already held one', async ({ page }) => {
+    const r = await run(page, (A, form) => {
+      const f = form(
+        { 'title_field[und][0][value]': 'Old', 'path[pathauto]': true, 'path[alias]': 'news/foo' },
+        ['path[alias]'],
+      );
+      const box = f.find((x: any) => x.machineName === 'path[alias]').elements[0] as HTMLInputElement;
+      const rec = A.fillOne('title', 'New', f, { currentAlias: '/news/foo' });
+      A.writeValue(A.findField(f, 'path[alias]'), 'news/foo-2');
+      const undone = A.undoFill(rec, f);
+      return { undone, value: box.value, disabled: box.disabled, pathauto: A.readValue(A.findField(f, 'path[pathauto]')) };
+    });
+    expect(r).toEqual({ undone: true, value: 'news/foo-2', disabled: false, pathauto: true });
   });
 
   // R8b: unticking pathauto over an empty alias box with nothing to put in it would delete the
