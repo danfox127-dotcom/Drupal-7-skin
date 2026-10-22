@@ -3,7 +3,9 @@
 **Last updated:** 22 October 2026
 **Applies to:** the "D7 Admin Proxy UI" Chrome extension, all versions from 0.2.2. The
 section "If you connect it to Varys" applies only to versions that have a **Connect to
-Varys** button; earlier versions have no such connection and send nothing to Varys.
+Varys** button; earlier versions have no such connection and send nothing to Varys. What it
+says about suggestions applies only to versions that show the Varys suggestions panel in the
+edit form; earlier versions never ask Varys for suggestions.
 
 ## The short version
 
@@ -16,7 +18,8 @@ version exists.
 **The one exception is optional, and it is off until you connect it.** If you click
 **Connect to Varys**, the extension also sends a summary of each page you save in Drupal, on
 a site Varys tracks, to Varys, Columbia's content-intelligence service, so that Varys can
-log your search edits.
+log your search edits. It also sends the public address of a page when you open that page's
+edit form, or press **Ask Varys**, so that Varys can offer its suggestions for the page.
 Until you click that button, nothing is sent to Varys. The section "If you connect it to
 Varys" says exactly what is sent, where it goes, what the extension keeps on your computer,
 and how long Varys keeps it.
@@ -34,6 +37,14 @@ interface and does not read the page. On the pages where it does run, it reads t
 and page content in order to redraw the interface. That reading happens in your browser and
 the result stays there, with one exception: if you have connected the extension to Varys,
 a summary of the node form you save is sent to Varys, as described below.
+
+**The Varys suggestions panel, only if you have connected it to Varys.** On the edit form of
+a page that already exists, on a site Varys tracks, the extension can draw a small panel of
+Varys's suggestions for that page. To show each suggestion beside what the form holds now, it reads the current
+values of the form's title, search title and search description fields (and Summary, which
+some sites use as the search description) in your browser. That reading stays in your
+browser; what is sent when you save is listed below. When you press **Insert at cursor**, it
+also asks the body's editor whether it has a cursor, and reads nothing else from the editor.
 
 **One more place, and only if you have connected it to Varys.** After you save, Drupal
 usually sends you on to the page's public address, which is outside those paths. There the
@@ -71,8 +82,8 @@ Your settings, drafts, copied pages and the other items in the table below are s
 `chrome.storage.local`, which keeps data **on this computer only**.
 The extension does not use `chrome.storage.sync`, so nothing is copied to your Google
 account or to any other device. If you connect it to Varys it stores a little more, some of
-it locally and some of it only for the browser session; that is listed in its own section
-below.
+it locally, some of it only for the browser session, and one short marker in the tab itself;
+that is listed in its own section below.
 
 | What | Why |
 |---|---|
@@ -168,11 +179,13 @@ Varys and those hosting providers, shown to people signed in to Varys with acces
 site, and given to no one outside Varys. The extension can optionally be connected to it,
 so that Varys can log the search edits you make in Drupal (a changed title, search
 description, page address, heading or internal link, or a substantial rewrite of the body)
-and later check whether they went live.
+and later check whether they went live. It also lets Varys show you its suggestions for a
+page while you edit it: a search title, search description, title and section headings,
+which you can use with a click.
 
 **This is off until you connect it.** Unless you click **Connect to Varys** in the popup,
-nothing is sent to Varys, no form is recorded, no tab is followed on its behalf, and
-nothing is stored for it.
+nothing is sent to Varys, no form is recorded, no suggestions are asked for, no tab is
+followed on its behalf, and nothing is stored for it.
 
 ### The two addresses, and how connecting works
 
@@ -203,12 +216,19 @@ one request to `https://varys.fly.dev` containing exactly this:
   type** (Drupal's machine name for it, such as `news`).
 - **The page before your edit** (as the form first opened; empty for a new page) **and
   after it**. Each is limited to the title, the search title (meta title), the search
-  description (meta description), the URL alias, the body's headings (H2 and H3, with their
-  text), the body's links to pages on the same site, and a count of the body's words.
+  description (meta description), the **Summary** field (which some sites use as the search
+  description; included when the form has one), the page's web address (its **URL alias**, sent
+  as the form holds it, including when Drupal makes it automatically), the body's headings
+  (H2 and H3, with their text), the body's links to pages on the same site, and a count of
+  the body's words.
 - **How much of the body changed**, as one number between 0 and 1.
 - **Up to three new sentences** from the body, at most 200 characters each. Varys looks for
   them on the live page to confirm that the change went live, which is the only way to
   confirm an edit that changed nothing but the body.
+- **Which fields you filled from Varys's suggestions**, if any: some of the page title, search
+  title, description and headings, as the panel described below filled them. Only those four
+  names are sent, and a field you put back with Undo is not listed. Varys shows it beside the
+  change.
 - **Which button you pressed**: Publish, Save draft, or a plain Save.
 - **Who saved it, and when.** The request carries your key, and Varys knows which account
   the key belongs to; the extension does not send your name or email with it. Varys records
@@ -219,20 +239,53 @@ headings, links, word count, the measure of how much changed, and those few sent
 it. No other field of the form is sent, and neither are images, your Drupal login, or any
 cookie.
 
-Three other kinds of request go to the same address, each carrying only your key unless
+Other kinds of request go to the same address, each carrying your key and only what is
 noted:
 
-- **A list of the sites Varys tracks.** Before sending a save, the extension asks Varys
-  which sites it tracks, so that nothing is sent about a save on any other site. The answer
-  is cached for 24 hours in the browser session. If Varys cannot be asked, the save is sent
-  anyway and Varys discards it, keeping nothing, when the site is not one it tracks.
+- **A list of the sites Varys tracks.** Before sending a save, or the address of a page for
+  suggestions, the extension asks Varys which sites it tracks, so that nothing is sent about
+  a page on any other site. The answer is cached for 24 hours in the browser session. If
+  Varys cannot be asked, the save is sent anyway and Varys discards it, keeping nothing, when
+  the site is not one it tracks. A page's address for suggestions is different: when the
+  extension has no list at all and cannot get one, it sends nothing.
+- **Suggestions, when you open a page's edit form.** On the edit form of a page that already
+  exists (not an add form) on a site Varys tracks, the extension sends the **page's public
+  address**, in the address of the request, to ask for the suggestions Varys already has
+  for that page. Nothing from the form goes with it, and nothing is sent for a site Varys
+  does not track.
+- **Ask Varys.** When you press **Ask Varys** in the panel, the extension sends the page's
+  public address, so that Varys can write suggestions for it. While Varys writes them, the
+  extension asks again with the same address every few seconds, for up to 3 minutes. Nothing
+  from the form is sent for this; Varys writes the suggestions from its own reading of the
+  site.
 - **Undo and Log it anyway.** Pressing either sends the number of that save.
 - **Disconnect.** Asks Varys to cancel your key.
 
 Nothing is sent for a save that Drupal rejected (the form came back with an error), for the
 Preview, Delete and Cancel buttons, for a save that landed on the login page or on another
 site, for a new page whose address the extension cannot work out, or for any save made
-while you are not connected.
+while you are not connected. No address is sent for suggestions while you are not connected,
+for a page on a site Varys does not track, for an add form, or when the extension cannot
+tell which sites Varys tracks.
+
+### What comes back: the suggestions panel
+
+Varys answers a suggestions request with suggestions and nothing else: a search title, a
+search description, a page title and section headings, an optional clinical review note, and
+when Varys made them. The panel shows them beside what the form holds now. The extension
+does not store the answer: it is held in the page only while the panel is open.
+
+- **It fills a field only when you press Use**, and only the page title, search title or
+  search description (or Summary, when the page's description follows it). It never
+  presses Save or Publish: you press Save yourself, using Drupal's own button. **Undo** puts
+  the old text back, for as long as the field still holds the fill. Using a suggested title
+  leaves the page's web address as it is, by unticking Drupal's "Generate automatic URL
+  alias" when that is needed; Undo puts the tick back unless you have typed a different
+  address since.
+- **Headings** can be copied to your clipboard, or put into the body as a heading at the
+  editor's cursor when you press **Insert at cursor**. That is the only thing the panel
+  writes into the body: it puts that heading's text into the body's editor in your browser,
+  and reads nothing from the editor but whether it has a cursor.
 
 ### What the extension keeps on your computer while you are connected
 
@@ -266,6 +319,15 @@ In `chrome.storage.session`, which Chrome clears when the browser closes:
   of when. If the browser closes first, that save is not sent and is not kept.
 - **The list of sites Varys tracks**, cached for 24 hours.
 
+In the tab's own `sessionStorage` (which belongs to that tab and lasts only as long as it
+does; it is not synced anywhere and is not sent to Varys):
+
+- **A marker that an Ask Varys is waiting**: the page's public address and the time you
+  pressed **Ask Varys**. It lets a reload of the page within 3 minutes go on waiting for the
+  suggestions instead of asking Varys again. It is removed when Varys answers and is ignored
+  once it is 3 minutes old. It holds no key and nothing you typed. Disconnecting does not
+  clear it, since it holds only an address and a time and stops counting after 3 minutes.
+
 ### How long Varys keeps what it receives
 
 - **A page's edits that never counted as a search edit** (a typo fix, say) are not logged.
@@ -281,6 +343,10 @@ In `chrome.storage.session`, which Chrome clears when the browser closes:
   page, with who made it and what changed. It stays until it is undone or an administrator
   removes it.
 - **Your key** expires after 90 days without use.
+- **Suggestion requests** are not saves: neither opening an edit form nor pressing Ask Varys
+  is logged as an edit or appears on What's Working. Ask Varys makes Varys write suggestions
+  for that page, which it keeps with that page's other Page Health suggestions, the ones
+  Varys's own Page Health screen shows.
 
 After a save, Varys also reads the saved page's public address to check that the change is
 live. That request comes from Varys's own servers, not from the extension.
@@ -305,7 +371,8 @@ deleted.
 
 ## Clipboard
 
-The "copy this node's public HTML" feature writes to your clipboard when you click it.
+The "copy this node's public HTML" feature writes to your clipboard when you click it, and
+so does **Copy** beside a heading in the Varys suggestions panel, which copies that heading.
 The extension does not read your clipboard.
 
 ## Data sharing and sale
@@ -318,7 +385,7 @@ shown to people signed in to Varys with access to that site, and given to no one
 Varys. None of it is used for advertising, credit assessment, or lending, or for any purpose
 unrelated to the extension's single purpose: providing a faster administrative interface
 for Drupal 7 websites at Columbia University, including, if you choose, logging your search
-edits in Varys.
+edits in Varys and showing Varys's suggestions for the page you are editing.
 
 ## How to remove everything
 

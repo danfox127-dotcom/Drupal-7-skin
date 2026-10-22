@@ -100,7 +100,10 @@ URL, and it can be changed later.
     - Copy a node's cleaned-up public HTML to the clipboard.
     - Optional: connect to Varys, Columbia's content-intelligence service, so that your
       search edits (titles, search descriptions, page addresses, headings, internal links)
-      are logged there automatically. It is off until you click Connect to Varys.
+      are logged there automatically, and so that Varys's suggestions for the page you are
+      editing (search title, description, title, section headings) appear in a panel on the
+      edit form. A suggestion fills a field only when you press Use, and Undo takes it back.
+      It is off until you click Connect to Varys.
 
     Everything happens in the browser, unless you connect to Varys. The extension fills
     forms in; it never saves or publishes anything on its own — you press Save.
@@ -109,11 +112,14 @@ URL, and it can be changed later.
     (/admin/ and /node/); it does not run on any other page, apart from the Varys notice
     described below. Nothing about you or your pages is sent anywhere unless you click
     Connect to Varys. If you do, a summary of each page you save (its address, the before
-    and after of its title, search description, URL alias, headings and internal links, how
-    much of the body changed, and up to three new sentences) is sent to Varys; the full body
-    text never is. After a save, a small notice saying what Varys did can appear on the page
-    you land on, which may be a public page of the same site. See the privacy policy for
-    everything that is sent and kept.
+    and after of its title, search title, search description, Summary field, web address,
+    headings and internal links, how much of the body changed, up to three new sentences, and
+    which fields you filled from Varys's suggestions) is sent to Varys; the full body text
+    never is. When you open an existing page's edit form, or press Ask Varys, the page's
+    public address is sent to Varys so it can offer suggestions for the page; nothing from
+    the form is sent for that. After a save, a small notice saying what Varys did can appear
+    on the page you land on, which may be a public page of the same site. See the privacy
+    policy for everything that is sent and kept.
 
 **Category:** Workflow & Planning
 **Language:** English
@@ -184,9 +190,19 @@ common cause of a slow review. These are accurate as of the current manifest.
     extension injects the notice itself. The notice only draws a box; it reads nothing from
     the page.
 
+    Also inserts a heading at the editor's cursor, only once the user has connected to Varys
+    and only when they press Insert at cursor beside a heading in Varys's suggestions panel.
+    This runs in the page's main world, for the same reason as the first use above: CKEditor
+    is reachable only there. It first reads the editor's selection, to check that there is a
+    cursor to insert at, and reads nothing else from the editor; if there is no cursor it
+    inserts nothing and says so. The heading is written as plain text inside an h2, and the
+    form is not saved or submitted: the user presses Save.
+
 **`clipboardWrite`**
 
-    The "copy this node's public HTML" feature writes to the clipboard.
+    The "copy this node's public HTML" feature writes to the clipboard, and so does Copy
+    beside a suggested heading in Varys's suggestions panel, which copies that heading when
+    the user clicks it. The extension never reads the clipboard.
 
 **Host permissions — all four, listed exactly as the manifest declares them:**
 
@@ -241,8 +257,8 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
 
 - **Personally identifiable information:** **Yes**, only once the user connects to Varys.
   The extension stores the email address of the user's Varys account (on this computer,
-  and shown in the popup) and identifies the user to Varys, as the person who saved, by the
-  key. It does not send the email address itself.
+  and shown in the popup) and identifies the user to Varys, as the person who saved or asked
+  for suggestions, by the key. It does not send the email address itself.
 - **Health information:** No
 - **Financial information:** No
 - **Authentication information:** **Yes**, only once the user connects to Varys. The Varys
@@ -250,14 +266,22 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
   only to Varys, to authenticate that user's requests.
 - **Personal communications:** No
 - **Location:** No
-- **Web history:** No. The extension does not collect a browsing history. When connected,
-  it sends the address of a page the user has just **saved** on a site Varys tracks, not
-  pages the user visited. It reads a tab's address only to follow an open node form or a
-  save, as described under `tabs`, and sends nothing from that.
+- **Web history:** **Yes, narrowly**, only once the user connects to Varys. The extension
+  does not collect a browsing history: it reads a tab's address only to follow an open node
+  form or a save, as described under `tabs`, and sends nothing from that. What it does send
+  Varys is the public address of an existing page on a site Varys tracks when the user
+  **opens that page's edit form** (to fetch suggestions), presses **Ask Varys** on it, or
+  **saves** it. Those are pages the user is editing in Drupal's administrative pages, not
+  pages they visited, and no other page's address is sent. Nothing is sent for an add form,
+  or for a site Varys does not track.
 - **User activity:** **Yes**, only once the user connects to Varys, and only this: that a
   save was made on a Drupal node form, which button was pressed (Publish, Save draft or
-  Save), and when Varys received it. No clicks, keystrokes, mouse position or scrolling are
-  recorded.
+  Save), which fields were filled from Varys's suggestions (page title, search title,
+  description, headings), and when Varys received it; and that the user opened an existing
+  page's edit form or pressed Ask Varys, which sends that page's address with the user's
+  key. No keystrokes, mouse position or scrolling are recorded, and no clicks beyond those
+  (pressing Use is reported only as an entry in the list of filled fields sent with the
+  next save).
 - **Website content:** **Yes.** The extension reads the content of the Drupal admin form
   on the page, and — only for an origin the user has explicitly approved — the content of
   a page they asked to import.
@@ -266,15 +290,25 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
     browser's local storage.
   - Once the user has connected to Varys, on each save on a site Varys tracks the extension
     **transmits to Varys** a summary of the form: the page's address, node id and content
-    type; before and after of the title, search title, search description, URL alias,
-    headings (H2 and H3) and internal body links; the body's word count; how much of the
-    body changed; and up to three new sentences (at most 200 characters each) used only to
-    confirm the change went live. The full body text is never sent. It is kept as the
+    type; before and after of the title, search title, search description, Summary field,
+    URL alias (as the form holds it, including an automatic one), headings (H2 and H3) and
+    internal body links; the body's word count; how much of the body changed; up to three
+    new sentences (at most 200 characters each) used only to confirm the change went live;
+    and which of the page title, search title, description and headings the user filled
+    from Varys's suggestions. The full body text is never sent. It is kept as the
     privacy policy states: a page's edits that never counted as a search edit are deleted
     after 7 days; an undone entry stops counting, is shown as "Undone", and is deleted up to
     30 days after that page's last save; and one that counts stays in Varys's record of
     changes until it is undone or an administrator removes it. People signed in to Varys
     with access to that site can see who saved what; it is given to no one outside Varys.
+  - Separately, when the user opens an existing page's edit form on a site Varys tracks, or
+    presses Ask Varys, the extension sends only that page's public address, to fetch or
+    request Varys's suggestions for it. No content of the form goes with it, and nothing is
+    sent for a site Varys does not track or when the extension cannot tell. What comes back
+    is suggestions only (search title, description, page title, section headings and an
+    optional clinical review note), shown in a panel on the page and not stored by the
+    extension. A suggestion is put into a field only when the user presses Use, and can be
+    undone; the extension never saves or publishes.
 
 Then certify all three:
 
@@ -287,13 +321,13 @@ Then certify all three:
 
     A faster administrative interface for Drupal 7 websites at Columbia University.
 
-Left unchanged for the Varys connection, which is optional and part of the same workflow
-(editing Drupal pages). **Held in reserve:** if review asks how Varys fits the single
-purpose, answer with this wording rather than weakening the claim:
+Left unchanged for the Varys connection and its suggestions panel, which are optional and
+part of the same workflow (editing Drupal pages). **Held in reserve:** if review asks how
+Varys fits the single purpose, answer with this wording rather than weakening the claim:
 
     A faster administrative interface for Drupal 7 websites at Columbia University,
     including, if the user chooses, logging their search edits to Varys, Columbia's
-    content-intelligence service.
+    content-intelligence service, and showing Varys's suggestions for the page being edited.
 
 **Privacy policy URL:** required whenever "Website content" is declared. Written, and in
 the repository at `docs/PRIVACY.md`. Paste this URL into the dashboard:

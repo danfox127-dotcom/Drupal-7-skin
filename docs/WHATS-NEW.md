@@ -163,9 +163,10 @@ extension sends nothing to Varys.
 
 **What it does once you have connected.** When you save a page on a site Varys tracks, the
 extension tells Varys about the save: the page's address; what its title, search title,
-search description, URL alias, headings and internal links were before and after; how much
-of the body changed; up to three new sentences, so Varys can check the change really went
-live; and which button you pressed. It never sends the full text of the page. Varys decides
+search description, Summary, web address, headings and internal links were before and after;
+how much of the body changed; up to three new sentences, so Varys can check the change
+really went live; which button you pressed; and which fields, if any, you filled in from
+Varys's suggestions (see below). It never sends the full text of the page. Varys decides
 whether the save counts as a **search edit** (a change to the title, search description,
 URL, headings or internal links, or a substantial rewrite of the body; a typo fix is not
 one), and later reads the live page to see whether the change went out. Changes that count
@@ -231,6 +232,43 @@ logged; use Undo to make one stop counting (an undone entry is shown as "Undone"
 deleted up to 30 days after that page's last save). A connection nobody uses for 90 days
 expires by itself; the menu then says so, and **Reconnect** puts it back.
 
+### Varys's suggestions on the edit form — part of Connect to Varys
+
+Once you have connected, open the edit form of a page that already exists on a site Varys
+tracks, and a small panel can appear in the corner of the screen: **Varys · suggestions for
+this page**. It shows what Varys suggests for the page's **search result title**, **search
+result description**, **title** and **section headings**, each beside what the form holds
+right now. Click its title bar to fold it away.
+
+- **If Varys has suggestions, they are shown** (with when it made them, and a clinical
+  review note if it flagged one). **If it has not written any yet, press Ask Varys.** That
+  usually takes about a minute and the panel says when they are ready; if it is still
+  writing after a few minutes it says to check back. If Varys has not read the page yet (it
+  reads each site weekly), the panel says so.
+- **Use** puts a suggestion into its field. That is all it does: it never saves and never
+  publishes, so you still press Save. **Undo** puts the old text back, as long as you have
+  not edited the field since.
+- **Using a suggested title keeps the page's web address.** If the address would have
+  followed the title, the extension unticks *Generate automatic URL alias* for you; Undo puts
+  that back. If it cannot tell what the current address is, it will not change the title.
+- **A suggested description** goes into Summary when the page's search description follows
+  its Summary, and into the search description field when that field has its own text. The
+  panel says which.
+- **Headings** are suggestions to read. **Copy** copies one to your clipboard; **Insert at
+  cursor** puts it into the body as a heading where your cursor is. Click in the body first:
+  with no cursor there, it tells you and inserts nothing.
+- **When you save, Varys is told which fields you filled from its suggestions** (title,
+  search title, description, headings; not one you put back with Undo), and shows "Filled from
+  Varys: …" beside the change, so you can later see whether a suggestion that went live
+  worked.
+
+**What is sent for this.** When you open the form, the page's public address goes to Varys,
+to fetch its suggestions; **Ask Varys** sends the same address so that Varys can write them.
+Nothing from the form goes with either, and nothing is sent for a site Varys does not track,
+for a new page, or while you are not connected. If you press Ask Varys, the extension keeps a
+small marker in that browser tab for 3 minutes (the address and the time), so that reloading
+the page keeps waiting instead of asking again. `docs/PRIVACY.md` has the full list.
+
 ---
 
 ## The settings
@@ -276,6 +314,8 @@ Worth knowing, so they don't look like faults:
 
 - **It never saves for you.** Every write goes into Drupal's own form fields, and Drupal's
   own Save button submits them.
+- **It never fills a Varys suggestion on its own.** A suggestion goes into the form only when
+  you press **Use** (or **Insert at cursor**, for a heading), and Undo takes a fill back.
 - **It does not send anything to Varys until you connect it**, and even then never the full
   text of a page.
 - **It doesn't upload files.** Image fields use Drupal's own picker, moved into the panel.
@@ -297,6 +337,10 @@ Worth knowing, so they don't look like faults:
   with its values so you can rebuild that one by hand
 - Import always targets News; to import into a Page, open a Page form first
 - Headings render in Georgia rather than EB Garamond until the font files are added
+- Varys's suggestions panel appears only on the edit form of a page that already exists, not
+  on a new page's form, and only for a site Varys tracks
+- Insert at cursor puts a heading in only where there is a cursor in the body, and its result
+  is not offered an Undo of its own; use the editor's own undo
 - Varys's result box depends on the extension following your save to the page it lands on.
   If you close the tab or quit the browser in the middle, the save is sent later on a
   best-effort basis or, if the browser was closed, not at all
