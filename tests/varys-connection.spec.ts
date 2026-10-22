@@ -2,7 +2,8 @@ import { test, expect } from '@playwright/test';
 import {
   CONNECTION_KEY, acceptConnectMessage, getConnection, isValidKey, setConnection, toStatus,
 } from '../src/lib/varys/connection';
-import { VARYS_API, VARYS_APP_ORIGINS, resolveVarys } from '../src/lib/varys/config';
+import { VARYS_API, VARYS_APP_ORIGINS } from '../src/lib/varys/config';
+import { assertProductionVarys, resolveVarys } from '../src/lib/varys/resolve';
 
 /**
  * The Varys connection: who may hand the extension a key, and what is kept.
@@ -177,35 +178,105 @@ test.describe('the stored connection', () => {
 });
 
 test.describe('where Varys is', () => {
-  test('defaults to the production API and app', () => {
+  const PRODUCTION = { api: 'https://varys.fly.dev', appOrigins: ['https://varys-wine.vercel.app'] };
+  const DEVELOPMENT = { api: 'http://localhost:8000', appOrigins: ['http://localhost:3000'] };
+
+  test('the app code defaults to the production API and app', () => {
+    // Outside a Vite build there is no import.meta.env, and the fallback is production.
     expect(VARYS_API).toBe('https://varys.fly.dev');
     expect(VARYS_APP_ORIGINS).toEqual(['https://varys-wine.vercel.app']);
   });
 
-  test('can be pointed elsewhere for a development build', () => {
-    expect(resolveVarys({
+  test('a production build is production, whatever the environment says', () => {
+    /**
+     * The release script runs `npm run build` and nothing else, so a developer with
+     * VITE_VARYS_API exported (or kept in a gitignored .env.local) would otherwise ship a
+     * release that talks to localhost and lets localhost hand it a key.
+     */
+    expect(resolveVarys('production', {})).toEqual(PRODUCTION);
+    expect(resolveVarys('production', undefined)).toEqual(PRODUCTION);
+    expect(resolveVarys('production', {
       VITE_VARYS_API: 'http://localhost:8000',
       VITE_VARYS_APP_ORIGINS: 'http://localhost:3000',
-    })).toEqual({ api: 'http://localhost:8000', appOrigins: ['http://localhost:3000'] });
+    })).toEqual(PRODUCTION);
+    expect(resolveVarys('production', {
+      VITE_VARYS_API: 'https://api.example.org',
+      VITE_VARYS_APP_ORIGINS: 'https://app.example.org,http://localhost:3000',
+    })).toEqual(PRODUCTION);
+  });
+
+  test('the production answer cannot be changed by whoever called for it', () => {
+    // A copy, so mutating a result cannot rewrite the constants the next build reads.
+    const first = resolveVarys('production', {});
+    first.appOrigins.push('http://localhost:3000');
+    expect(resolveVarys('production', {})).toEqual(PRODUCTION);
+  });
+
+  test('a development build points at the local Varys by default', () => {
+    expect(resolveVarys('development', {})).toEqual(DEVELOPMENT);
+    expect(resolveVarys('development', undefined)).toEqual(DEVELOPMENT);
+    // The local app is the FIRST origin, because Connect opens the first one.
+    expect(resolveVarys('development', {}).appOrigins[0]).toBe('http://localhost:3000');
+    // Any mode that is not production counts as development.
+    expect(resolveVarys('staging', {})).toEqual(DEVELOPMENT);
+  });
+
+  test('a development build can be pointed elsewhere by the environment', () => {
+    expect(resolveVarys('development', {
+      VITE_VARYS_API: 'http://localhost:9000',
+      VITE_VARYS_APP_ORIGINS: 'http://localhost:4000',
+    })).toEqual({ api: 'http://localhost:9000', appOrigins: ['http://localhost:4000'] });
   });
 
   test('reduces what it is given to origins, so a permission pattern is always well formed', () => {
     // `api + '/*'` is a match pattern. A trailing slash or a path would make it `//*` or
     // a pattern for a path, which Chrome grants as something other than the whole API.
-    expect(resolveVarys({ VITE_VARYS_API: 'https://api.example.org/', VITE_VARYS_APP_ORIGINS: 'https://app.example.org/x/' }))
-      .toEqual({ api: 'https://api.example.org', appOrigins: ['https://app.example.org'] });
+    expect(resolveVarys('development', {
+      VITE_VARYS_API: 'https://api.example.org/',
+      VITE_VARYS_APP_ORIGINS: 'https://app.example.org/x/',
+    })).toEqual({ api: 'https://api.example.org', appOrigins: ['https://app.example.org'] });
   });
 
   test('takes a comma-separated list of apps and ignores junk entries', () => {
-    expect(resolveVarys({ VITE_VARYS_APP_ORIGINS: 'https://a.example.org, nonsense ,https://b.example.org,javascript:alert(1)' }).appOrigins)
-      .toEqual(['https://a.example.org', 'https://b.example.org']);
+    expect(resolveVarys('development', {
+      VITE_VARYS_APP_ORIGINS: 'https://a.example.org, nonsense ,https://b.example.org,javascript:alert(1)',
+    }).appOrigins).toEqual(['https://a.example.org', 'https://b.example.org']);
   });
 
-  test('falls back to production for empty, missing or wholly invalid values', () => {
-    const production = { api: 'https://varys.fly.dev', appOrigins: ['https://varys-wine.vercel.app'] };
-    expect(resolveVarys({})).toEqual(production);
-    expect(resolveVarys(undefined)).toEqual(production);
-    expect(resolveVarys({ VITE_VARYS_API: '', VITE_VARYS_APP_ORIGINS: '' })).toEqual(production);
-    expect(resolveVarys({ VITE_VARYS_API: 'not a url', VITE_VARYS_APP_ORIGINS: ' , nonsense' })).toEqual(production);
+  test('falls back to the development defaults for empty or wholly invalid values', () => {
+    expect(resolveVarys('development', { VITE_VARYS_API: '', VITE_VARYS_APP_ORIGINS: '' })).toEqual(DEVELOPMENT);
+    expect(resolveVarys('development', { VITE_VARYS_API: 'not a url', VITE_VARYS_APP_ORIGINS: ' , nonsense' }))
+      .toEqual(DEVELOPMENT);
+  });
+});
+
+test.describe('the build-time guard on a production build', () => {
+  const PRODUCTION = { api: 'https://varys.fly.dev', appOrigins: ['https://varys-wine.vercel.app'] };
+
+  test('lets the production hosts through', () => {
+    expect(() => assertProductionVarys(PRODUCTION)).not.toThrow();
+    expect(() => assertProductionVarys(resolveVarys('production', {}))).not.toThrow();
+  });
+
+  test('throws, naming what it found, when a production build resolves to anything else', () => {
+    expect(() => assertProductionVarys({ ...PRODUCTION, api: 'http://localhost:8000' }))
+      .toThrow(/localhost:8000/);
+    expect(() => assertProductionVarys({ ...PRODUCTION, appOrigins: ['http://localhost:3000'] }))
+      .toThrow(/localhost:3000/);
+    // Production plus one more is not production.
+    expect(() => assertProductionVarys({
+      ...PRODUCTION, appOrigins: [...PRODUCTION.appOrigins, 'https://evil.example'],
+    })).toThrow(/evil\.example/);
+    // Nor is an empty list, which would silently disable the hand-off.
+    expect(() => assertProductionVarys({ ...PRODUCTION, appOrigins: [] })).toThrow();
+  });
+
+  test('throws when a resolver that stopped ignoring the environment is forced through it', () => {
+    // What the guard is FOR: it is a second lock behind resolveVarys, so it is exercised
+    // with a result resolveVarys would not produce today.
+    const leaked = resolveVarys('development', {
+      VITE_VARYS_API: 'http://localhost:8000', VITE_VARYS_APP_ORIGINS: 'http://localhost:3000',
+    });
+    expect(() => assertProductionVarys(leaked)).toThrow();
   });
 });

@@ -39,12 +39,18 @@ export interface VarysDisconnectRequest {
 }
 
 /**
- * `revoked` is false when Varys could not be told, so the key may still be live there.
- * The key is forgotten locally either way.
+ * Whether Varys was told to cancel the key. The key is forgotten locally either way.
+ *
+ * - `revoked`: Varys said yes, or said 401 (the key was already dead).
+ * - `unreachable`: no answer at all (offline, blocked, timed out), so it may still be live.
+ * - `refused`: Varys answered, but not with success or 401 (404, 5xx). Not "unreachable":
+ *   saying so would send someone to check their network for a fault that is on the server.
  */
+export type VarysRevocation = 'revoked' | 'unreachable' | 'refused';
+
 export interface VarysDisconnectResponse {
   ok: true;
-  revoked: boolean;
+  revocation: VarysRevocation;
 }
 
 export const CONNECTION_KEY = 'varysConnection';

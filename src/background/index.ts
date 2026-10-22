@@ -20,7 +20,8 @@ import {
 import { VARYS_API, VARYS_APP_ORIGINS } from '../lib/varys/config';
 import {
   acceptConnectMessage, getConnection, setConnection, toStatus,
-  type VarysDisconnectRequest, type VarysDisconnectResponse, type VarysStatusRequest,
+  type VarysDisconnectRequest, type VarysDisconnectResponse, type VarysRevocation,
+  type VarysStatusRequest,
 } from '../lib/varys/connection';
 
 /** Popup asking for a fresh check, so "Check again" reuses the worker's one fetch path. */
@@ -357,13 +358,16 @@ async function richEditorLifecycle(
  * The revoke is best effort and bounded. A person who cannot reach Varys still has to be
  * able to disconnect, so a failure never stops the local steps; it is reported instead,
  * because the key is then still live on the server and they should know. A 401 counts as
- * revoked: the key was already dead.
+ * revoked: the key was already dead. A server that answered with anything else is
+ * `refused`, which is a different fault from `unreachable` and is reported as one.
  */
 async function varysDisconnect(): Promise<VarysDisconnectResponse> {
   const connection = await getConnection();
 
-  let revoked = connection === null;
+  // With no stored connection there is nothing to cancel.
+  let revocation: VarysRevocation = 'revoked';
   if (connection) {
+    revocation = 'unreachable';
     try {
       const response = await fetch(`${VARYS_API}/api/extension/connection`, {
         method: 'DELETE',
@@ -371,9 +375,10 @@ async function varysDisconnect(): Promise<VarysDisconnectResponse> {
         credentials: 'omit',
         signal: AbortSignal.timeout(10_000),
       });
-      revoked = response.ok || response.status === 401;
+      revocation = response.ok || response.status === 401 ? 'revoked' : 'refused';
     } catch {
-      // Offline, blocked or timed out. Falls through to forgetting the key locally.
+      // Offline, blocked or timed out: stays `unreachable`. Falls through to forgetting
+      // the key locally.
     }
   }
 
@@ -383,7 +388,7 @@ async function varysDisconnect(): Promise<VarysDisconnectResponse> {
   } catch (err) {
     console.warn('[D7 Studio] Could not drop the Varys host permission', err);
   }
-  return { ok: true, revoked };
+  return { ok: true, revocation };
 }
 
 /**

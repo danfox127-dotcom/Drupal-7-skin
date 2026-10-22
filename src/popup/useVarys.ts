@@ -58,11 +58,14 @@ export function useVarys() {
     try {
       const answer = await chrome.runtime.sendMessage({ type: 'varysDisconnect' }) as
         VarysDisconnectResponse | undefined;
-      if (answer?.ok && !answer.revoked) {
-        // Forgotten here, but the key is still live on the server, and they should know.
-        setNote('Disconnected here. Varys could not be reached to cancel the key, so it still works there.');
-      } else if (!answer?.ok) {
+      if (!answer?.ok) {
         setNote('Could not disconnect. Try again.');
+      } else if (answer.revocation === 'unreachable') {
+        // Forgotten here, but the key may still be live on the server, and they should know.
+        setNote('Disconnected here. Varys could not be reached to cancel the key, so it still works there.');
+      } else if (answer.revocation === 'refused') {
+        // Varys answered, so this is not a network fault and must not read as one.
+        setNote("Disconnected here. Varys couldn't cancel the key. It will stop working in 90 days if unused.");
       }
     } catch {
       setNote('Could not disconnect. Try again.');

@@ -3720,13 +3720,22 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
     expect(toVarys).toEqual([]);
   });
 
-  test('Varys is not one of the feature toggles', async ({ page, extensionId }) => {
-    // A toggle is a boolean in Settings. This is a credential and a permission.
+  test('Varys is a section of its own, not a row in the Features toggle list', async ({ page, extensionId }) => {
+    /**
+     * A toggle is a boolean in Settings. This is a credential and a host permission, so it
+     * has its own section, its own storage key, and no switch that could turn it "on"
+     * without going through Connect.
+     */
     await page.goto(`chrome-extension://${extensionId}/index.html`);
     await expect(page.getByText(OFF_COPY)).toBeVisible();
-    const toggles = await page.evaluate(
-      () => new Promise<Record<string, unknown>>(resolve => chrome.storage.local.get(null, resolve)));
-    expect(Object.keys(toggles).filter(k => /varys/i.test(k))).toEqual([]);
+    // The toggle list has rendered, so an empty result below cannot be "not loaded yet".
+    await expect(page.getByText('Menu Parent Combobox', { exact: true })).toBeVisible();
+
+    const rows = page.locator('li').filter({ has: page.locator('button') });
+    expect(await rows.count()).toBeGreaterThan(5);
+    await expect(rows.filter({ hasText: /varys/i })).toHaveCount(0);
+    // And the Varys section is not itself inside one of those rows.
+    await expect(page.locator('li [data-varys-connection]')).toHaveCount(0);
   });
 
   test('the Varys app can hand the extension a key, and the popup then shows who is connected', async ({ page, context, extensionId }) => {
@@ -3872,6 +3881,47 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
 
     await expect(page.getByText(OFF_COPY)).toBeVisible();
     await expect(page.locator('[data-varys-note]')).toContainText('could not be reached');
+    expect(await storedConnection(context, extensionId)).toBeNull();
+  });
+
+  for (const status of [404, 500, 503]) {
+    test(`Disconnect when Varys answers ${status} says it could not cancel the key, not that it was unreachable`, async ({ page, context, settings, extensionId }) => {
+      /**
+       * Varys WAS reached. Telling someone it could not be reached sends them to check
+       * their network for a fault that is on the server, so this is its own message, and
+       * it says what actually protects them: an unused key stops working after 90 days.
+       */
+      await context.route(`${VARYS_API}/**`, route => route.fulfill({
+        status, contentType: 'application/json', body: '{"detail":"nope"}',
+      }));
+      await settings({ varysConnection: connected });
+      await page.goto(`chrome-extension://${extensionId}/index.html`);
+      await expect(page.getByText(`Connected to Varys as ${EMAIL}`)).toBeVisible();
+
+      await page.getByRole('button', { name: 'Disconnect' }).click();
+
+      await expect(page.getByText(OFF_COPY)).toBeVisible();
+      const note = page.locator('[data-varys-note]');
+      await expect(note).toContainText("couldn't cancel the key");
+      await expect(note).toContainText('90 days');
+      await expect(note).not.toContainText('could not be reached');
+      expect(await storedConnection(context, extensionId)).toBeNull();
+    });
+  }
+
+  test('Disconnect with an already-dead key (401) is a clean disconnect, with no warning', async ({ page, context, settings, extensionId }) => {
+    // A key Varys already refuses cannot be used by anyone, so there is nothing to warn about.
+    await context.route(`${VARYS_API}/**`, route => route.fulfill({
+      status: 401, contentType: 'application/json', body: '{"detail":"expired"}',
+    }));
+    await settings({ varysConnection: connected });
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await expect(page.getByText(`Connected to Varys as ${EMAIL}`)).toBeVisible();
+
+    await page.getByRole('button', { name: 'Disconnect' }).click();
+
+    await expect(page.getByText(OFF_COPY)).toBeVisible();
+    await expect(page.locator('[data-varys-note]')).toHaveCount(0);
     expect(await storedConnection(context, extensionId)).toBeNull();
   });
 });

@@ -2,7 +2,7 @@ import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import { crx } from '@crxjs/vite-plugin'
 import manifest from './manifest.json'
-import { resolveVarys } from './src/lib/varys/config'
+import { assertProductionVarys, resolveVarys } from './src/lib/varys/resolve'
 
 /**
  * The real extension name, applied only to the BUILT manifest.
@@ -22,34 +22,32 @@ import { resolveVarys } from './src/lib/varys/config'
  */
 const EXTENSION_NAME = 'D7 Admin Proxy UI'
 
-/** The Varys app as `npm run dev` serves it. Only ever added to a non-production build. */
-const DEV_VARYS_APP_ORIGIN = 'http://localhost:3000'
-
 export default defineConfig(({ mode }) => {
   /**
-   * Which web pages may message the extension, for the Varys connect hand-off.
+   * Which Varys this build talks to, and which web pages may message the extension.
    *
-   * A production build names the Varys app and nothing else; tests/packaging.spec.ts
-   * pins that to the exact list and bans localhost. A development build adds the local
-   * app. Declaring this key raises no install or update permission warning: it takes
-   * no permission, and only lets the listed pages call chrome.runtime.sendMessage.
-   * (Measured, not assumed: chrome.management.getPermissionWarningsByManifest returns
-   * the same three warnings for this manifest with and without the key.)
+   * A production build is the production hosts and nothing else: the environment is not
+   * read (resolveVarys), and the build FAILS if it ever resolves to anything different
+   * (assertProductionVarys). A development build defaults to the local app and API, and
+   * VITE_VARYS_API / VITE_VARYS_APP_ORIGINS may override them. See src/lib/varys/resolve.ts
+   * for why: `npm run release` runs this build and no test.
    *
-   * It must agree with what the code compares a sender against, so the same list is
-   * written back into VITE_VARYS_APP_ORIGINS below (`define`). Otherwise a development
-   * build would let the local app through Chrome and then refuse it in the worker.
-   * loadEnv is needed because this file runs in Node, where import.meta.env does not
-   * exist.
+   * The result is written into the code with `define`, so the origins the manifest lists
+   * and the origins the worker accepts a sender from are one list by construction.
+   * Declaring externally_connectable raises no install or update permission warning: it
+   * takes no permission, and only lets the listed pages call chrome.runtime.sendMessage.
+   * (Measured, not assumed: chrome.management.getPermissionWarningsByManifest returns the
+   * same three warnings for this manifest with and without the key.)
+   *
+   * loadEnv is needed because this file runs in Node, where import.meta.env does not exist.
    */
-  const { appOrigins } = resolveVarys(loadEnv(mode, process.cwd(), 'VITE_'))
-  const connectable = mode === 'production'
-    ? appOrigins
-    : [...new Set([...appOrigins, DEV_VARYS_APP_ORIGIN])]
+  const varys = resolveVarys(mode, loadEnv(mode, process.cwd(), 'VITE_'))
+  if (mode === 'production') assertProductionVarys(varys)
 
   return {
     define: {
-      'import.meta.env.VITE_VARYS_APP_ORIGINS': JSON.stringify(connectable.join(',')),
+      'import.meta.env.VITE_VARYS_API': JSON.stringify(varys.api),
+      'import.meta.env.VITE_VARYS_APP_ORIGINS': JSON.stringify(varys.appOrigins.join(',')),
     },
     plugins: [
       react(),
@@ -57,7 +55,7 @@ export default defineConfig(({ mode }) => {
         manifest: {
           ...manifest,
           name: EXTENSION_NAME,
-          externally_connectable: { matches: connectable.map(origin => `${origin}/*`) },
+          externally_connectable: { matches: varys.appOrigins.map(origin => `${origin}/*`) },
         },
       }),
     ],
