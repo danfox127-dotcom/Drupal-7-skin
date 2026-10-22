@@ -269,8 +269,10 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
     body changed; and up to three new sentences (at most 200 characters each) used only to
     confirm the change went live. The full body text is never sent. It is kept as the
     privacy policy states: a page's edits that never counted as a search edit are deleted
-    after 7 days, an undone entry after 30 days, and one that counts stays in Varys's record of changes until it is
-    undone or an administrator removes it.
+    after 7 days; an undone entry stops counting, is shown as "Undone", and is deleted up to
+    30 days after that page's last save; and one that counts stays in Varys's record of
+    changes until it is undone or an administrator removes it. People signed in to Varys
+    with access to that site can see who saved what; it is given to no one outside Varys.
 
 Then certify all three:
 

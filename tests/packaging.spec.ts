@@ -351,6 +351,23 @@ test.describe('the privacy policy', () => {
     expect(text).toMatch(/off until you connect/i);
   });
 
+  test('does not say Varys shares data with no one, when people signed in to it can see it', () => {
+    /**
+     * Varys shows who saved what to everyone signed in to it with access to the site (its
+     * What's Working page), so "shared with no one else" and "shares nothing with any third
+     * party" contradicted the policy's own retention section. What it may say: stored by
+     * Varys and its hosts, shown to people signed in to Varys, given to no one outside it.
+     * The store listing and What's New make the same claims, so they are held to it too.
+     */
+    const docs = ['PRIVACY.md', 'CHROME-WEB-STORE.md', 'WHATS-NEW.md']
+      .map(name => fs.readFileSync(path.join(ROOT, 'docs', name), 'utf8')).join('\n');
+    expect(docs).not.toMatch(/shar(e|es|ed)( it)? with no one else|shares nothing with any third party/i);
+    expect(docs).not.toMatch(/out of (Varys's|its) record/i);
+    const text = policy();
+    expect(text).toMatch(/shown to people signed in to Varys/);
+    expect(text).toMatch(/given to no one outside Varys/);
+  });
+
   test('discloses that drafts hold the content being edited', () => {
     /**
      * The most sensitive thing the extension stores. It is easy to describe a draft as

@@ -1,6 +1,6 @@
 # Privacy Policy — D7 Studio (D7 Admin Proxy UI)
 
-**Last updated:** 21 October 2026
+**Last updated:** 22 October 2026
 **Applies to:** the "D7 Admin Proxy UI" Chrome extension, all versions from 0.2.2. The
 section "If you connect it to Varys" applies only to versions that have a **Connect to
 Varys** button; earlier versions have no such connection and send nothing to Varys.
@@ -161,11 +161,12 @@ Chrome keeps them current.
 ## If you connect it to Varys
 
 Varys is the content-intelligence service used by Columbia's web teams. It runs on Fly.io
-(its API), Vercel (its web app) and Supabase (its database). Data sent to Varys is stored
-there and shared with no one else. The extension can optionally be connected to it, so that
-Varys can log the search edits you make in Drupal (a changed title, search description,
-page address, heading or internal link, or a substantial rewrite of the body) and later
-check whether they went live.
+(its API), Vercel (its web app) and Supabase (its database). Data sent to Varys is stored by
+Varys and those hosting providers, shown to people signed in to Varys with access to that
+site, and given to no one outside Varys. The extension can optionally be connected to it,
+so that Varys can log the search edits you make in Drupal (a changed title, search
+description, page address, heading or internal link, or a substantial rewrite of the body)
+and later check whether they went live.
 
 **This is off until you connect it.** Unless you click **Connect to Varys** in the popup,
 nothing is sent to Varys, no form is recorded, no tab is followed on its behalf, and
@@ -252,8 +253,10 @@ In `chrome.storage.session`, which Chrome clears when the browser closes:
 - **The form as it first opened**, for each tab with a node form open, including the raw
   values of its fields and its body. These raw values are never sent to Varys. They are
   kept so that a Preview, or a save Drupal rejected, is compared with the page as it was
-  rather than with your unsaved edit. They are removed when you leave the form, after a save
-  goes through, or when the tab closes.
+  rather than with your unsaved edit. They are removed when you go to another page of the
+  same site, after a save goes through, or when the tab closes. A detour to another site or
+  to the login page keeps them, for the save you make when you come back. Whatever is left
+  is cleared when the browser closes.
 - **Saves being followed across the page change**: the summary of a save you just made,
   held until the extension knows where Drupal landed and has sent it or queued it. If it
   never sees the save finish (for example, you closed the tab), it sends the save with the
@@ -267,9 +270,10 @@ In `chrome.storage.session`, which Chrome clears when the browser closes:
   Varys keeps them for 7 days after the last of them, so that **Log it anyway** can still
   use them, and then deletes them. Varys keeps one entry per page per day, so a save that
   does not count on its own but joins an entry that does is kept for as long as that entry.
-- **An entry you undo** is taken out of Varys's record, but kept for 30 days as a marker, so
-  that when Varys later detects the same change on the live page it dismisses it instead of
-  raising it again, and then deleted.
+- **An entry you undo** stops counting: Varys does not measure it, and What's Working shows
+  it as "Undone". It is kept for up to 30 days after that page's last save, so that when
+  Varys later detects the same change on the live page it dismisses it instead of raising it
+  again, and then deleted.
 - **A save that counts** is kept in Varys as part of its record of changes made to that
   site. People signed in to Varys with access to the site can see it on its What's Working
   page, with who made it and what changed. It stays until it is undone or an administrator
@@ -292,9 +296,10 @@ You can also disconnect from the Varys side: **Your connections** on Varys's Dru
 extension page cancels a key. This browser keeps its copy until it next tries to use it and
 is refused, so use Disconnect in the popup to clear it.
 
-Disconnecting does not delete changes Varys has already logged. **Undo** takes a change
-out of Varys's record, from the result notice right after a save or from What's Working in
-Varys; the undone entry is then kept for 30 days and deleted.
+Disconnecting does not delete changes Varys has already logged. **Undo**, from the result
+notice right after a save or from What's Working in Varys, makes a change stop counting: it
+is shown as "Undone", kept for up to 30 days after that page's last save, and then
+deleted.
 
 ## Clipboard
 
@@ -303,13 +308,14 @@ The extension does not read your clipboard.
 
 ## Data sharing and sale
 
-The extension sells nothing, and shares nothing with any third party. Without the Varys
-connection no data is collected, so none is transferred anywhere. With it, the data
-described above goes to Varys, the service you chose to connect, which stores it as
-described above and shares it with no one else. None of it is used for advertising, credit
-assessment, or lending, or for any purpose unrelated to the extension's single purpose:
-providing a faster administrative interface for Drupal 7 websites at Columbia University,
-including, if you choose, logging your search edits in Varys.
+The extension sells nothing. Without the Varys connection it shares nothing with anyone: no
+data is collected, so none is transferred anywhere. With it, the data described above goes
+to Varys, the service you chose to connect. It is stored by Varys and its hosting providers,
+shown to people signed in to Varys with access to that site, and given to no one outside
+Varys. None of it is used for advertising, credit assessment, or lending, or for any purpose
+unrelated to the extension's single purpose: providing a faster administrative interface
+for Drupal 7 websites at Columbia University, including, if you choose, logging your search
+edits in Varys.
 
 ## How to remove everything
 

@@ -193,7 +193,8 @@ What it can say:
 - **"Logged in Varys as …"** (a title and description change, a headings change, an internal
   links change, a new section, a body rewrite, a new page, or a page address change). Your
   save counted. If it should not have, because you were only trying something, press
-  **Undo** and Varys takes it out of its record.
+  **Undo**: it stops counting, and What's Working shows it as "Undone" until Varys deletes
+  it.
 - **"Not logged in Varys: this didn't look like a search edit."** Varys saw your save and
   decided it did not count, such as a typo fix. If you disagree, press **Log it anyway**.
   The box then says it was logged, and the button becomes **Undo**. Do this while the box is
@@ -226,9 +227,9 @@ still disconnects here and tells you the key may still work there. You can also 
 from Varys itself, under **Your connections** on its Drupal extension page, but this browser
 keeps its copy of the key until it next tries to use it, so the extension's own Disconnect
 is the one that clears everything. Disconnecting does not delete changes Varys has already
-logged; use Undo to take those out of Varys's record (an undone entry is deleted after 30
-days). A connection nobody uses for 90 days expires by itself; the menu
-then says so, and **Reconnect** puts it back.
+logged; use Undo to make one stop counting (an undone entry is shown as "Undone", and
+deleted up to 30 days after that page's last save). A connection nobody uses for 90 days
+expires by itself; the menu then says so, and **Reconnect** puts it back.
 
 ---
 
