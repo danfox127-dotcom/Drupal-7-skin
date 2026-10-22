@@ -4046,7 +4046,8 @@ test.describe('Recording a node save for Varys', () => {
     });
 
   staysSilent('a browser that never connected', null);
-  staysSilent('a connection Varys has refused', () => ({ ...connected, expired: true }));
+  // A connection Varys has refused still records (ruling R24): its save is queued and the
+  // editor told to reconnect. See "an expired connection still records the save" below.
 });
 
 test.describe('Sending a save to Varys, and telling the editor what happened', () => {
@@ -4415,5 +4416,179 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     expect(await stored(context, 'varysQueue')).toBeUndefined();
     await expect(page.locator('#d7-varys-notice')).toHaveCount(0);
     expect(await stored(context, 'varysPendingNotice')).toBeUndefined();
+  });
+
+  test('an expired connection still records the save: it is queued, and the editor told to reconnect', async ({ page, context, settings }) => {
+    /**
+     * Ruling R24. This replaced "a connection Varys has refused: nothing is recorded", which
+     * dropped every save made after a 401 without a word. Nothing goes to Varys under a key it
+     * has refused; the save waits in the queue for the same person to reconnect.
+     */
+    await settings({ varysConnection: { ...connected, expired: true }, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+
+    await expect(page.getByText(EXPIRED)).toBeVisible();
+    const queue = await stored(context, 'varysQueue') as any[];
+    expect(queue).toHaveLength(1);
+    expect(queue[0]).toMatchObject({ email: EMAIL, request: { page_url: PUBLIC } });
+    expect(calls).toEqual([]);
+  });
+
+  test('a save Varys refuses with a 401 after the site check is queued, and the key flagged', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp({ status: 401, body: { detail: 'This key has expired.' } }));
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+
+    await expect(page.getByText(EXPIRED)).toBeVisible();
+    expect(calls.map(c => `${c.method} ${c.path}`)).toEqual(['GET /api/extension/connection', 'POST /api/extension/saves']);
+    expect((await stored(context, 'varysConnection') as any).expired).toBe(true);
+    expect(await stored(context, 'varysQueue')).toHaveLength(1);
+  });
+
+  test('a save Varys answers with a 503 is queued, and the editor told it will be sent', async ({ page, context, settings }) => {
+    // A 5xx is Varys's deliberate answer when its database fails: worth trying again.
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp({ status: 503, body: { detail: 'Database unavailable.' } }));
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+
+    await expect(page.getByText(UNREACHABLE)).toBeVisible();
+    expect(savesIn(calls)).toHaveLength(1);
+    expect(await stored(context, 'varysQueue')).toHaveLength(1);
+    expect((await stored(context, 'varysConnection') as any).expired).toBeUndefined();
+  });
+
+  test('the site list is asked for once a day, not once a save', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+
+    await openForm(page);
+    await saveAndPublish(page, { 'metatags[und][description][value]': 'A second, clearer description.' });
+    await expect.poll(() => savesIn(calls).length).toBe(2);
+
+    expect(calls.filter(c => c.path === '/api/extension/connection')).toHaveLength(1);
+  });
+
+  test('a queued save Varys refuses for itself does not hold up the ones behind it', async ({ page, context, settings }) => {
+    const queued = (page_url: string, ago: number) => ({
+      request: {
+        page_url, node_id: null, content_type: 'news', button: 'publish', body_change_ratio: 0,
+        before: null, after: { title: page_url },
+      },
+      queuedAt: Date.now() - ago,
+      email: EMAIL,
+    });
+    await settings({
+      varysConnection: connected,
+      nodeEditor: false,
+      varysQueue: [queued(`${HOST}/news/refused`, 120_000), queued(`${HOST}/news/older`, 60_000)],
+    });
+    const calls = await stubVarys(context, call => call.path === '/api/extension/saves' && call.body?.page_url === `${HOST}/news/refused`
+      ? { status: 404, body: { detail: 'Not Found' } }
+      : varysUp()(call));
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+
+    await expect.poll(() => savesIn(calls).length).toBe(3);
+    expect(savesIn(calls).map(c => c.body.page_url)).toEqual([`${HOST}/news/refused`, `${HOST}/news/older`, PUBLIC]);
+    // The refused one stays (the queue's own limits bound it); the one behind it went.
+    await expect.poll(async () => ((await stored(context, 'varysQueue') ?? []) as any[]).map(e => e.request.page_url))
+      .toEqual([`${HOST}/news/refused`]);
+  });
+
+  test('a save that lands on the login page is not sent, and the form keeps its original before', async ({ page, context, settings }) => {
+    /**
+     * Drupal's session expired while the form was open, so Save went to the login page. The
+     * save did not happen: nothing is sent, and the person logs in and saves again, measured
+     * against the page as it was.
+     */
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    const login = `${HOST}/user/login?destination=node/23110/edit`;
+    let attempts = 0;
+    await context.route(FORM, route => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      attempts++;
+      return route.fulfill({
+        status: 200, contentType: 'text/html',
+        body: attempts > 1 ? publicPage : `<!doctype html><html><head><title>Log in</title>
+          <script>history.replaceState(null, '', ${JSON.stringify(login)});</script></head><body>Log in</body></html>`,
+      });
+    });
+
+    await openForm(page);
+    await expect.poll(async () => (await sessionKeys(context)).some(k => k.startsWith('varysForm:'))).toBe(true);
+    await saveAndPublish(page, { 'title_field[und][0][value]': 'Lost to the login page' });
+    expect(page.url()).toBe(login);
+
+    // The save is let go, and the form's record is kept for the next try.
+    await expect.poll(async () => (await sessionKeys(context)).filter(k => k.startsWith('varysPending:'))).toEqual([]);
+    expect((await sessionKeys(context)).some(k => k.startsWith('varysForm:'))).toBe(true);
+    await page.waitForTimeout(500);
+    expect(calls).toEqual([]);
+
+    await openForm(page);
+    await saveAndPublish(page, { 'title_field[und][0][value]': 'Saved after logging in' });
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    const [save] = savesIn(calls);
+    expect(save.body.before.title).toBe('');
+    expect(save.body.after.title).toBe('Saved after logging in');
+  });
+
+  test('Disconnect forgets the saves the worker was following', async ({ page, context, settings, extensionId }) => {
+    await settings({ varysConnection: connected });
+    await stubVarys(context, varysUp());
+    await worker(context).evaluate(() => chrome.storage.session.set({
+      'varysPending:4242': { tabId: 4242, formPath: '/node/5/edit' },
+      'varysForm:4242': { origin: 'https://www.cuimc.columbia.edu', formPath: '/node/5/edit' },
+    }));
+
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await page.getByRole('button', { name: 'Disconnect' }).click();
+    await expect(page.getByRole('button', { name: 'Connect to Varys' })).toBeVisible();
+
+    expect((await sessionKeys(context)).filter(k => k.startsWith('varysPending:') || k.startsWith('varysForm:'))).toEqual([]);
+  });
+
+  test('a save followed under one person\'s connection is never sent under another\'s', async ({ page, context, settings }) => {
+    /**
+     * Someone else saved in this browser and the save was still being followed (its tab
+     * closed mid-save, say) when they disconnected and this person connected. However it
+     * survived, it is dropped, never posted with this person's key.
+     */
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await worker(context).evaluate(([form, pub]) => chrome.storage.session.set({
+      'varysPending:4242': {
+        tabId: 4242, formPath: '/node/23110/edit', formUrl: form, submittedAt: Date.now() - 120_000,
+        email: 'someone.else@cumc.columbia.edu', loadingSeen: false,
+        payload: {
+          pageUrl: pub, nodeId: '23110', contentType: 'list', button: 'publish', isNew: false,
+          before: null, after: { title: 'Theirs' }, bodyChangeRatio: 0,
+        },
+      },
+    }), [FORM, PUBLIC] as const);
+
+    // Opening a form is when the worker sends what has waited too long.
+    await openForm(page);
+    await expect.poll(async () => (await sessionKeys(context)).includes('varysPending:4242')).toBe(false);
+    await page.waitForTimeout(500);
+    expect(savesIn(calls)).toEqual([]);
   });
 });

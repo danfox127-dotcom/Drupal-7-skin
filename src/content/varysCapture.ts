@@ -33,16 +33,17 @@ const BODY_FIELD = 'textarea[name="body[und][0][value]"]';
 /**
  * Whether this browser is connected to Varys, as the worker says.
  *
- * Connected means a status came back and it is not expired. An expired key cannot post, so
- * recording for it would only queue saves that are never sent. Any failure to ask (a worker
- * that does not answer, an invalidated context) is "not connected": the safe answer is to do
- * nothing.
+ * Connected means a status came back, expired or not (ruling R24). A save made while the key
+ * is expired is still recorded: the worker queues it and tells the editor to reconnect, and
+ * sends it once the same person has. Dropping it would lose the edit without a word. Any
+ * failure to ask (a worker that does not answer, an invalidated context) is "not connected":
+ * the safe answer is to do nothing.
  */
 export async function varysIsConnected(): Promise<boolean> {
   try {
     const status: VarysStatus | null | undefined = await chrome.runtime.sendMessage(
       { type: 'varysStatus' } satisfies VarysStatusRequest);
-    return status?.expired === false;
+    return typeof status === 'object' && status !== null && typeof status.email === 'string';
   } catch {
     return false;
   }
@@ -239,6 +240,7 @@ export function mountVarysCapture(
         before: isNew ? null : pageStateFrom(before, null),
         after: pageStateFrom(after, before.bodyHtml),
         bodyChangeRatio: bodyChangeRatio(textOfHtml(before.bodyHtml), textOfHtml(after.bodyHtml)),
+        submittedAt: Date.now(),
       };
 
       saved = true;

@@ -486,18 +486,25 @@ test.describe('varysIsConnected', () => {
       return w.Capture.varysIsConnected();
     }, answer);
 
-  test('asks the worker for the status, and is true only for a live connection', async ({ page }) => {
+  test('asks the worker for the status, and is true for a live connection', async ({ page }) => {
     await open(page, '/node/1/edit', '');
     expect(await ask(page, { email: 'x@cumc.columbia.edu', connectedAt: 'then', expired: false })).toBe(true);
     expect(await sent(page)).toEqual([{ type: 'varysStatus' }]);
   });
 
-  test('is false when not connected, expired, unanswered or the worker is unreachable', async ({ page }) => {
+  test('is true for an expired connection too, whose saves are queued until it reconnects', async ({ page }) => {
+    // Ruling R24: a key Varys has refused still records, so its saves wait in the queue and
+    // the editor is told to reconnect, instead of being dropped without a word.
+    await open(page, '/node/1/edit', '');
+    expect(await ask(page, { email: 'x@cumc.columbia.edu', connectedAt: 'then', expired: true })).toBe(true);
+  });
+
+  test('is false when not connected, unanswered or the worker is unreachable', async ({ page }) => {
     await open(page, '/node/1/edit', '');
     expect(await ask(page, null)).toBe(false);
     expect(await ask(page, undefined)).toBe(false);
-    expect(await ask(page, { email: 'x@cumc.columbia.edu', connectedAt: 'then', expired: true })).toBe(false);
-    expect(await ask(page, { email: 'x@cumc.columbia.edu', connectedAt: 'then' })).toBe(false);
+    expect(await ask(page, { connectedAt: 'then', expired: false })).toBe(false);
+    expect(await ask(page, 'connected')).toBe(false);
     expect(await ask(page, new Error('Receiving end does not exist'))).toBe(false);
   });
 });
@@ -532,6 +539,8 @@ test.describe('mountVarysCapture', () => {
       button: 'publish',
       isNew: false,
     });
+    // When Save was pressed, by the page's clock: the worker reads the tab's loads against it.
+    expect(Math.abs(message.submittedAt - Date.now())).toBeLessThan(10_000);
     expect(message.before).toEqual({
       title: 'Asthma in adults',
       meta_title: 'Asthma | [site:name]',

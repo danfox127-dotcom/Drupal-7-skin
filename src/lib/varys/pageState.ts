@@ -66,6 +66,11 @@ export interface VarysSubmitMessage {
   before: PageState | null;
   after: PageState;
   bodyChangeRatio: number;
+  /**
+   * When Save was pressed (Date.now() in the page). The worker reads a tab's loads against it:
+   * only one that started after this is the answer to the save.
+   */
+  submittedAt: number;
 }
 
 /**
@@ -214,7 +219,8 @@ function newSentences(afterBlocks: string[], beforeBlocks: string[] | null): str
   return found;
 }
 
-const bareHost = (host: string) => host.toLowerCase().replace(/^www\./, '');
+/** A site's identity here is its host without `www.`, which is how Varys lists sites too. */
+export const bareHost = (host: string): string => host.toLowerCase().replace(/^www\./, '');
 
 /**
  * Links in the body that point at pages on this site, as paths, once each, in order.

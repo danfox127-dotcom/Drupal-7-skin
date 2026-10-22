@@ -408,8 +408,9 @@ async function waitForRichEditors(): Promise<string> {
  * Not awaited by init, and not tied to the Two-Pane Editor: it must work with that editor on
  * or off, and it must not hold up the features that mount after the wait below. The worker is
  * asked whether this browser is connected (never the stored key, which only the worker reads);
- * for anyone who is not, nothing here runs and nothing is sent. The capture is handed the
- * editors' own readiness, so the body is read from CKEditor once it has finished building.
+ * for anyone who is not, nothing here runs and nothing is sent. An expired connection still
+ * records: the worker queues its saves until the same person reconnects. The capture is handed
+ * the editors' own readiness, so the body is read from CKEditor once it has finished building.
  */
 async function startVarysCapture(): Promise<void> {
   try {

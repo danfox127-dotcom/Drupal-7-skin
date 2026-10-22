@@ -14,7 +14,7 @@
  * Nothing here touches chrome.* or the network.
  */
 
-import type { ButtonKind, PageState, RawFormValues, VarysSubmitMessage } from './pageState';
+import { bareHost, type ButtonKind, type PageState, type RawFormValues, type VarysSubmitMessage } from './pageState';
 
 // ------------------------------------------------------------------------------------- copy
 
@@ -32,7 +32,7 @@ export const ACTION_NOT_CONNECTED_COPY = "This browser isn't connected to Varys 
 // -------------------------------------------------------------------------- the save itself
 
 /** A save as the worker holds it while it waits to learn the page's address. */
-export type SavePayload = Omit<VarysSubmitMessage, 'type' | 'formPath'>;
+export type SavePayload = Omit<VarysSubmitMessage, 'type' | 'formPath' | 'submittedAt'>;
 
 /** The Save request Varys accepts at POST /api/extension/saves, in its own snake_case. */
 export interface SaveRequest {
@@ -73,7 +73,18 @@ export interface PendingSubmit {
    * Drupal sends the person after saving, which is then not the page that was saved.
    */
   formUrl: string;
+  /** When Save was pressed, by the page's clock (the same machine's as the worker's). */
   submittedAt: number;
+  /**
+   * Whose save it is: the connection's email when it was pressed. A save is only ever sent
+   * under that same person's key; a pending save outlives a connection otherwise.
+   */
+  email: string;
+  /**
+   * Whether the tab has started loading since Save was pressed. Only a load that started
+   * after it can say how the save went (see outcomeWhenLoaded).
+   */
+  loadingSeen: boolean;
   payload: SavePayload;
 }
 
@@ -84,16 +95,22 @@ export type NavigationOutcome =
   | { kind: 'failed' }
   | { kind: 'saved'; pageUrl: string; nodeId: string | null }
   /** It went through, but nothing says which page it was: a new node sent to an admin page. */
-  | { kind: 'noAddress' };
+  | { kind: 'noAddress' }
+  /**
+   * It did not happen: Save landed on the login page (Drupal's session had expired) or on
+   * another site (a single sign-on). Not a failed save of the form either: the person saves
+   * again once logged in, and the form's original before is kept for that.
+   */
+  | { kind: 'interrupted' };
 
-/** A site's identity here is its host without `www.`, which is how Varys lists sites too. */
-export const bareHost = (host: string): string => host.toLowerCase().replace(/^www\./, '');
+/** Drupal's login and account pages. Save landing here means the session had expired. */
+const LOGIN = /^\/user(?:\/|$)/;
 
 /**
- * Paths that are not a page someone reads: admin screens, the login page, node forms and
- * a node's own sub-pages (/node/N/edit, /node/N/revisions). /node/N itself is a page.
+ * Paths that are not a page someone reads: admin screens, node forms and a node's own
+ * sub-pages (/node/N/edit, /node/N/revisions). /node/N itself is a page.
  */
-const NOT_A_PAGE = /^\/(?:admin|user)(?:\/|$)|^\/node\/add(?:\/|$)|^\/node\/\d+\/./;
+const NOT_A_PAGE = /^\/admin(?:\/|$)|^\/node\/add(?:\/|$)|^\/node\/\d+\/./;
 
 const nodeIdOfPagePath = (path: string): string | null => path.match(/^\/node\/(\d+)\/?$/)?.[1] ?? null;
 
@@ -109,9 +126,10 @@ function parse(url: string): URL | null {
  * What a finished navigation says about a save, and the page's public address if it went
  * through.
  *
+ * - On another site, or on the login page: it was INTERRUPTED (see NavigationOutcome).
  * - Back on the form's own path: Drupal re-rendered the form, so the save FAILED (validation)
  *   and nothing is sent.
- * - Anywhere else, it went through. The address is, in order:
+ * - Anywhere else on the site, it went through. The address is, in order:
  *   1. where Drupal landed, when that is a page on the same site and the form carried no
  *      `?destination`. A node save then redirects to the node itself, under its CURRENT alias,
  *      which is better than anything the form knew: the form only had /node/N when it showed
@@ -126,17 +144,34 @@ function parse(url: string): URL | null {
 export function outcomeOfNavigation(p: PendingSubmit, finalUrl: string): NavigationOutcome {
   const form = parse(p.formUrl);
   const final = parse(finalUrl);
-  const sameSite = form !== null && final !== null && bareHost(final.host) === bareHost(form.host);
+  if (form === null || final === null || bareHost(final.host) !== bareHost(form.host)) {
+    return { kind: 'interrupted' };
+  }
+  if (final.pathname === p.formPath) return { kind: 'failed' };
+  if (LOGIN.test(final.pathname)) return { kind: 'interrupted' };
 
-  if (sameSite && final.pathname === p.formPath) return { kind: 'failed' };
-
-  const landedNode = sameSite ? nodeIdOfPagePath(final.pathname) : null;
-  const nodeId = p.payload.nodeId ?? landedNode;
-
-  if (sameSite && !form.searchParams.has('destination') && !NOT_A_PAGE.test(final.pathname)) {
+  const nodeId = p.payload.nodeId ?? nodeIdOfPagePath(final.pathname);
+  if (!form.searchParams.has('destination') && !NOT_A_PAGE.test(final.pathname)) {
     return { kind: 'saved', pageUrl: final.origin + final.pathname, nodeId };
   }
   return addressFromForm(p, nodeId);
+}
+
+/**
+ * The tab started loading at `at`. Only a load that began after Save was pressed is the
+ * answer to it.
+ */
+export function noteLoading(p: PendingSubmit, at: number): PendingSubmit {
+  return !p.loadingSeen && at >= p.submittedAt ? { ...p, loadingSeen: true } : p;
+}
+
+/**
+ * What a finished load says about a save, or null when it says nothing: the load had started
+ * before Save was pressed (the form page's own, finishing just after). Back on the form's
+ * path, that load would read as a failed save, and the real one would never be sent.
+ */
+export function outcomeWhenLoaded(p: PendingSubmit, finalUrl: string): NavigationOutcome | null {
+  return p.loadingSeen ? outcomeOfNavigation(p, finalUrl) : null;
 }
 
 /**
@@ -192,17 +227,21 @@ const originOf = (url: string): string | null => parse(url)?.origin ?? null;
  *
  * - opened: the FIRST record for a form wins. A re-render (a preview, a failed save) is the
  *   same origin and path, so it changes nothing; a different form replaces it.
- * - navigated: kept while the tab is on the same form, gone once it is anywhere else. A
- *   failed save or a preview reloads the same path, so it survives them.
+ * - navigated: kept while the tab is on the same form, gone once it is on another page of the
+ *   site. A failed save or a preview reloads the same path, so it survives them. So does a
+ *   detour to log in, on the site's /user pages or another site's sign-on: nothing on the
+ *   site changed meanwhile, and the person comes back to the form to save again.
  * - saved: gone. The page has a new before now.
  */
 export function nextOpenedForm(current: OpenedForm | undefined, event: FormEvent): OpenedForm | undefined {
   if (event.kind === 'saved') return undefined;
 
   if (event.kind === 'navigated') {
+    if (!current) return undefined;
     const url = parse(event.url);
-    const same = current && url && url.origin === current.origin && url.pathname === current.formPath;
-    return same ? current : undefined;
+    const site = parse(current.origin);
+    if (!url || !site || bareHost(url.host) !== bareHost(site.host)) return current;
+    return url.pathname === current.formPath || LOGIN.test(url.pathname) ? current : undefined;
   }
 
   const origin = originOf(event.url);
@@ -236,6 +275,25 @@ export function failureOf(status: number | null): SendFailure {
   if (status === 401) return 'expired';
   if (status === 422) return 'malformed';
   return 'retry';
+}
+
+/** What sending one queued save says about it, and about the rest of the queue. */
+export type QueueVerdict = 'sent' | 'dropped' | 'kept' | 'stop';
+
+/**
+ * - sent: Varys took it.
+ * - dropped: 422, malformed. This extension's bug, and it would fail the same way for ever.
+ * - kept: another 4xx. Varys refused this one for a reason of its own (the save is not this
+ *   person's to send, say). It stays, but the next one is tried: one bad entry must not hold
+ *   up the queue behind it. The queue's own limits (7 days, 50 saves) bound how long it stays.
+ * - stop: no answer, a 5xx, or a 401. Varys is away or the key is dead, so nothing after this
+ *   can go either, and this and the rest wait for the next flush.
+ */
+export function queueVerdict(status: number | null): QueueVerdict {
+  if (status !== null && status >= 200 && status < 300) return 'sent';
+  if (status === 422) return 'dropped';
+  if (status === null || status === 401 || status >= 500) return 'stop';
+  return 'kept';
 }
 
 /** Whether Varys keeps a workspace for the page's site. `sites` are bare, lowercased hosts. */

@@ -32,8 +32,8 @@ import { showVarysNotice } from '../lib/varys/notice';
 import {
   ACTION_EXPIRED_COPY, ACTION_NOT_CONNECTED_COPY, ACTION_UNREACHABLE_COPY, EXPIRED_COPY,
   PENDING_NOTICE_KEY, PENDING_TIMEOUT_MS, QUEUE_KEY, SITES_TTL_MS, UNREACHABLE_COPY, UNTRACKED_COPY,
-  failureOf, isTrackedSite, mergeCarriedBefore, nextOpenedForm, noticeForResult, outcomeOfNavigation,
-  outcomeOfTimeout, pruneQueue, toSaveRequest,
+  failureOf, isTrackedSite, mergeCarriedBefore, nextOpenedForm, noteLoading, noticeForResult,
+  outcomeOfTimeout, outcomeWhenLoaded, pruneQueue, queueVerdict, toSaveRequest,
   type FormEvent, type NavigationOutcome, type OpenedForm, type PendingSubmit, type QueuedSave,
   type SaveRequest, type SitesCache, type StoredNotice, type VarysActionRequest, type VarysActionResponse,
   type VarysNotice,
@@ -398,11 +398,15 @@ async function varysDisconnect(): Promise<VarysDisconnectResponse> {
   }
 
   await setConnection(null);
-  // Nothing of this person's is left waiting to go to Varys: saves queued under this key, the
-  // site list it fetched, and a notice not yet shown. A later connection, possibly someone
-  // else's, starts clean.
+  // Nothing of this person's is left waiting to go to Varys: saves queued under this key, saves
+  // and forms the worker was still following, the site list it fetched, and a notice not yet
+  // shown. A later connection, possibly someone else's, starts clean. (A pending save also
+  // names its owner and is never sent under anyone else's key, which covers one written while
+  // this ran.)
   await withQueue(() => chrome.storage.local.remove([QUEUE_KEY, PENDING_NOTICE_KEY]));
-  await chrome.storage.session.remove(SITES_KEY);
+  const followed = Object.keys(await chrome.storage.session.get(null))
+    .filter(k => k.startsWith('varysPending:') || k.startsWith('varysForm:'));
+  await chrome.storage.session.remove([SITES_KEY, ...followed]);
   try {
     await chrome.permissions.remove({ origins: [VARYS_API + '/*'] });
   } catch (err) {
@@ -484,22 +488,46 @@ async function formOpened(
  * opened with, until the tab shows where Drupal sent it.
  *
  * The connection is checked here and again when sending: the page decided whether to record
- * only once, when it loaded.
+ * only once, when it loaded. The save is stamped with whose it is, and is only ever sent
+ * under that person's key.
  */
 async function submitted(tabId: number, formUrl: string, m: VarysSubmitMessage): Promise<void> {
-  if (!(await getConnection())) return;
+  const connection = await getConnection();
+  if (!connection) return;
   // The first record of this form wins, so this only stores the message's before when the
   // form's opening was never heard (a Save before the page had finished reading itself).
   const opened = await applyFormEvent(tabId, {
     kind: 'opened', url: formUrl, formPath: m.formPath, before: m.before, raw: null,
   });
-  const { type: _type, formPath, ...payload } = m;
-  const pending = mergeCarriedBefore(opened, { tabId, formPath, formUrl, submittedAt: Date.now(), payload });
+  const { type: _type, formPath, submittedAt: pressedAt, ...payload } = m;
+  const submittedAt = Number.isFinite(pressedAt) ? pressedAt : Date.now();
+  const pending = mergeCarriedBefore(opened, {
+    tabId, formPath, formUrl, submittedAt, email: connection.email,
+    // The save's own load may already have reached the worker: tab events and messages do
+    // not arrive in a guaranteed order.
+    loadingSeen: (lastLoadingAt.get(tabId) ?? -Infinity) >= submittedAt,
+    payload,
+  });
   await chrome.storage.session.set({ [pendingKey(tabId)]: pending });
 
   // Best effort: a worker still running then sends a save whose navigation never finished.
   // One that has been stopped is caught by the next sweep instead.
   setTimeout(() => { void sweepStalePending(); }, PENDING_TIMEOUT_MS + 1_000);
+}
+
+/**
+ * When each tab last started loading, by the worker's clock, kept the moment the event arrives.
+ * A Save's own load can reach the worker before the Save message does; `submitted` reads this
+ * to know. Lost if the worker stops, which costs at worst a save sent by the sweep instead.
+ */
+const lastLoadingAt = new Map<number, number>();
+
+/** The tab started loading at `at`: the answer to its save, if Save was pressed before. */
+async function tabLoading(tabId: number, at: number): Promise<void> {
+  const pending = await sessionGet<PendingSubmit>(pendingKey(tabId));
+  if (!pending) return;
+  const next = noteLoading(pending, at);
+  if (next !== pending) await chrome.storage.session.set({ [pendingKey(tabId)]: next });
 }
 
 /** The tab is at `url`, and with `complete` it has finished loading it. */
@@ -510,12 +538,14 @@ async function tabUpdated(tabId: number, url: string, complete: boolean): Promis
   if (!opened && !pending) return;
 
   let nextOpened = nextOpenedForm(opened, { kind: 'navigated', url });
-  if (pending && complete) {
+  // Null while the load that finished began before Save: the save's own is still to come.
+  const outcome = pending && complete ? outcomeWhenLoaded(pending, url) : null;
+  if (pending && outcome) {
     await chrome.storage.session.remove(pendingKey(tabId));
-    const outcome = outcomeOfNavigation(pending, url);
-    // A failed save is dropped: the form re-rendered, and its next Save is a new submission
-    // that carries the original before anyway.
-    if (outcome.kind !== 'failed') {
+    // Failed: the form re-rendered, and its next Save is a new submission that carries the
+    // original before anyway. Interrupted: the login page or another site, so it did not
+    // happen, and the form's record is kept for the save the person makes next.
+    if (outcome.kind === 'saved' || outcome.kind === 'noAddress') {
       nextOpened = nextOpenedForm(nextOpened, { kind: 'saved' });
       void send(pending, outcome, tabId);
     }
@@ -553,7 +583,7 @@ function send(pending: PendingSubmit, outcome: NavigationOutcome, tabId: number)
     }
     return Promise.resolve();
   }
-  return sendSave(toSaveRequest(pending.payload, outcome.pageUrl, outcome.nodeId), tabId)
+  return sendSave(toSaveRequest(pending.payload, outcome.pageUrl, outcome.nodeId), tabId, pending.email)
     .catch(err => console.warn('[D7 Studio] Varys: could not send a save', err));
 }
 
@@ -652,7 +682,9 @@ function enqueue(request: SaveRequest, email: string): Promise<void> {
 
 /**
  * Sends what the queue holds, oldest first, and stops at the first failure that says Varys is
- * still unreachable or the key is dead, keeping that save and everything after it.
+ * still unreachable or the key is dead (no answer, a 5xx, a 401), keeping that save and
+ * everything after it. One that Varys refuses for a reason of its own (another 4xx) is kept
+ * and the next is tried, so it cannot hold up the saves behind it (see queueVerdict).
  *
  * A queued save is dropped without being sent when it was made under a different person's
  * connection, or Varys no longer tracks its site; it is dropped after sending when Varys took
@@ -681,13 +713,17 @@ function flushQueue(): Promise<void> {
       if (sites && !isTrackedSite(entry.request.page_url, sites)) continue;
 
       const answer = await callVarys(connection, 'POST', '/api/extension/saves', entry.request);
-      if (succeeded(answer)) continue;
-      const failure = failureOf(answer.status);
-      if (failure === 'malformed') {
+      const verdict = queueVerdict(answer.status);
+      if (verdict === 'sent') continue;
+      if (verdict === 'dropped') {
         console.warn('[D7 Studio] Varys refused a queued save as malformed, so it was dropped', answer.json);
         continue;
       }
-      if (failure === 'expired') await markExpired(connection);
+      if (verdict === 'kept') {
+        kept.push(entry);
+        continue;
+      }
+      if (answer.status === 401) await markExpired(connection);
       kept.push(...queue.slice(i));
       break;
     }
@@ -701,22 +737,30 @@ function flushQueue(): Promise<void> {
  * Sends one save to Varys and tells the editor how it went.
  *
  * - Not connected: nothing at all.
+ * - Connected as someone other than `owner`, the person who pressed Save: nothing at all. It is
+ *   their save, and it is never sent under another person's key.
  * - An expired key: queued, and the editor is told to reconnect.
  * - A site Varys does not track: nothing is sent, and the editor is told so.
  * - Otherwise posted, after anything already queued. Varys's answer is the notice. A 401
  *   expires the key and queues the save; a 422 is this extension's bug and is only logged;
  *   anything else (no answer, a 5xx, another 4xx) queues it for later.
  */
-async function sendSave(request: SaveRequest, tabId: number | null): Promise<void> {
+async function sendSave(request: SaveRequest, tabId: number | null, owner: string): Promise<void> {
   const host = new URL(request.page_url).host;
   const show = (notice: VarysNotice) => showNotice(tabId, host, notice);
+  const ours = (c: VarysConnection | null): c is VarysConnection => {
+    if (c && c.email !== owner) {
+      console.warn('[D7 Studio] Varys: a save made under another connection was dropped, not sent.');
+    }
+    return c !== null && c.email === owner;
+  };
 
   let connection = await getConnection();
-  if (!connection) return;
+  if (!ours(connection)) return;
   if (!connection.expired) {
     await flushQueue();
     connection = await getConnection();
-    if (!connection) return;
+    if (!ours(connection)) return;
   }
   if (connection.expired) {
     await enqueue(request, connection.email);
@@ -803,6 +847,14 @@ async function actOnSave(request: VarysActionRequest): Promise<VarysActionRespon
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'loading') {
+    // Stamped as it arrives, before any queued work, so the time is the event's own.
+    // Measured: Chrome reports a fresh 'loading' for every navigation, including a Save
+    // pressed while the form page itself was still loading.
+    const at = Date.now();
+    lastLoadingAt.set(tabId, at);
+    void inTabOrder(tabId, () => tabLoading(tabId, at));
+  }
   const complete = changeInfo.status === 'complete';
   const url = complete ? tab.url : changeInfo.url;
   if (!url) return;
@@ -812,6 +864,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 chrome.tabs.onRemoved.addListener(tabId => {
   // The form's record goes with its tab. A save it was following is left for the sweep,
   // which sends it with the address the form knew.
+  lastLoadingAt.delete(tabId);
   void inTabOrder(tabId, () => chrome.storage.session.remove(formKey(tabId)));
   void sweepStalePending();
 });

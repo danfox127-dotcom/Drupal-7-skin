@@ -2,8 +2,9 @@ import { test, expect } from '@playwright/test';
 import type { PageState } from '../src/lib/varys/pageState';
 import {
   EXPIRED_COPY, QUEUE_MAX_ENTRIES, UNREACHABLE_COPY, UNTRACKED_COPY,
-  failureOf, isTrackedSite, mergeCarriedBefore, nextOpenedForm, noticeForResult,
-  outcomeOfNavigation, outcomeOfTimeout, pruneQueue, storedNoticeFor, toSaveRequest,
+  failureOf, isTrackedSite, mergeCarriedBefore, nextOpenedForm, noteLoading, noticeForResult,
+  outcomeOfNavigation, outcomeOfTimeout, outcomeWhenLoaded, pruneQueue, queueVerdict, storedNoticeFor,
+  toSaveRequest,
   type OpenedForm, type PendingSubmit, type QueuedSave,
 } from '../src/lib/varys/submissions';
 
@@ -33,6 +34,8 @@ const pending = (over: Partial<PendingSubmit> = {}, payload: Partial<PendingSubm
   formPath: '/node/23110/edit',
   formUrl: FORM,
   submittedAt: 1_000,
+  email: 'a@cumc.columbia.edu',
+  loadingSeen: true,
   ...over,
   payload: {
     pageUrl: `${HOST}/node/23110`,
@@ -89,9 +92,9 @@ test.describe('outcomeOfNavigation', () => {
       .toEqual({ kind: 'saved', pageUrl: `${HOST}/conditions/asthma`, nodeId: '23110' });
   });
 
-  test('admin screens, node sub-pages, node forms and the login page are never the page address', () => {
+  test('admin screens, node sub-pages and node forms are never the page address', () => {
     const p = pending({}, { pageUrl: `${HOST}/conditions/asthma` });
-    for (const landed of ['/admin/content', '/node/23110/revisions', '/node/23110/edit/', '/node/add/news', '/user/login']) {
+    for (const landed of ['/admin/content', '/node/23110/revisions', '/node/23110/edit/', '/node/add/news']) {
       expect(outcomeOfNavigation(p, HOST + landed), landed)
         .toEqual({ kind: 'saved', pageUrl: `${HOST}/conditions/asthma`, nodeId: '23110' });
     }
@@ -101,10 +104,32 @@ test.describe('outcomeOfNavigation', () => {
     expect(outcomeOfNavigation(pendingNew(), `${HOST}/admin/content`)).toEqual({ kind: 'noAddress' });
   });
 
-  test('another site is never the page address', () => {
-    expect(outcomeOfNavigation(pending(), 'https://example.org/somewhere'))
-      .toEqual({ kind: 'saved', pageUrl: `${HOST}/node/23110`, nodeId: '23110' });
-    expect(outcomeOfNavigation(pendingNew(), 'https://example.org/node/5')).toEqual({ kind: 'noAddress' });
+  test('landing on the login page, or on another site, means the save did not happen', () => {
+    // An expired Drupal session sends Save to /user/login; a single sign-on sends it off the
+    // site. Neither is a page that was saved, and neither is the form failing validation.
+    for (const landed of [`${HOST}/user`, `${HOST}/user/login?destination=node/23110/edit`,
+      'https://cas.columbia.edu/cas/login', 'https://example.org/node/5']) {
+      expect(outcomeOfNavigation(pending(), landed), landed).toEqual({ kind: 'interrupted' });
+      expect(outcomeOfNavigation(pendingNew(), landed), landed).toEqual({ kind: 'interrupted' });
+    }
+    // /users or /userguide is a page like any other.
+    expect(outcomeOfNavigation(pending({}, { pageUrl: null }), `${HOST}/userguide`))
+      .toEqual({ kind: 'saved', pageUrl: `${HOST}/userguide`, nodeId: '23110' });
+  });
+
+  test('a load that was already under way when Save was pressed is not the answer to it', () => {
+    // The form page's own load, finishing just after Save: back on the form's path, it would
+    // read as a failed save, and the real save would never be sent.
+    const waiting = pending({ submittedAt: 5_000, loadingSeen: false });
+    expect(outcomeWhenLoaded(waiting, FORM)).toBeNull();
+    expect(outcomeWhenLoaded(noteLoading(waiting, 4_999), FORM)).toBeNull();
+
+    // A load that STARTED after Save is the answer.
+    const answered = noteLoading(waiting, 5_000);
+    expect(answered.loadingSeen).toBe(true);
+    expect(outcomeWhenLoaded(answered, FORM)).toEqual({ kind: 'failed' });
+    expect(outcomeWhenLoaded(noteLoading(waiting, 5_120), `${HOST}/news/foo`))
+      .toEqual({ kind: 'saved', pageUrl: `${HOST}/news/foo`, nodeId: '23110' });
   });
 
   test('a save never seen to finish is sent with the address the form knew', () => {
@@ -155,11 +180,25 @@ test.describe('the before a form first opened with', () => {
     const opened = nextOpenedForm(undefined, OPENED(original)) as OpenedForm;
 
     expect(nextOpenedForm(opened, { kind: 'navigated', url: `${HOST}/news/foo` })).toBeUndefined();
-    expect(nextOpenedForm(opened, { kind: 'navigated', url: `https://other.columbia.edu/node/23110/edit` })).toBeUndefined();
+    expect(nextOpenedForm(opened, { kind: 'navigated', url: `${HOST}/admin/content` })).toBeUndefined();
     expect(nextOpenedForm(opened, { kind: 'saved' })).toBeUndefined();
 
     const other = state('Other page');
     expect(nextOpenedForm(opened, OPENED(other, `${HOST}/node/5/edit`, '/node/5/edit'))?.before).toEqual(other);
+  });
+
+  test('a detour to log in, here or on another site, keeps the original before', () => {
+    // Save landed on the login page because Drupal's session had expired. The person logs in
+    // and is sent back to the form, and the page in Drupal is still the original.
+    const original = state('Original');
+    let opened = nextOpenedForm(undefined, OPENED(original));
+    for (const url of [`${HOST}/user/login?destination=node/23110/edit`, 'https://cas.columbia.edu/cas/login',
+      `${HOST}/user`, FORM]) {
+      opened = nextOpenedForm(opened, { kind: 'navigated', url });
+      expect(opened?.before, url).toEqual(original);
+    }
+    opened = nextOpenedForm(opened, OPENED(state('Back from logging in')));
+    expect(mergeCarriedBefore(opened, pending({}, { before: state('Back from logging in') })).payload.before).toEqual(original);
   });
 
   test('a save from some other form keeps its own before', () => {
@@ -202,6 +241,16 @@ test.describe('the request Varys is sent', () => {
 });
 
 test.describe('what a failed request means', () => {
+  test('a queued save that Varys refuses for itself does not hold up the rest', () => {
+    for (const status of [200, 201, 204]) expect(queueVerdict(status), String(status)).toBe('sent');
+    // Malformed: this extension's bug, and it would fail the same way for ever.
+    expect(queueVerdict(422)).toBe('dropped');
+    // Refused for a reason of its own (it is gone, or not this person's): kept, and the next is tried.
+    for (const status of [400, 403, 404, 409, 429]) expect(queueVerdict(status), String(status)).toBe('kept');
+    // Varys is away or the key is dead: nothing after this one can go either.
+    for (const status of [null, 401, 500, 502, 503]) expect(queueVerdict(status), String(status)).toBe('stop');
+  });
+
   test('401 is an expired key, 422 a malformed request, and anything else is worth retrying', () => {
     expect(failureOf(401)).toBe('expired');
     expect(failureOf(422)).toBe('malformed');
