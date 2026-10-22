@@ -102,8 +102,9 @@ URL, and it can be changed later.
       search edits (titles, search descriptions, page addresses, headings, internal links)
       are logged there automatically, and so that Varys's suggestions for the page you are
       editing (search title, description, title, section headings) appear in a panel on the
-      edit form. A suggestion fills a field only when you press Use, and Undo takes it back.
-      It is off until you click Connect to Varys.
+      edit form. A suggestion goes into the form only when you press Use (or Insert at
+      cursor, for a heading), and Undo takes a Use back; a heading inserted into the body is
+      reversed with the editor's own undo. It is off until you click Connect to Varys.
 
     Everything happens in the browser, unless you connect to Varys. The extension fills
     forms in; it never saves or publishes anything on its own — you press Save.
@@ -152,7 +153,11 @@ common cause of a slow review. These are accurate as of the current manifest.
     few short-lived items in chrome.storage.session, which Chrome clears when the browser
     closes: the form as it first opened (including raw field values, which are never sent),
     saves being followed across the page change, and a 24-hour cache of which sites Varys
-    tracks. Disconnect removes all of it. Nothing leaves the browser except what the
+    tracks. Disconnect removes all of that. When the user presses Ask Varys it also keeps
+    one marker in the tab's own sessionStorage (not chrome.storage): the page's address and
+    the time, so that a reload within 3 minutes keeps waiting instead of asking again. It
+    holds no key and nothing the user typed, is ignored once it is 3 minutes old, and
+    Disconnect does not need to clear it. Nothing leaves the browser except what the
     privacy policy lists under "If you connect it to Varys", and only after the user has
     connected.
 
@@ -266,22 +271,26 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
   only to Varys, to authenticate that user's requests.
 - **Personal communications:** No
 - **Location:** No
-- **Web history:** **Yes, narrowly**, only once the user connects to Varys. The extension
-  does not collect a browsing history: it reads a tab's address only to follow an open node
-  form or a save, as described under `tabs`, and sends nothing from that. What it does send
-  Varys is the public address of an existing page on a site Varys tracks when the user
-  **opens that page's edit form** (to fetch suggestions), presses **Ask Varys** on it, or
-  **saves** it. Those are pages the user is editing in Drupal's administrative pages, not
-  pages they visited, and no other page's address is sent. Nothing is sent for an add form,
-  or for a site Varys does not track.
+- **Web history:** **Yes**, only once the user connects to Varys, and narrowly. The
+  extension does not collect a browsing history: it reads a tab's address only to follow an
+  open node form or a save, as described under `tabs`, and sends nothing from that. What it
+  does send Varys is the public address of a page the user has **opened for editing**. When
+  the user opens an existing page's edit form on a site Varys tracks, the extension sends
+  that page's address, to fetch suggestions, and sends it again if the user presses **Ask
+  Varys**. Each save that goes through sends the address of the page saved, with the paths
+  of the same-site pages its body links to. It sends the address of no other page the user
+  visits. Opening an add form, or an edit form on a site Varys does not track, sends
+  nothing for suggestions. (A save on a site Varys does not track is sent only if the
+  extension could not fetch the list of tracked sites, and Varys then discards it.)
 - **User activity:** **Yes**, only once the user connects to Varys, and only this: that a
   save was made on a Drupal node form, which button was pressed (Publish, Save draft or
   Save), which fields were filled from Varys's suggestions (page title, search title,
   description, headings), and when Varys received it; and that the user opened an existing
   page's edit form or pressed Ask Varys, which sends that page's address with the user's
-  key. No keystrokes, mouse position or scrolling are recorded, and no clicks beyond those
-  (pressing Use is reported only as an entry in the list of filled fields sent with the
-  next save).
+  key. No keystrokes, mouse position or scrolling are recorded, and no clicks beyond those.
+  Pressing Use, or Insert at cursor on a heading, is reported only as an entry in the list
+  of filled fields sent with the next save (Insert at cursor reports "headings"); pressing
+  Copy is not reported at all.
 - **Website content:** **Yes.** The extension reads the content of the Drupal admin form
   on the page, and — only for an origin the user has explicitly approved — the content of
   a page they asked to import.
@@ -303,12 +312,16 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
     with access to that site can see who saved what; it is given to no one outside Varys.
   - Separately, when the user opens an existing page's edit form on a site Varys tracks, or
     presses Ask Varys, the extension sends only that page's public address, to fetch or
-    request Varys's suggestions for it. No content of the form goes with it, and nothing is
-    sent for a site Varys does not track or when the extension cannot tell. What comes back
-    is suggestions only (search title, description, page title, section headings and an
-    optional clinical review note), shown in a panel on the page and not stored by the
-    extension. A suggestion is put into a field only when the user presses Use, and can be
-    undone; the extension never saves or publishes.
+    request Varys's suggestions for it. No content of the form goes with it, and no address
+    is sent for suggestions for a site Varys does not track, for an add form, or when the
+    extension cannot tell which sites Varys tracks. What comes back is Varys's suggestions
+    (search title, description, page title, section headings and an optional clinical review
+    note) and Varys's own copy of the page's current title, description and headings, from
+    its last read of the page; they are shown in a panel on the page and not stored by the
+    extension. A suggestion is put into the form only when the user presses Use, or Insert
+    at cursor for a heading. Use can be undone with Undo; a heading inserted into the body
+    is reversed with the editor's own undo, as the panel has no Undo for it. The extension
+    never saves or publishes.
 
 Then certify all three:
 

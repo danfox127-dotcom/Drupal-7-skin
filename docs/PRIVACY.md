@@ -270,22 +270,29 @@ tell which sites Varys tracks.
 
 ### What comes back: the suggestions panel
 
-Varys answers a suggestions request with suggestions and nothing else: a search title, a
-search description, a page title and section headings, an optional clinical review note, and
-when Varys made them. The panel shows them beside what the form holds now. The extension
-does not store the answer: it is held in the page only while the panel is open.
+Varys answers a suggestions request with two things and nothing else: its suggestions for
+the page (a search title, a search description, a page title and section headings, an
+optional clinical review note, and when Varys made them), and its own copy of the page's
+current title, search title, search description and headings, from Varys's last read of the
+page. The panel shows the suggestions beside what the form holds now, and shows the headings
+from Varys's copy as the headings on the page now. The extension does not store the answer:
+it is held in the page only while the panel is open.
 
-- **It fills a field only when you press Use**, and only the page title, search title or
-  search description (or Summary, when the page's description follows it). It never
+- **It fills a form field only when you press Use**, and only the page title, search title
+  or search description (or Summary, when the page's description follows it). It never
   presses Save or Publish: you press Save yourself, using Drupal's own button. **Undo** puts
   the old text back, for as long as the field still holds the fill. Using a suggested title
-  leaves the page's web address as it is, by unticking Drupal's "Generate automatic URL
-  alias" when that is needed; Undo puts the tick back unless you have typed a different
-  address since.
+  also touches the page's web address, so that it stays as it is: if Drupal's "Generate
+  automatic URL alias" is ticked, it unticks it; it turns the address box on if it was off;
+  and, if the box was empty, it puts the page's current web address into it. Undo puts
+  those back unless you have typed a different address since. If the extension cannot tell
+  the page's current address, it will not change the title.
 - **Headings** can be copied to your clipboard, or put into the body as a heading at the
   editor's cursor when you press **Insert at cursor**. That is the only thing the panel
   writes into the body: it puts that heading's text into the body's editor in your browser,
-  and reads nothing from the editor but whether it has a cursor.
+  and reads nothing from the editor but whether it has a cursor. The panel has no Undo for
+  it; the editor's own undo reverses it. Insert at cursor is reported with the next save as
+  a filled field ("headings"); Copy is not reported.
 
 ### What the extension keeps on your computer while you are connected
 

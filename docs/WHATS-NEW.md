@@ -249,14 +249,18 @@ right now. Click its title bar to fold it away.
   publishes, so you still press Save. **Undo** puts the old text back, as long as you have
   not edited the field since.
 - **Using a suggested title keeps the page's web address.** If the address would have
-  followed the title, the extension unticks *Generate automatic URL alias* for you; Undo puts
-  that back. If it cannot tell what the current address is, it will not change the title.
+  followed the title, the extension unticks *Generate automatic URL alias* for you, turns the
+  address box on if it was off, and, if the box was empty, puts the page's current address
+  into it. Undo puts those back, unless you have typed a different address since. If it
+  cannot tell what the current address is, it will not change the title.
 - **A suggested description** goes into Summary when the page's search description follows
-  its Summary, and into the search description field when that field has its own text. The
-  panel says which.
+  its Summary, and otherwise into the search description field. The panel says which.
 - **Headings** are suggestions to read. **Copy** copies one to your clipboard; **Insert at
   cursor** puts it into the body as a heading where your cursor is. Click in the body first:
-  with no cursor there, it tells you and inserts nothing.
+  with no cursor there, it tells you and inserts nothing. The panel has no Undo for an
+  inserted heading; use the editor's own undo.
+- The panel also shows the headings the page has now, from Varys's own last read of it, so
+  you can compare.
 - **When you save, Varys is told which fields you filled from its suggestions** (title,
   search title, description, headings; not one you put back with Undo), and shows "Filled from
   Varys: …" beside the change, so you can later see whether a suggestion that went live
@@ -315,7 +319,9 @@ Worth knowing, so they don't look like faults:
 - **It never saves for you.** Every write goes into Drupal's own form fields, and Drupal's
   own Save button submits them.
 - **It never fills a Varys suggestion on its own.** A suggestion goes into the form only when
-  you press **Use** (or **Insert at cursor**, for a heading), and Undo takes a fill back.
+  you press **Use** (or **Insert at cursor**, for a heading). **Undo** takes a Use back; a
+  heading put in with Insert at cursor is reversed with the editor's own undo, since the
+  panel has no Undo for it.
 - **It does not send anything to Varys until you connect it**, and even then never the full
   text of a page.
 - **It doesn't upload files.** Image fields use Drupal's own picker, moved into the panel.
