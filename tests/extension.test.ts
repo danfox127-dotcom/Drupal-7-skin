@@ -3665,3 +3665,213 @@ test.describe('Remove span tags', () => {
     await expect(page.locator('[data-d7-span-cleanup-button]')).toHaveCount(0);
   });
 });
+
+test.describe('Connecting to Varys is optional, and nothing is sent until you do', () => {
+  const VARYS_APP = 'https://varys-wine.vercel.app';
+  const VARYS_API = 'https://varys.fly.dev';
+  const KEY = 'vxk_' + 'a'.repeat(43);
+  const EMAIL = 'x@cumc.columbia.edu';
+  const OFF_COPY = 'Logs your search edits in Varys automatically. Off until you connect.';
+
+  /** A page for the Varys app, served locally: tests must never reach the network. */
+  const serveVarysApp = (context: BrowserContext) =>
+    context.route(`${VARYS_APP}/**`, route => route.fulfill({
+      status: 200, contentType: 'text/html', body: '<html><body>stub Varys</body></html>',
+    }));
+
+  /** What the Varys connect page does: message the extension by id. */
+  const handOff = (page: Page, extensionId: string, message: unknown) =>
+    page.evaluate(
+      ([id, msg]) => new Promise<unknown>(resolve =>
+        chrome.runtime.sendMessage(id as string, msg, response =>
+          resolve(response ?? { noAnswer: chrome.runtime.lastError?.message }))),
+      [extensionId, message] as const,
+    );
+
+  /** Reads the stored record the way the worker would, from an extension page. */
+  const storedConnection = async (context: BrowserContext, extensionId: string) => {
+    const page = await context.newPage();
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    const value = await page.evaluate(
+      () => new Promise<unknown>(resolve =>
+        chrome.storage.local.get({ varysConnection: null }, r => resolve(r.varysConnection))));
+    await page.close();
+    return value;
+  };
+
+  const connected = { key: KEY, email: EMAIL, connectedAt: '2026-10-21T12:00:00.000Z' };
+
+  test('the popup says it is off until you connect, and nothing goes to Varys', async ({ page, context, extensionId }) => {
+    const toVarys: string[] = [];
+    context.on('request', r => {
+      if (r.url().startsWith(VARYS_APP) || r.url().startsWith(VARYS_API)) toVarys.push(r.url());
+    });
+
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await expect(page.getByText(OFF_COPY)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Connect to Varys' })).toBeEnabled();
+    await expect(page.getByRole('button', { name: 'Disconnect' })).toHaveCount(0);
+
+    // Opening an admin page too, which is where the extension does its work.
+    await page.goto(`${HOST}/node/add/page`);
+    await expect(page.locator('#edit-title')).toBeVisible();
+
+    expect(await storedConnection(context, extensionId)).toBeNull();
+    expect(toVarys).toEqual([]);
+  });
+
+  test('Varys is not one of the feature toggles', async ({ page, extensionId }) => {
+    // A toggle is a boolean in Settings. This is a credential and a permission.
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await expect(page.getByText(OFF_COPY)).toBeVisible();
+    const toggles = await page.evaluate(
+      () => new Promise<Record<string, unknown>>(resolve => chrome.storage.local.get(null, resolve)));
+    expect(Object.keys(toggles).filter(k => /varys/i.test(k))).toEqual([]);
+  });
+
+  test('the Varys app can hand the extension a key, and the popup then shows who is connected', async ({ page, context, extensionId }) => {
+    await serveVarysApp(context);
+    await page.goto(`${VARYS_APP}/connect-extension?ext=${extensionId}`);
+
+    expect(await handOff(page, extensionId, { type: 'varysConnect', key: KEY, email: EMAIL }))
+      .toEqual({ ok: true });
+
+    const stored = await storedConnection(context, extensionId) as Record<string, unknown>;
+    expect(stored).toMatchObject({ key: KEY, email: EMAIL });
+    expect(Number.isNaN(Date.parse(stored.connectedAt as string))).toBe(false);
+
+    const popup = await context.newPage();
+    await popup.goto(`chrome-extension://${extensionId}/index.html`);
+    await expect(popup.getByText(`Connected to Varys as ${EMAIL}`)).toBeVisible();
+    await expect(popup.getByRole('button', { name: 'Disconnect' })).toBeVisible();
+    await expect(popup.getByText(OFF_COPY)).toHaveCount(0);
+    // The popup is told who, never the key: nothing on it can show or leak what it lacks.
+    expect(await popup.content()).not.toContain('vxk_');
+  });
+
+  test('a malformed hand-off is refused, says why, and stores nothing', async ({ page, context, extensionId }) => {
+    await serveVarysApp(context);
+    await page.goto(`${VARYS_APP}/connect-extension?ext=${extensionId}`);
+
+    expect(await handOff(page, extensionId, { type: 'varysConnect', key: 'abc', email: EMAIL }))
+      .toEqual({ ok: false, error: 'key' });
+    expect(await handOff(page, extensionId, { type: 'somethingElse', key: KEY, email: EMAIL }))
+      .toEqual({ ok: false, error: 'type' });
+    expect(await storedConnection(context, extensionId)).toBeNull();
+  });
+
+  test('a page that is not the Varys app cannot reach the extension at all', async ({ page, context, extensionId }) => {
+    /**
+     * The manifest's externally_connectable is the first lock: Chrome does not even give
+     * a page that is not listed a chrome.runtime to call. The worker's own origin check is
+     * the second, covered in tests/varys-connection.spec.ts.
+     */
+    await context.route('https://evil.example/**', route => route.fulfill({
+      status: 200, contentType: 'text/html', body: '<html><body>not Varys</body></html>',
+    }));
+    await page.goto('https://evil.example/connect-extension');
+
+    const reachable = await page.evaluate(
+      () => typeof (window as unknown as { chrome?: { runtime?: { sendMessage?: unknown } } })
+        .chrome?.runtime?.sendMessage);
+    expect(reachable).toBe('undefined');
+  });
+
+  test('Connect asks for access to the Varys API and then opens the connect page', async ({ page, extensionId }) => {
+    /**
+     * Chrome's permission prompt is native UI that a test cannot answer, so the two
+     * extension calls are recorded and answered here. What is asserted is what the click
+     * asks for: the whole Varys API origin, and the connect page for THIS extension.
+     */
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await expect(page.getByText(OFF_COPY)).toBeVisible();
+    await page.evaluate(() => {
+      const w = window as unknown as { __asked: unknown[]; __opened: unknown[] };
+      w.__asked = []; w.__opened = [];
+      (chrome.permissions as { request: unknown }).request =
+        (p: unknown) => { w.__asked.push(p); return Promise.resolve(true); };
+      (chrome.tabs as { create: unknown }).create =
+        (o: unknown) => { w.__opened.push(o); return Promise.resolve({}); };
+    });
+
+    await page.getByRole('button', { name: 'Connect to Varys' }).click();
+
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __opened: unknown[] }).__opened))
+      .toEqual([{ url: `${VARYS_APP}/connect-extension?ext=${extensionId}` }]);
+    expect(await page.evaluate(() => (window as unknown as { __asked: unknown[] }).__asked))
+      .toEqual([{ origins: [`${VARYS_API}/*`] }]);
+  });
+
+  test('declining the access opens nothing and says so', async ({ page, extensionId }) => {
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await expect(page.getByText(OFF_COPY)).toBeVisible();
+    await page.evaluate(() => {
+      const w = window as unknown as { __opened: unknown[] };
+      w.__opened = [];
+      (chrome.permissions as { request: unknown }).request = () => Promise.resolve(false);
+      (chrome.tabs as { create: unknown }).create =
+        (o: unknown) => { w.__opened.push(o); return Promise.resolve({}); };
+    });
+
+    await page.getByRole('button', { name: 'Connect to Varys' }).click();
+
+    await expect(page.locator('[data-varys-note]')).toContainText('declined');
+    expect(await page.evaluate(() => (window as unknown as { __opened: unknown[] }).__opened)).toEqual([]);
+    await expect(page.getByRole('button', { name: 'Connect to Varys' })).toBeEnabled();
+  });
+
+  test('an expired connection offers Reconnect, not "Connected"', async ({ page, settings, extensionId }) => {
+    await settings({ varysConnection: { ...connected, expired: true } });
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+
+    await expect(page.getByText('Your Varys connection has expired.')).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Reconnect' })).toBeVisible();
+    await expect(page.getByText(/Connected to Varys as/)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Connect to Varys' })).toHaveCount(0);
+  });
+
+  test('a damaged stored record reads as not connected', async ({ page, settings, extensionId }) => {
+    await settings({ varysConnection: { key: 'abc', email: EMAIL, connectedAt: 'then' } });
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+
+    await expect(page.getByText(OFF_COPY)).toBeVisible();
+    await expect(page.getByText(/Connected to Varys as/)).toHaveCount(0);
+  });
+
+  test('Disconnect cancels the key at Varys, forgets it, and is back to off', async ({ page, context, settings, extensionId }) => {
+    const seen: { method: string; authorization: string | undefined; url: string }[] = [];
+    await context.route(`${VARYS_API}/**`, route => {
+      const request = route.request();
+      seen.push({ method: request.method(), authorization: request.headers()['authorization'], url: request.url() });
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{"ok":true}' });
+    });
+    await settings({ varysConnection: connected });
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await expect(page.getByText(`Connected to Varys as ${EMAIL}`)).toBeVisible();
+
+    await page.getByRole('button', { name: 'Disconnect' }).click();
+
+    await expect(page.getByText(OFF_COPY)).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Connect to Varys' })).toBeVisible();
+    await expect(page.locator('[data-varys-note]')).toHaveCount(0);
+    expect(await storedConnection(context, extensionId)).toBeNull();
+    expect(seen).toEqual([{
+      method: 'DELETE',
+      authorization: `Bearer ${KEY}`,
+      url: `${VARYS_API}/api/extension/connection`,
+    }]);
+  });
+
+  test('Disconnect still works when Varys cannot be reached, and says the key is still live', async ({ page, context, settings, extensionId }) => {
+    await context.route(`${VARYS_API}/**`, route => route.abort('failed'));
+    await settings({ varysConnection: connected });
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await expect(page.getByText(`Connected to Varys as ${EMAIL}`)).toBeVisible();
+
+    await page.getByRole('button', { name: 'Disconnect' }).click();
+
+    await expect(page.getByText(OFF_COPY)).toBeVisible();
+    await expect(page.locator('[data-varys-note]')).toContainText('could not be reached');
+    expect(await storedConnection(context, extensionId)).toBeNull();
+  });
+});

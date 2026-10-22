@@ -117,6 +117,17 @@ unless you choose to follow it, and following it is an ordinary browser navigati
 Copies installed from the store do not show it, and do not check for updates at all —
 Chrome keeps them current.
 
+## If you connect it to Varys
+
+<!-- STUB. The full text, covering exactly what is sent once connected, is written
+     before the release that ships the feature. -->
+
+The extension can optionally be connected to Varys, the content-intelligence service for
+Columbia's websites, at `https://varys.fly.dev` (its server) and
+`https://varys-wine.vercel.app` (the web app where you sign in to connect). This feature
+is off until you connect: nothing is sent to either address unless you choose **Connect to
+Varys** in the popup.
+
 ## Clipboard
 
 The "copy this node's public HTML" feature writes to your clipboard when you click it.

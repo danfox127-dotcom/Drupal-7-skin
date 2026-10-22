@@ -171,6 +171,30 @@ test.describe('Chrome Web Store readiness', () => {
     expect(manifest.host_permissions).not.toContain('*://*/*');
   });
 
+  test('lets only the Varys app message the extension, and never localhost', () => {
+    /**
+     * externally_connectable is what lets a web page call chrome.runtime.sendMessage at
+     * this extension, for the optional Connect to Varys hand-off. In a production build
+     * it must name the one Varys app origin and nothing else: no ids, so no other
+     * extension can connect, and no development origin, which would let anything served
+     * from a developer's machine hand the extension a key.
+     *
+     * The worker's own list is checked too, since the two are meant to be one list and a
+     * build that let a page through Chrome only to refuse it in the worker (or the other
+     * way round) would be a bug no test of either half would show.
+     */
+    const manifest = readJson(path.join(DIST, 'manifest.json'));
+    expect(manifest.externally_connectable).toEqual({ matches: ['https://varys-wine.vercel.app/*'] });
+    expect(JSON.stringify(manifest)).not.toMatch(/localhost/);
+
+    const assets = path.join(DIST, 'assets');
+    for (const file of fs.readdirSync(assets).filter(f => f.endsWith('.js'))) {
+      const code = fs.readFileSync(path.join(assets, file), 'utf8');
+      expect(code, `${file} names a development Varys address`)
+        .not.toMatch(/localhost:(3000|8000)/);
+    }
+  });
+
   test('bundles all its code, since the store rejects remotely hosted code', () => {
     /**
      * A <script src> pointing off-origin is an automatic rejection under the store's
@@ -314,6 +338,17 @@ test.describe('the privacy policy', () => {
     expect(policy()).toMatch(/does not use `chrome\.storage\.sync`/);
     expect(files, 'uses chrome.storage.sync, but the privacy policy promises local-only')
       .toEqual([]);
+  });
+
+  test('says the Varys connection is optional and off until someone connects', () => {
+    /**
+     * The extension can send a person's edits to Varys, but only after they connect it.
+     * The policy has to say both halves, since "collects nothing" is no longer the whole
+     * story, and "off until you connect" is what keeps it honest.
+     */
+    const text = policy();
+    expect(text).toMatch(/## If you connect it to Varys/);
+    expect(text).toMatch(/off until you connect/i);
   });
 
   test('discloses that drafts hold the content being edited', () => {

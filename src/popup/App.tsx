@@ -3,6 +3,7 @@ import { ArrowDownToLine, ClipboardCopy, Command, Copy, ExternalLink, FilePlus, 
 import { useSettings, Settings as SettingsShape } from './useSettings';
 import { useImportQueue, displayUrl } from './useImportQueue';
 import { useCopiedPages } from './useCopiedPages';
+import { useVarys } from './useVarys';
 import { canCopyFrom, canPasteInto, describeTarget } from '../lib/clone/whereAmI';
 import { formatAge } from '../lib/autosave';
 import { requestOriginAccess, setPendingImport, importTarget } from '../lib/import/pending';
@@ -154,6 +155,7 @@ export function App() {
   const { settings, update, loaded } = useSettings();
   const { queue, add, remove, loaded: queueLoaded } = useImportQueue();
   const copied = useCopiedPages();
+  const varys = useVarys();
   const [cloneBusy, setCloneBusy] = useState(false);
   const [cloneNote, setCloneNote] = useState<string | null>(null);
 
@@ -640,6 +642,80 @@ export function App() {
             </li>
           ))}
         </ul>
+      </div>
+
+      {/*
+        Varys — optional, and off until someone connects.
+
+        Not a feature toggle, and deliberately not in FEATURES: a toggle is a boolean in
+        Settings, where this is a credential with its own storage key and a host permission
+        that is requested here, in a click, and given back on Disconnect. Nothing is sent
+        to Varys unless this section says Connected.
+      */}
+      <div data-varys-connection className="pb-3">
+        <p className="px-4 pt-3 pb-1 text-eyebrow-wide font-semibold uppercase text-ink-secondary">
+          Varys
+        </p>
+        {varys.status === null && (
+          <>
+            <p className="px-4 pb-2 text-help text-ink-secondary">
+              Logs your search edits in Varys automatically. Off until you connect.
+            </p>
+            <div className="px-4">
+              <button
+                type="button"
+                onClick={() => void varys.connect()}
+                disabled={varys.busy}
+                className="px-3 py-1.5 bg-cu-blue hover:bg-cu-navy text-white rounded text-control font-semibold transition-colors duration-200 ease-studio disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Connect to Varys
+              </button>
+            </div>
+          </>
+        )}
+        {varys.status && !varys.status.expired && (
+          <div className="px-4 flex items-center gap-3">
+            <p className="flex-1 min-w-0 text-control text-ink break-words">
+              Connected to Varys as {varys.status.email}
+            </p>
+            <button
+              type="button"
+              onClick={() => void varys.disconnect()}
+              disabled={varys.busy}
+              className="shrink-0 px-3 py-1.5 bg-white border border-rule-control rounded text-control font-semibold text-ink hover:bg-legacy-200 transition-colors duration-200 ease-studio disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              Disconnect
+            </button>
+          </div>
+        )}
+        {varys.status?.expired && (
+          <>
+            <p className="px-4 pb-2 text-help text-burnt">
+              Your Varys connection has expired.
+            </p>
+            <div className="px-4 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => void varys.connect()}
+                disabled={varys.busy}
+                className="px-3 py-1.5 bg-cu-blue hover:bg-cu-navy text-white rounded text-control font-semibold transition-colors duration-200 ease-studio disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Reconnect
+              </button>
+              <button
+                type="button"
+                onClick={() => void varys.disconnect()}
+                disabled={varys.busy}
+                className="px-3 py-1.5 bg-white border border-rule-control rounded text-control font-semibold text-ink hover:bg-legacy-200 transition-colors duration-200 ease-studio disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Disconnect
+              </button>
+            </div>
+          </>
+        )}
+        {varys.note && (
+          <p data-varys-note className="px-4 pt-1.5 text-help text-ink-secondary">{varys.note}</p>
+        )}
       </div>
 
       {/* Feature Toggles */}

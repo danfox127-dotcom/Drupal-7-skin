@@ -17,6 +17,11 @@
 import {
   LATEST_URL, UPDATE_STATE_KEY, evaluateUpdate, shouldCheckForUpdates,
 } from '../lib/updateCheck';
+import { VARYS_API, VARYS_APP_ORIGINS } from '../lib/varys/config';
+import {
+  acceptConnectMessage, getConnection, setConnection, toStatus,
+  type VarysDisconnectRequest, type VarysDisconnectResponse, type VarysStatusRequest,
+} from '../lib/varys/connection';
 
 /** Popup asking for a fresh check, so "Check again" reuses the worker's one fetch path. */
 export interface CheckForUpdateRequest {
@@ -345,9 +350,67 @@ async function richEditorLifecycle(
   }
 }
 
+/**
+ * Forgets the Varys connection: tells Varys to revoke the key, drops it here, and gives
+ * back the host permission the connect step asked for.
+ *
+ * The revoke is best effort and bounded. A person who cannot reach Varys still has to be
+ * able to disconnect, so a failure never stops the local steps; it is reported instead,
+ * because the key is then still live on the server and they should know. A 401 counts as
+ * revoked: the key was already dead.
+ */
+async function varysDisconnect(): Promise<VarysDisconnectResponse> {
+  const connection = await getConnection();
+
+  let revoked = connection === null;
+  if (connection) {
+    try {
+      const response = await fetch(`${VARYS_API}/api/extension/connection`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${connection.key}` },
+        credentials: 'omit',
+        signal: AbortSignal.timeout(10_000),
+      });
+      revoked = response.ok || response.status === 401;
+    } catch {
+      // Offline, blocked or timed out. Falls through to forgetting the key locally.
+    }
+  }
+
+  await setConnection(null);
+  try {
+    await chrome.permissions.remove({ origins: [VARYS_API + '/*'] });
+  } catch (err) {
+    console.warn('[D7 Studio] Could not drop the Varys host permission', err);
+  }
+  return { ok: true, revoked };
+}
+
+/**
+ * The Varys connect page hands over the key here.
+ *
+ * Only pages the manifest's externally_connectable lists can reach this at all, and the
+ * origin is checked again in acceptConnectMessage. The answer says why a hand-off was
+ * refused so the connect page can show it; it never echoes the key back.
+ */
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  const verdict = acceptConnectMessage(message, sender.origin, VARYS_APP_ORIGINS);
+  if (!verdict.ok) {
+    sendResponse({ ok: false, error: verdict.error });
+    return false;
+  }
+
+  void setConnection({ key: verdict.key, email: verdict.email, connectedAt: new Date().toISOString() })
+    .then(
+      () => sendResponse({ ok: true }),
+      () => sendResponse({ ok: false, error: 'storage' }),
+    );
+  return true;
+});
+
 chrome.runtime.onMessage.addListener((
   message: FetchSourceRequest | SyncRichEditorRequest | RichEditorLifecycleRequest
-    | CheckForUpdateRequest | ReadRichEditorRequest,
+    | CheckForUpdateRequest | ReadRichEditorRequest | VarysStatusRequest | VarysDisconnectRequest,
   sender,
   sendResponse
 ) => {
@@ -382,6 +445,16 @@ chrome.runtime.onMessage.addListener((
     void checkForUpdate().then(() =>
       chrome.storage.local.get({ [UPDATE_STATE_KEY]: null }, r =>
         sendResponse(r[UPDATE_STATE_KEY])));
+    return true;
+  }
+
+  if (message?.type === 'varysStatus') {
+    void getConnection().then(c => sendResponse(toStatus(c)));
+    return true;
+  }
+
+  if (message?.type === 'varysDisconnect') {
+    void varysDisconnect().then(sendResponse);
     return true;
   }
 
