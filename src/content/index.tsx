@@ -31,6 +31,7 @@ import { refreshCopies, registerPasteHandler } from '../lib/clone/pasteAction';
 import { enhanceListForm, isFixedConfigParagraphField } from './listEnhancements';
 import { anchorAutocompletePopups } from './autocompletePopups';
 import { mountSpanCleanup } from './spanCleanup';
+import { mountVarysCapture, varysIsConnected } from './varysCapture';
 import { DoctorBatchAdder } from '../components/editor/DoctorBatchAdder';
 import { copyPage } from '../lib/clone/copyPage';
 import { SETTING_DEFAULTS, Settings } from '../popup/useSettings';
@@ -400,6 +401,26 @@ async function waitForRichEditors(): Promise<string> {
 }
 
 /**
+ * Records this node form's before and after for Varys, if this person has connected.
+ *
+ * Not awaited by init, and not tied to the Two-Pane Editor: it must work with that editor on
+ * or off, and it must not hold up the features that mount after the wait below. The worker is
+ * asked whether this browser is connected (never the stored key, which only the worker reads);
+ * for anyone who is not, nothing here runs and nothing is sent. The capture is handed the
+ * editors' own readiness, so the body is read from CKEditor once it has finished building.
+ */
+async function startVarysCapture(): Promise<void> {
+  try {
+    if (!(await varysIsConnected())) return;
+    const form = findNodeForm();
+    if (form) mountVarysCapture(form, waitForRichEditors());
+  } catch (err) {
+    // Recording is an extra: a fault in it must never reach the person editing.
+    console.warn('[D7 Studio] Could not start recording this save for Varys', err);
+  }
+}
+
+/**
  * Mounts the whole-menu search above Drupal's table, fetching its index once.
  *
  * The index is cached in extension storage per host and menu, so moving between pages does
@@ -523,6 +544,9 @@ const init = async () => {
   // Phase 5 editor consumes the schema; until then this exists so the rules can be
   // validated against real forms, which is the one thing fixtures cannot prove.
   if (isNodeFormPath()) {
+    // Independent of the editor and the schema below, and of the Two-Pane Editor setting.
+    void startVarysCapture();
+
     /**
      * Before the form is read, not after.
      *

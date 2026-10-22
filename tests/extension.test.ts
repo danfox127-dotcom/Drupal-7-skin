@@ -3925,3 +3925,110 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
     expect(await storedConnection(context, extensionId)).toBeNull();
   });
 });
+
+test.describe('Recording a node save for Varys', () => {
+  const KEY = 'vxk_' + 'a'.repeat(43);
+  const connected = { key: KEY, email: 'x@cumc.columbia.edu', connectedAt: '2026-10-21T12:00:00.000Z' };
+
+  /**
+   * Listens in the service worker for every message a content script sends, so a test can
+   * read back what the page handed over. The worker's own handlers are not involved.
+   */
+  const listenInWorker = async (context: BrowserContext) => {
+    const [worker] = context.serviceWorkers();
+    await worker.evaluate(() => {
+      const w = self as unknown as { __seen: unknown[] };
+      w.__seen = [];
+      chrome.runtime.onMessage.addListener(message => {
+        if (message?.type) w.__seen.push(message);
+        return false;
+      });
+    });
+    return () => worker.evaluate(() => (self as unknown as { __seen: any[] }).__seen);
+  };
+
+  const submitsSeen = async (seen: () => Promise<any[]>) =>
+    (await seen()).filter(m => m.type === 'varysSubmit');
+
+  /** Fills the title, presses a Save button the way a click does, and waits for the POST. */
+  const save = async (page: Page, buttonSelector: string, fill: Record<string, string> = {}) => {
+    await page.evaluate(values => {
+      for (const [name, value] of Object.entries(values)) {
+        (document.querySelector(`[name="${name}"]`) as HTMLInputElement).value = value;
+      }
+    }, fill);
+    await Promise.all([
+      page.waitForRequest(r => r.method() === 'POST'),
+      page.evaluate(selector => (document.querySelector(selector) as HTMLElement).click(), buttonSelector),
+    ]);
+  };
+
+  for (const nodeEditor of [false, true]) {
+    test(`a connected browser sends an edit form's Save to the worker, with the Two-Pane Editor ${nodeEditor ? 'on' : 'off'}`, async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor });
+      const seen = await listenInWorker(context);
+
+      await page.goto(`${HOST}/node/23110/edit`);
+      // The form says when a capture is listening, so the click below cannot beat it.
+      await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+
+      await save(page, '#edit-submit-publish', { 'title_field[und][0][value]': 'A better title' });
+
+      await expect.poll(async () => (await submitsSeen(seen)).length).toBe(1);
+      const [message] = await submitsSeen(seen);
+      expect(message).toMatchObject({
+        formPath: '/node/23110/edit',
+        pageUrl: `${HOST}/node/23110`,
+        nodeId: '23110',
+        contentType: 'list',
+        button: 'publish',
+        isNew: false,
+      });
+      expect(message.before.title).toBe('');
+      expect(message.after.title).toBe('A better title');
+      expect(typeof message.bodyChangeRatio).toBe('number');
+    });
+  }
+
+  test('a new page is sent with a before of null', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected });
+    const seen = await listenInWorker(context);
+
+    await page.goto(`${HOST}/node/add/news`);
+    await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+    await save(page, '#edit-submit', {
+      'title_field[und][0][value]': 'A news story',
+      // This fixture marks the summary required, and Chrome will not submit past it.
+      'field_summary[und][0][value]': 'A summary.',
+      'body[und][0][value]': '<p>Columbia opens a new asthma program for adults this fall.</p>',
+    });
+
+    await expect.poll(async () => (await submitsSeen(seen)).length).toBe(1);
+    const [message] = await submitsSeen(seen);
+    expect('before' in message).toBe(true);
+    expect(message.before).toBeNull();
+    expect(message).toMatchObject({ isNew: true, nodeId: null, pageUrl: null, contentType: 'news', button: 'save' });
+    expect(message.after.new_sentences).toEqual(['Columbia opens a new asthma program for adults this fall.']);
+  });
+
+  const staysSilent = (label: string, stored: (() => Record<string, unknown>) | null) =>
+    test(`${label}: nothing is recorded and nothing is sent`, async ({ page, context, settings }) => {
+      if (stored) await settings({ varysConnection: stored() });
+      const seen = await listenInWorker(context);
+
+      await page.goto(`${HOST}/node/23110/edit`);
+      // The page asked the worker whether it is connected, and was told no: that is the
+      // check having run, which a page that never asked could not claim.
+      await expect.poll(async () => (await seen()).some(m => m.type === 'varysStatus')).toBe(true);
+
+      await save(page, '#edit-submit-publish', { 'title_field[und][0][value]': 'A better title' });
+      await page.waitForTimeout(500);
+
+      expect(await submitsSeen(seen)).toEqual([]);
+      expect((await seen()).filter(m => m.type === 'readRichEditor')).toEqual([]);
+      await expect(page.locator('[data-d7-varys-capture]')).toHaveCount(0);
+    });
+
+  staysSilent('a browser that never connected', null);
+  staysSilent('a connection Varys has refused', () => ({ ...connected, expired: true }));
+});

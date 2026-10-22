@@ -326,7 +326,7 @@ export function submitForm(form: HTMLFormElement, opts: { publish?: boolean } = 
 }
 
 /** An input's value or a button's text, whichever carries the label. */
-function submitLabel(el: HTMLElement): string {
+export function submitLabel(el: HTMLElement): string {
   return ((el as HTMLInputElement).value || el.textContent || '').trim();
 }
 
@@ -335,8 +335,11 @@ function submitLabel(el: HTMLElement): string {
  *
  * "Delete (all revisions)" is a submit input named `op` sitting in the same actions block
  * as the saves, so anything selecting by name or by position can reach it.
+ *
+ * Exported because the same list says which submits are not a save when one is watched
+ * rather than pressed (src/content/varysCapture.ts).
  */
-const NEVER_CLICK = /delete|remove|preview|view changes|cancel/i;
+export const NEVER_CLICK = /delete|remove|preview|view changes|cancel/i;
 
 /**
  * Picks the button that does what the caller asked.
