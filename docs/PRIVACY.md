@@ -47,8 +47,9 @@ when an extension adds something to a page through its scripting API.
 when any tab changes address, and it ignores those for every tab it is not following. It
 follows a tab in two cases, and in both it looks only at the host and path of the tab's
 address (and at whether the form's own address carries a `destination`, which says where
-Drupal will send you after saving). A tab with a node form open is followed until it leaves
-that form, closes, or saves; nothing is sent for this, and it is how a Preview, or a save
+Drupal will send you after saving). A tab with a node form open is followed until it goes
+to another page of the same site, closes, or saves; a detour to another site or to the
+login page does not end it. Nothing is sent for this, and it is how a Preview, or a save
 Drupal rejected, can be compared with the page as it first opened. A tab you pressed Save
 in is followed until that save has finished loading, to learn whether it went through and
 where it landed; the address it landed on is the page address sent with the save, as listed

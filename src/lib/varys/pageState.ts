@@ -188,6 +188,21 @@ const MAX_NEW_SENTENCES = 3;
 const MAX_SENTENCE_CHARS = 200;
 const MIN_SENTENCE_WORDS = 6;
 
+/**
+ * Varys refuses a save past these (`routers/extension.py` PageState), and a refused save is
+ * dropped without a notice, so the extension trims to them rather than lose every save of
+ * a page. Nothing is lost by trimming: Varys compares headings within the crawler's own
+ * 500-character, 20-H2 and 30-H3 reach. Counted in characters, as Varys counts them.
+ */
+export const MAX_HEADINGS = 200;
+export const MAX_HEADING_CHARS = 500;
+export const MAX_LINKS = 1000;
+export const MAX_LINK_CHARS = 2000;
+export const MAX_FIELD_CHARS = 2000;
+
+const clip = (s: string, max: number): string => Array.from(s).slice(0, max).join('');
+const clipOrNull = (s: string | null, max: number): string | null => (s === null ? null : clip(s, max));
+
 /** The body's sentences, in order. A block ends a sentence whether or not it has a full stop. */
 const sentencesOf = (blocks: string[]): string[] =>
   blocks.flatMap(block => block.split(/(?<=[.!?])\s+/)).map(s => s.trim()).filter(Boolean);
@@ -243,7 +258,9 @@ function internalLinks(root: ParentNode, host: string): string[] {
     }
     if (url.protocol !== 'https:' && url.protocol !== 'http:') continue;
     if (bareHost(url.host) !== here) continue;
+    if (Array.from(url.pathname).length > MAX_LINK_CHARS) continue;
     if (!paths.includes(url.pathname)) paths.push(url.pathname);
+    if (paths.length === MAX_LINKS) break;
   }
   return paths;
 }
@@ -265,17 +282,18 @@ export function pageStateFrom(
 
   const headings: PageState['headings'] = [];
   for (const el of Array.from(body.querySelectorAll('h2, h3'))) {
-    const text = collapse(blocksOf(el).join(' '));
+    if (headings.length === MAX_HEADINGS) break;
+    const text = clip(collapse(blocksOf(el).join(' ')), MAX_HEADING_CHARS).trimEnd();
     if (text !== '') headings.push({ level: el.tagName === 'H2' ? 2 : 3, text });
   }
 
   const alias = raw.pathauto ? null : (raw.alias ?? '').trim().replace(/^\/+/, '') || null;
 
   return {
-    title: raw.title,
-    meta_title: raw.metaTitle,
-    meta_description: raw.metaDescription,
-    alias,
+    title: clip(raw.title, MAX_FIELD_CHARS),
+    meta_title: clipOrNull(raw.metaTitle, MAX_FIELD_CHARS),
+    meta_description: clipOrNull(raw.metaDescription, MAX_FIELD_CHARS),
+    alias: clipOrNull(alias, MAX_FIELD_CHARS),
     headings,
     links: internalLinks(body, raw.host),
     body_words: wordsIn(blocks.join(' ')).length,

@@ -156,7 +156,8 @@ common cause of a slow review. These are accurate as of the current manifest.
     they are on, and opens admin pages from the popup's quick links and the command
     palette. Once the user has connected to Varys it also follows a tab in two cases,
     comparing only the host and path of its address: a tab with a node form open, until it
-    leaves that form, closes or saves (nothing is sent for this; it lets a Preview or a
+    goes to another page of the same site, closes or saves (a detour to another site or to
+    the login page does not end it; nothing is sent for this; it lets a Preview or a
     rejected save be compared with the form as it first opened), and the tab a save was made
     in, until that save has finished loading, to learn whether it went through and the
     public address of the page it landed on. It ignores every other tab's address, and
@@ -251,7 +252,8 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
 - **Location:** No
 - **Web history:** No. The extension does not collect a browsing history. When connected,
   it sends the address of a page the user has just **saved** on a site Varys tracks, not
-  pages the user visited, and it reads the address of a tab only to follow that one save.
+  pages the user visited. It reads a tab's address only to follow an open node form or a
+  save, as described under `tabs`, and sends nothing from that.
 - **User activity:** **Yes**, only once the user connects to Varys, and only this: that a
   save was made on a Drupal node form, which button was pressed (Publish, Save draft or
   Save), and when Varys received it. No clicks, keystrokes, mouse position or scrolling are

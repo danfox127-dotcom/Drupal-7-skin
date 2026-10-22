@@ -193,6 +193,26 @@ test.describe('pageStateFrom', () => {
     expect(state.links).toEqual(['/doctors']);
   });
 
+  test('trims to what Varys accepts rather than lose the save: 500-character headings, 200 of them, 1,000 links', async ({ page }) => {
+    const longHeading = 'Wheezing '.repeat(100);                       // 900 characters
+    const headings = Array.from({ length: 205 }, (_, i) => `<h3>Section ${i}</h3>`).join('');
+    const links = Array.from({ length: 1005 }, (_, i) => `<a href="/p/${i}">x</a>`).join('');
+    const longPath = '/' + 'a'.repeat(2100);
+    const state = await stateFrom(page, raw({
+      title: 'T'.repeat(2100),
+      metaDescription: 'D'.repeat(2100),
+      bodyHtml: `<h2>${longHeading}</h2>${headings}<a href="${longPath}">long</a>${links}`,
+    }), null);
+    expect(Array.from(state.headings[0].text).length).toBeLessThanOrEqual(500);
+    expect(state.headings[0].text.startsWith('Wheezing Wheezing')).toBe(true);
+    expect(state.headings).toHaveLength(200);
+    expect(state.links).toHaveLength(1000);
+    expect(state.links).not.toContain(longPath);                         // an over-long path is skipped, not cut
+    expect(state.links[0]).toBe('/p/0');
+    expect(Array.from(state.title).length).toBe(2000);
+    expect(Array.from(state.meta_description).length).toBe(2000);
+  });
+
   test('h2 and h3 only, in document order, with inline markup and empty headings handled', async ({ page }) => {
     const state = await stateFrom(page, raw({
       bodyHtml: '<h1>Page</h1><h2>First  <em>one</em></h2><h4>Skip</h4><h3>Sub\n heading</h3>'
