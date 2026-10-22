@@ -32,7 +32,7 @@ import { showVarysNotice } from '../lib/varys/notice';
 import {
   ACTION_EXPIRED_COPY, ACTION_NOT_CONNECTED_COPY, ACTION_UNREACHABLE_COPY, EXPIRED_COPY,
   PENDING_NOTICE_KEY, PENDING_TIMEOUT_MS, QUEUE_KEY, SITES_TTL_MS, UNREACHABLE_COPY, UNTRACKED_COPY,
-  failureOf, isTrackedSite, mergeCarriedBefore, nextOpenedForm, noteLoading, noticeForResult,
+  failureOf, isTrackedSite, knownUntracked, mergeCarriedBefore, nextOpenedForm, noteLoading, noticeForResult,
   outcomeOfTimeout, outcomeWhenLoaded, pruneQueue, queueVerdict, toSaveRequest,
   type FormEvent, type NavigationOutcome, type OpenedForm, type PendingSubmit, type QueuedSave,
   type SaveRequest, type SitesCache, type StoredNotice, type VarysActionRequest, type VarysActionResponse,
@@ -739,7 +739,9 @@ function flushQueue(): Promise<void> {
  * - Not connected: nothing at all.
  * - Connected as someone other than `owner`, the person who pressed Save: nothing at all. It is
  *   their save, and it is never sent under another person's key.
- * - An expired key: queued, and the editor is told to reconnect.
+ * - An expired key: queued, and the editor is told to reconnect. Unless the site list Varys
+ *   last gave this person (read without asking Varys, which the dead key cannot) lacks the
+ *   page's site: then it is treated as below, since the flush would only drop it.
  * - A site Varys does not track: nothing is sent, and the editor is told so.
  * - Otherwise posted, after anything already queued. Varys's answer is the notice. A 401
  *   expires the key and queues the save; a 422 is this extension's bug and is only logged;
@@ -762,16 +764,12 @@ async function sendSave(request: SaveRequest, tabId: number | null, owner: strin
     connection = await getConnection();
     if (!ours(connection)) return;
   }
-  if (connection.expired) {
-    await enqueue(request, connection.email);
-    return show({ message: EXPIRED_COPY });
-  }
+  if (connection.expired) return queueUntilReconnected(request, connection, show);
 
   const sites = await trackedSites(connection);
   if (sites === 'expired') {
     await markExpired(connection);
-    await enqueue(request, connection.email);
-    return show({ message: EXPIRED_COPY });
+    return queueUntilReconnected(request, connection, show);
   }
   if (sites && !isTrackedSite(request.page_url, sites)) return show({ message: UNTRACKED_COPY });
 
@@ -793,6 +791,22 @@ async function sendSave(request: SaveRequest, tabId: number | null, owner: strin
       await enqueue(request, connection.email);
       return show({ message: UNREACHABLE_COPY });
   }
+}
+
+/**
+ * A save made under an expired key waits in the queue for the same person to reconnect, and
+ * the editor is told so. Not when the site list Varys last gave this person, at any age, says
+ * it does not track the site (`knownUntracked`): the flush would drop that save without a
+ * word after the editor had reconnected for it, so they are told now instead. No list: queued.
+ */
+async function queueUntilReconnected(
+  request: SaveRequest, connection: VarysConnection, show: (notice: VarysNotice) => Promise<void>,
+): Promise<void> {
+  if (knownUntracked(request.page_url, await sessionGet<SitesCache>(SITES_KEY), connection.email)) {
+    return show({ message: UNTRACKED_COPY });
+  }
+  await enqueue(request, connection.email);
+  return show({ message: EXPIRED_COPY });
 }
 
 /**

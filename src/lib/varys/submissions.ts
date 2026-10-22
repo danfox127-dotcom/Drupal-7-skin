@@ -311,6 +311,18 @@ export interface SitesCache {
 
 export const SITES_TTL_MS = 24 * 60 * 60 * 1000;
 
+/**
+ * With an expired key Varys cannot be asked which sites it tracks, so the list it last gave
+ * this person is the only answer, at any age (it is what the worker falls back to whenever
+ * Varys cannot be asked). True when that list exists and lacks the page's site: queued, the
+ * save would tell the editor to reconnect and then be dropped by the flush without a word.
+ * False when there is no list for this person, so the save is queued as before.
+ */
+export function knownUntracked(pageUrl: string, cache: SitesCache | undefined, email: string): boolean {
+  return cache !== undefined && cache.email === email && Array.isArray(cache.sites)
+    && !isTrackedSite(pageUrl, cache.sites);
+}
+
 // -------------------------------------------------------------------------------- the notice
 
 export interface VarysNoticeAction {

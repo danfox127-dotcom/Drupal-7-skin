@@ -4438,6 +4438,28 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     expect(calls).toEqual([]);
   });
 
+  test('an expired connection does not queue a save on a site the cached list says Varys does not track', async ({ page, context, settings }) => {
+    /**
+     * The key is dead, so Varys cannot be asked; the list it last gave this person can. Queued,
+     * this save would tell the editor to reconnect and then be dropped by the flush without a
+     * word. The list is two days old: an expired key never refreshes it, so any age counts.
+     */
+    await settings({ varysConnection: { ...connected, expired: true }, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await saveGoesThrough(context);
+    await worker(context).evaluate(email => chrome.storage.session.set({
+      varysSites: { email, sites: ['nursing.columbia.edu'], fetchedAt: Date.now() - 2 * 24 * 60 * 60 * 1000 },
+    }), EMAIL);
+
+    await openForm(page);
+    await saveAndPublish(page);
+
+    await expect(page.getByText(UNTRACKED)).toBeVisible();
+    await expect(page.getByText(EXPIRED)).toHaveCount(0);
+    expect(await stored(context, 'varysQueue')).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
   test('a save Varys refuses with a 401 after the site check is queued, and the key flagged', async ({ page, context, settings }) => {
     await settings({ varysConnection: connected, nodeEditor: false });
     const calls = await stubVarys(context, varysUp({ status: 401, body: { detail: 'This key has expired.' } }));

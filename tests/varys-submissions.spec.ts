@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import type { PageState } from '../src/lib/varys/pageState';
 import {
   EXPIRED_COPY, QUEUE_MAX_ENTRIES, UNREACHABLE_COPY, UNTRACKED_COPY,
-  failureOf, isTrackedSite, mergeCarriedBefore, nextOpenedForm, noteLoading, noticeForResult,
+  failureOf, isTrackedSite, knownUntracked, mergeCarriedBefore, nextOpenedForm, noteLoading, noticeForResult,
   outcomeOfNavigation, outcomeOfTimeout, outcomeWhenLoaded, pruneQueue, queueVerdict, storedNoticeFor,
   toSaveRequest,
   type OpenedForm, type PendingSubmit, type QueuedSave,
@@ -255,6 +255,24 @@ test.describe('what a failed request means', () => {
     expect(failureOf(401)).toBe('expired');
     expect(failureOf(422)).toBe('malformed');
     for (const status of [null, 400, 403, 404, 429, 500, 502, 503]) expect(failureOf(status), String(status)).toBe('retry');
+  });
+
+  test('with an expired key, the cached site list alone says a site is untracked', () => {
+    /**
+     * An expired key cannot ask Varys which sites it tracks. A save on a site it does not
+     * track used to be queued and the editor told to reconnect, and then the flush dropped it
+     * without a word. The list Varys last gave this person, at any age, is enough to say so
+     * now; with no list for this person the save is queued as before.
+     */
+    const email = 'a@cumc.columbia.edu';
+    const cache = { email, sites: ['nursing.columbia.edu'], fetchedAt: 1_000 };
+    expect(knownUntracked(`${HOST}/news/foo`, cache, email)).toBe(true);
+    expect(knownUntracked('https://www.nursing.columbia.edu/x', cache, email)).toBe(false);
+    // No list, or one fetched for someone else: not known, so queued.
+    expect(knownUntracked(`${HOST}/news/foo`, undefined, email)).toBe(false);
+    expect(knownUntracked(`${HOST}/news/foo`, { ...cache, email: 'b@cumc.columbia.edu' }, email)).toBe(false);
+    // An empty list is a list: Varys tracks nothing for this person.
+    expect(knownUntracked(`${HOST}/news/foo`, { ...cache, sites: [] }, email)).toBe(true);
   });
 
   test('a site is tracked by its bare host', () => {
