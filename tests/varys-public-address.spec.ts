@@ -1,5 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import * as esbuild from 'esbuild';
+import http from 'http';
+import type { AddressInfo } from 'net';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -100,4 +102,81 @@ test('a fetch that throws leaves /node/N', async ({ page }) => {
 test('an address that is already the page\'s alias is not fetched at all', async ({ page }) => {
   expect(await resolve(page, `${HOST}/faculty/our-list`, head(`<link rel="canonical" href="${HOST}/elsewhere">`)))
     .toEqual({ resolved: `${HOST}/faculty/our-list`, asked: [] });
+});
+
+// --------------------------------------------------------- the read itself, on real servers
+
+test.describe('fetchSitePage', () => {
+  /**
+   * Two real local servers, the edit form's site and another: Playwright's routing neither
+   * intercepts nor reliably reports the hop after a redirect, so only a server can say whether
+   * the browser went to it. The form's page is served from `site`, so its origin is the page's.
+   */
+  let site: http.Server;
+  let other: http.Server;
+  let siteUrl: string;
+  let otherUrl: string;
+  const otherHits: string[] = [];
+
+  const listen = async (server: http.Server) => {
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  };
+
+  test.beforeAll(async () => {
+    other = http.createServer((req, res) => {
+      otherHits.push(req.url ?? '');
+      res.writeHead(200, { 'content-type': 'text/html', 'access-control-allow-origin': '*' });
+      res.end(head('<link rel="canonical" href="/faculty/our-list">'));
+    });
+    // `localhost`, not 127.0.0.1: another origin on the same machine.
+    otherUrl = (await listen(other)).replace('127.0.0.1', 'localhost');
+    site = http.createServer((req, res) => {
+      const html = (body: string) => { res.writeHead(200, { 'content-type': 'text/html' }); res.end(body); };
+      switch (req.url) {
+        case '/node/1/edit': return html('<!doctype html><html><body>form</body></html>');
+        case '/node/1': res.writeHead(301, { location: '/faculty/our-list' }); return res.end();
+        case '/node/2': res.writeHead(302, { location: `${otherUrl}/faculty/our-list` }); return res.end();
+        case '/faculty/our-list': return html(head('<link rel="canonical" href="/faculty/our-list">'));
+        case '/feed': res.writeHead(200, { 'content-type': 'application/json' }); return res.end('{}');
+        default: res.writeHead(404, { 'content-type': 'text/html' }); return res.end('not found');
+      }
+    });
+    siteUrl = await listen(site);
+  });
+
+  test.afterAll(async () => {
+    for (const server of [site, other]) {
+      server.closeAllConnections();
+      await new Promise(resolve => server.close(resolve));
+    }
+  });
+
+  test.beforeEach(async ({ page }) => {
+    otherHits.length = 0;
+    await page.goto(`${siteUrl}/node/1/edit`);
+    await page.addScriptTag({ content: bundle });
+  });
+
+  const fetchPage = (page: Page, url: string) =>
+    page.evaluate(u => (window as any).Address.fetchSitePage(u) as Promise<string | null>, url);
+
+  test('a redirect to another site is never followed: nothing reaches it, and there is no page', async ({ page }) => {
+    expect(await fetchPage(page, `${siteUrl}/node/2`)).toBeNull();
+    await page.waitForTimeout(300);
+    expect(otherHits).toEqual([]);
+  });
+
+  test('a redirect on the same site, as Global Redirect sends /node/N to the alias, is followed', async ({ page }) => {
+    expect(await fetchPage(page, `${siteUrl}/node/1`)).toContain('rel="canonical"');
+    expect(await page.evaluate(n => (window as any).Address.resolvePublicAddress(n, (window as any).Address.fetchSitePage),
+      `${siteUrl}/node/1`)).toBe(`${siteUrl}/faculty/our-list`);
+  });
+
+  test('another origin is refused before any request; an error or a non-HTML answer is no page', async ({ page }) => {
+    expect(await fetchPage(page, `${otherUrl}/faculty/our-list`)).toBeNull();
+    expect(otherHits).toEqual([]);
+    expect(await fetchPage(page, `${siteUrl}/missing`)).toBeNull();
+    expect(await fetchPage(page, `${siteUrl}/feed`)).toBeNull();
+  });
 });

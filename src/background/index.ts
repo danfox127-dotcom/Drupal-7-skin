@@ -31,13 +31,14 @@ import type {
 import { showVarysNotice } from '../lib/varys/notice';
 import {
   parseSuggestionsAnswer,
-  type SuggestionsReply, type VarysCarriedFillsRequest, type VarysCarryFillsMessage, type VarysSuggestionsRequest,
+  type SuggestionsReply, type VarysCarriedFillsRequest, type VarysCarryFillsMessage, type VarysSiteTrackedRequest,
+  type VarysSiteTrackedResponse, type VarysSuggestionsRequest,
 } from '../lib/varys/suggestions';
 import type { CarriedFills } from '../lib/varys/suggestionFill';
 import {
   ACTION_EXPIRED_COPY, ACTION_NOT_CONNECTED_COPY, ACTION_UNREACHABLE_COPY, EXPIRED_COPY,
   PENDING_NOTICE_KEY, PENDING_TIMEOUT_MS, QUEUE_KEY, SITES_TTL_MS, UNREACHABLE_COPY, UNTRACKED_COPY,
-  carriedFillsFor, failureOf, isTrackedSite, knownUntracked, mergeCarriedBefore, nextOpenedForm, noteLoading,
+  cachedSitesFor, carriedFillsFor, failureOf, isTrackedSite, knownUntracked, mergeCarriedBefore, nextOpenedForm, noteLoading,
   noticeForResult, outcomeOfTimeout, outcomeWhenLoaded, pruneQueue, queueVerdict, toSaveRequest,
   type FormEvent, type NavigationOutcome, type OpenedForm, type PendingSubmit, type QueuedSave,
   type SaveRequest, type SitesCache, type StoredNotice, type VarysActionRequest, type VarysActionResponse,
@@ -998,6 +999,25 @@ async function suggestionsFor(request: VarysSuggestionsRequest): Promise<Suggest
   return { ok: false, reason: 'error', message: typeof detail === 'string' ? detail : ACTION_UNREACHABLE_COPY };
 }
 
+/**
+ * Whether the page's site is one Varys tracks, for the panel to ask before it reads the page
+ * from the site (ruling R19). From the list Varys last gave this person, at any age; only when
+ * there is none is it fetched, and that request names no page. Null, so no read, when there is
+ * no telling: not connected, the key expired, or no list to be had. Sends no page address.
+ */
+async function siteTracked(request: VarysSiteTrackedRequest): Promise<VarysSiteTrackedResponse> {
+  const connection = await getConnection();
+  if (!connection || connection.expired) return { tracked: null };
+  const sites = cachedSitesFor(await sessionGet<SitesCache>(SITES_KEY), connection.email)
+    ?? await trackedSites(connection);
+  if (sites === 'expired') {
+    await markExpired(connection);
+    return { tracked: null };
+  }
+  if (sites === null) return { tracked: null };
+  return { tracked: isTrackedSite(request.pageUrl, sites) };
+}
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') {
     // Stamped as it arrives, before any queued work, so the time is the event's own.
@@ -1052,7 +1072,7 @@ chrome.runtime.onMessage.addListener((
   message: FetchSourceRequest | SyncRichEditorRequest | RichEditorLifecycleRequest
     | CheckForUpdateRequest | ReadRichEditorRequest | VarysStatusRequest | VarysDisconnectRequest
     | VarysFormOpenedMessage | VarysSubmitMessage | VarysActionRequest | VarysSuggestionsRequest
-    | InsertRichEditorHtmlRequest | VarysCarryFillsMessage | VarysCarriedFillsRequest,
+    | InsertRichEditorHtmlRequest | VarysCarryFillsMessage | VarysCarriedFillsRequest | VarysSiteTrackedRequest,
   sender,
   sendResponse
 ) => {
@@ -1120,6 +1140,11 @@ chrome.runtime.onMessage.addListener((
 
   if (message?.type === 'varysUndo' || message?.type === 'varysLogAnyway') {
     void actOnSave(message).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'varysSiteTracked') {
+    void siteTracked(message).then(sendResponse);
     return true;
   }
 

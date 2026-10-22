@@ -354,6 +354,11 @@ export function knownUntracked(pageUrl: string, cache: SitesCache | undefined, e
     && !isTrackedSite(pageUrl, cache.sites);
 }
 
+/** The list Varys last gave this person, at any age, or undefined when there is none for them. */
+export function cachedSitesFor(cache: SitesCache | undefined, email: string): string[] | undefined {
+  return cache !== undefined && cache.email === email && Array.isArray(cache.sites) ? cache.sites : undefined;
+}
+
 // -------------------------------------------------------------------------------- the notice
 
 export interface VarysNoticeAction {

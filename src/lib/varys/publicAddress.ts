@@ -90,6 +90,12 @@ export async function resolvePublicAddress(address: string, fetchPage: PageFetch
  * The site's own page, as this signed-in browser sees it: a same-origin GET, with the site's
  * cookies so an unpublished page can be read too, and given up after `timeoutMs`. Null for
  * another origin, an error status, something that is not HTML, or no answer.
+ *
+ * It never leaves the site, redirects included (ruling R19). `mode: 'same-origin'` makes the
+ * browser refuse a redirect to any other origin before sending anything there (measured
+ * against real servers: the other one is never hit; see varys-public-address.spec.ts), while
+ * a redirect on the same site, as Global Redirect sends /node/N to its alias, is still
+ * followed. `redirect: 'manual'` would refuse both, losing the second for nothing.
  */
 export async function fetchSitePage(url: string, timeoutMs = 5_000): Promise<string | null> {
   let target: URL;
@@ -103,8 +109,12 @@ export async function fetchSitePage(url: string, timeoutMs = 5_000): Promise<str
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(target.toString(), { credentials: 'same-origin', signal: controller.signal });
+    const response = await fetch(target.toString(), {
+      credentials: 'same-origin', mode: 'same-origin', redirect: 'follow', signal: controller.signal,
+    });
     if (!response.ok) return null;
+    // Belt and braces: same-origin mode already refuses any other origin.
+    if (response.url && new URL(response.url).origin !== window.location.origin) return null;
     const type = response.headers.get('content-type') ?? '';
     if (type && !/text\/html|application\/xhtml/i.test(type)) return null;
     return await response.text();

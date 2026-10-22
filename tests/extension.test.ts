@@ -4822,6 +4822,54 @@ test.describe('Varys suggestions: worker', () => {
     await expect(page.locator(`#${BODY}`)).toHaveCount(1);
   };
 
+  test('whether a site is tracked is answered from the list, and no page address goes to Varys', async ({ page, context, extensionId, settings }) => {
+    // Ruling R19: the panel asks this before it reads anything of the page.
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, { type: 'varysSiteTracked', pageUrl: `${HOST}/node/23110` }))
+      .toEqual({ tracked: true });
+    expect(await asContentScript(page, context, extensionId, { type: 'varysSiteTracked', pageUrl: 'https://vagelos.columbia.edu/node/5' }))
+      .toEqual({ tracked: false });
+    // The list, fetched once and then cached; it carries no page address.
+    expect(calls.map(c => c.path + c.search)).toEqual(['/api/extension/connection']);
+  });
+
+  test('a cached list of any age answers whether a site is tracked, without asking Varys', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await worker(context).evaluate(email => chrome.storage.session.set({
+      varysSites: { email, sites: ['cuimc.columbia.edu'], fetchedAt: Date.now() - 2 * 86_400_000 },
+    }), EMAIL);
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, { type: 'varysSiteTracked', pageUrl: `${HOST}/node/23110` }))
+      .toEqual({ tracked: true });
+    expect(calls).toEqual([]);
+  });
+
+  test('with no list to be had, an expired key, or no connection, there is no telling', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, () => 'abort');
+    await openEditor(page);
+    const ask = () => asContentScript(page, context, extensionId, { type: 'varysSiteTracked', pageUrl: `${HOST}/node/23110` });
+
+    expect(await ask()).toEqual({ tracked: null });
+    expect(calls.map(c => c.path)).toEqual(['/api/extension/connection']);
+
+    // An expired key: not even a cached list opens the page to a read.
+    await worker(context).evaluate(email => chrome.storage.session.set({
+      varysSites: { email, sites: ['cuimc.columbia.edu'], fetchedAt: Date.now() },
+    }), EMAIL);
+    await settings({ varysConnection: { ...connected, expired: true } });
+    expect(await ask()).toEqual({ tracked: null });
+
+    await settings({ varysConnection: null });
+    expect(await ask()).toEqual({ tracked: null });
+    expect(calls).toHaveLength(1);
+  });
+
   test('suggestions are fetched with the page URL and the key', async ({ page, context, extensionId, settings }) => {
     await settings({ varysConnection: connected, nodeEditor: false });
     const calls = await stubVarys(context, varysUp());
@@ -5679,6 +5727,74 @@ test.describe('Varys suggestions: panel', () => {
     await servePage(context, `<link rel="canonical" href="https://www.columbiadoctors.org${ALIAS}">`);
     await open(page);
 
+    expect(suggestionsIn(calls)[0].search).toBe('?page_url=' + encodeURIComponent(`${HOST}/node/23110`));
+    await expect(row(page, 'Title').getByRole('button', { name: 'Use' })).toBeDisabled();
+  });
+
+  /** Records every request for `url` and answers it with a page stating the List page's alias. */
+  const recordReads = async (context: BrowserContext, url: string, host = HOST) => {
+    const reads: string[] = [];
+    await context.route(url, route => {
+      reads.push(route.request().url());
+      return route.fulfill({
+        status: 200, contentType: 'text/html',
+        body: `<!doctype html><html><head><link rel="canonical" href="${host}${ALIAS}"></head><body></body></html>`,
+      });
+    });
+    return reads;
+  };
+
+  test('on a site Varys does not track, the page behind /node/N is never read, and nothing is asked', async ({ page, context, settings }) => {
+    // Ruling R19: whether the site is tracked is settled before any read of the page.
+    const OTHER = 'https://vagelos.columbia.edu';
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready()));
+    const reads = await recordReads(context, `${OTHER}/node/23110`, OTHER);
+    const seen = await listenInWorker(context);
+
+    await page.goto(`${OTHER}/node/23110/edit`);
+    await expect.poll(async () => (await seen()).some(m => m.type === 'varysSuggestions')).toBe(true);
+    await page.waitForTimeout(1000);
+
+    expect(reads).toEqual([]);
+    expect(suggestionsIn(calls)).toEqual([]);
+    await expect(panel(page)).toHaveCount(0);
+    // It asked first, and then went on as before: asking about /node/N, which the worker refused.
+    expect((await seen()).filter(m => m.type === 'varysSiteTracked').map(m => m.pageUrl)).toEqual([`${OTHER}/node/23110`]);
+    expect((await seen()).filter(m => m.type === 'varysSuggestions').map(m => m.pageUrl)).toEqual([`${OTHER}/node/23110`]);
+  });
+
+  test('when the list of tracked sites cannot be had, the page behind /node/N is not read', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, () => 'abort');
+    const reads = await recordReads(context, `${HOST}/node/23110`);
+    const seen = await listenInWorker(context);
+
+    await page.goto(FORM);
+    await expect.poll(async () => (await seen()).some(m => m.type === 'varysSuggestions')).toBe(true);
+    await page.waitForTimeout(1000);
+
+    expect(reads).toEqual([]);
+    expect((await seen()).filter(m => m.type === 'varysSuggestions').map(m => m.pageUrl)).toEqual([`${HOST}/node/23110`]);
+  });
+
+  test('a /node/N that redirects to another site is not followed there, and /node/N stands', async ({ page, context, settings }) => {
+    /**
+     * Playwright neither routes nor reliably reports the hop after a fulfilled redirect, so this
+     * pins what the panel does with such a page (falls back to /node/N); that the hop is never
+     * SENT is shown against real servers in varys-public-address.spec.ts ("fetchSitePage"). The
+     * target never resolves, so nothing here can leave the machine whichever way it goes.
+     */
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready()));
+    const asked: string[] = [];
+    await context.route(`${HOST}/node/23110`, route => {
+      asked.push(route.request().url());
+      return route.fulfill({ status: 302, headers: { location: `https://elsewhere.invalid${ALIAS}` } });
+    });
+    await open(page);
+
+    expect(asked).toEqual([`${HOST}/node/23110`]);
     expect(suggestionsIn(calls)[0].search).toBe('?page_url=' + encodeURIComponent(`${HOST}/node/23110`));
     await expect(row(page, 'Title').getByRole('button', { name: 'Use' })).toBeDisabled();
   });

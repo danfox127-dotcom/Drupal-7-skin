@@ -45,9 +45,11 @@ values of the form's title, search title and search description fields (and Summ
 some sites use as the search description) in your browser. That reading stays in your
 browser; what is sent when you save is listed below. When you press **Insert at cursor**, it
 also asks the body's editor whether it has a cursor, and reads nothing else from the editor.
-If the edit form does not show the page's public address, it opens that page in the
-background on the same site (a request to the Drupal site, not to Varys) and reads only the
-address the page gives for itself, so that it asks Varys about the right page.
+If the edit form does not show the page's public address, and the list of sites Varys last
+gave the extension says this site is one it tracks, it opens that page in the background on
+the same site (a request to the Drupal site, not to Varys; it never follows a redirect to
+another site) and reads only the address the page gives for itself, so that it asks Varys
+about the right page.
 
 **One more place, and only if you have connected it to Varys.** After you save, Drupal
 usually sends you on to the page's public address, which is outside those paths. There the

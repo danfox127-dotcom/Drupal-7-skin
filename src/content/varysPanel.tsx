@@ -10,11 +10,11 @@ import {
   type AdoptedFills, type CarriedFills, type FillKind, type FillRecord,
 } from '../lib/varys/suggestionFill';
 import { markFilled } from '../lib/varys/filled';
-import { fetchSitePage, resolvePublicAddress } from '../lib/varys/publicAddress';
+import { fetchSitePage, isNodeAddress, resolvePublicAddress } from '../lib/varys/publicAddress';
 import {
   SUGGESTIONS_ERROR_COPY, SUGGESTIONS_NO_CURSOR_COPY,
   type SuggestionsAnswer, type SuggestionsReply, type VarysCarriedFillsRequest, type VarysCarryFillsMessage,
-  type VarysSuggestionsRequest,
+  type VarysSiteTrackedRequest, type VarysSiteTrackedResponse, type VarysSuggestionsRequest,
 } from '../lib/varys/suggestions';
 import { ACTION_EXPIRED_COPY, ACTION_NOT_CONNECTED_COPY, ACTION_UNREACHABLE_COPY } from '../lib/varys/submissions';
 import { SuggestionsPanel, type PanelBody, type SuggestionRow } from '../components/varys/SuggestionsPanel';
@@ -234,6 +234,20 @@ function pathOf(address: string): string | null {
     return new URL(address).pathname;
   } catch {
     return null;
+  }
+}
+
+/**
+ * True only when the worker says, by the list Varys last gave, that this page's site is one
+ * Varys tracks. Anything else (untracked, no telling, no answer) is false.
+ */
+async function siteIsTracked(pageUrl: string): Promise<boolean> {
+  try {
+    const reply: VarysSiteTrackedResponse | undefined = await chrome.runtime.sendMessage(
+      { type: 'varysSiteTracked', pageUrl } satisfies VarysSiteTrackedRequest);
+    return reply?.tracked === true;
+  } catch {
+    return false;
   }
 }
 
@@ -675,8 +689,12 @@ export async function startVarysPanel(editorsReady: () => Promise<unknown>): Pro
     // Bounded by the wait itself; a fault in it only means the editors are as ready as they get.
     const editors = editorsReady().catch(() => undefined);
     // A form whose View tab was not found names its page /node/N, which Varys never crawled:
-    // the page itself says where it lives (ruling R17). Failing that, /node/N as before.
-    const pageUrl = await resolvePublicAddress(address, fetchSitePage);
+    // the page itself says where it lives (ruling R17). It is read only on a site Varys tracks,
+    // settled first and without sending the address anywhere (ruling R19): untracked, or no
+    // telling, and the panel goes on with /node/N exactly as before, as it does on any failure.
+    const pageUrl = isNodeAddress(address) && await siteIsTracked(address)
+      ? await resolvePublicAddress(address, fetchSitePage)
+      : address;
 
     const [reply, carried] = await Promise.all([
       askWorker({ type: 'varysSuggestions', pageUrl }),

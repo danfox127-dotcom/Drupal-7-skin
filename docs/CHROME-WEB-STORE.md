@@ -316,9 +316,11 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
     presses Ask Varys, the extension sends only that page's public address, to fetch or
     request Varys's suggestions for it. When the edit form does not show that address, the
     extension reads the page itself on the same Drupal site, in the browser, for the address
-    it gives for itself; nothing else from that page is used. No content of the form goes
-    with it, and no address is sent for suggestions for a site Varys does not track, for an
-    add form, or when the extension cannot tell which sites Varys tracks. What comes back is
+    it gives for itself, only once its list of tracked sites says the site is tracked and
+    never following a redirect to another site; nothing else from that page is used. No
+    content of the form goes with it, and no address is sent for suggestions for a site Varys
+    does not track, for an add form, or when the extension cannot tell which sites Varys
+    tracks. What comes back is
     Varys's suggestions (search title, description, page title, section headings and an
     optional clinical review note) and Varys's own copy of the page's current title,
     description and headings, from its last read of the page; they are shown in a panel on

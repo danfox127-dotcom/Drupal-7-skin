@@ -63,6 +63,22 @@ export interface VarysCarriedFillsRequest {
   formPath: string;
 }
 
+/**
+ * Whether a page's site is one Varys tracks, by the list Varys last gave this person, asked
+ * before the panel reads anything of the page from the site (ruling R19). The page's address
+ * is never sent to Varys for this: the list is the one the worker caches, of any age, and is
+ * fetched (a request that names no page) only when there is none.
+ */
+export interface VarysSiteTrackedRequest {
+  type: 'varysSiteTracked';
+  pageUrl: string;
+}
+
+/** True or false by that list; null when there is no telling: not connected, an expired key, or no list to be had. */
+export interface VarysSiteTrackedResponse {
+  tracked: boolean | null;
+}
+
 /** Shown when Insert finds nowhere to put the heading. */
 export const SUGGESTIONS_NO_CURSOR_COPY = 'Click in the body where the heading should go, then press Insert again.';
 
