@@ -7,6 +7,7 @@ import {
 } from '../lib/varys/pageState';
 import type { ReadRichEditorResponse } from '../background';
 import type { VarysStatus, VarysStatusRequest } from '../lib/varys/connection';
+import { filledFields } from '../lib/varys/filled';
 
 /**
  * Recording a node form's before and after, for Varys.
@@ -63,8 +64,24 @@ function isRawFormValues(v: unknown): v is RawFormValues {
   if (typeof v !== 'object' || v === null) return false;
   const r = v as Record<string, unknown>;
   return typeof r.title === 'string' && isStringOrNull(r.metaTitle) && isStringOrNull(r.metaDescription)
-    && isStringOrNull(r.alias) && typeof r.pathauto === 'boolean' && typeof r.bodyHtml === 'string'
-    && r.host === window.location.host;
+    && isStringOrNull(r.summary) && isStringOrNull(r.alias) && typeof r.pathauto === 'boolean'
+    && typeof r.bodyHtml === 'string' && r.host === window.location.host;
+}
+
+/**
+ * The alias a page has when its form's alias box is empty because pathauto owns it, read off
+ * the page's own address instead. Null when the page has none: an add form (no page yet), or
+ * an address that is only /node/N, which is what Drupal serves for a node with no alias.
+ */
+function aliasFromAddress(): string | null {
+  const address = publicUrlFor(window.location, document);
+  if (address === null) return null;
+  try {
+    const { pathname } = new URL(address);
+    return /^\/node\/\d+\/?$/.test(pathname) ? null : pathname;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -74,17 +91,27 @@ function isRawFormValues(v: unknown): v is RawFormValues {
  * field the form does not have is null, never an empty string, so "no search title field"
  * and "a search title left blank" stay apart. Disabled fields are read too: the alias box
  * is disabled while pathauto is on, and the caller needs to see both facts.
+ *
+ * The alias is what the box holds. When it holds nothing, pathauto is ticked and this is an
+ * edit form, pathauto is generating it and the page's own address says what it is: the
+ * alias is then taken from there, so a page with a generated alias is not recorded as having
+ * none. An empty box with pathauto OFF is a page with no alias, and stays empty.
  */
 export function readRawValues(form: HTMLFormElement, bodyHtml: string): RawFormValues {
   const value = (name: string) =>
     form.querySelector<HTMLInputElement | HTMLTextAreaElement>(`[name="${name}"]`)?.value ?? null;
 
+  const pathauto = form.querySelector<HTMLInputElement>('[name="path[pathauto]"]')?.checked === true;
+  let alias = value('path[alias]');
+  if (pathauto && (alias ?? '').trim() === '') alias = aliasFromAddress() ?? alias;
+
   return {
     title: value('title_field[und][0][value]') ?? value('title') ?? '',
     metaTitle: value('metatags[und][title][value]'),
     metaDescription: value('metatags[und][description][value]'),
-    alias: value('path[alias]'),
-    pathauto: form.querySelector<HTMLInputElement>('[name="path[pathauto]"]')?.checked === true,
+    summary: value('field_summary[und][0][value]'),
+    alias,
+    pathauto,
     bodyHtml,
     host: window.location.host,
   };
@@ -240,6 +267,7 @@ export function mountVarysCapture(
         before: isNew ? null : pageStateFrom(before, null),
         after: pageStateFrom(after, before.bodyHtml),
         bodyChangeRatio: bodyChangeRatio(textOfHtml(before.bodyHtml), textOfHtml(after.bodyHtml)),
+        varysFilled: filledFields(),
         submittedAt: Date.now(),
       };
 

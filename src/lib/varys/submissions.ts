@@ -14,6 +14,7 @@
  * Nothing here touches chrome.* or the network.
  */
 
+import type { VarysFilledField } from './filled';
 import { bareHost, type ButtonKind, type PageState, type RawFormValues, type VarysSubmitMessage } from './pageState';
 
 // ------------------------------------------------------------------------------------- copy
@@ -45,6 +46,8 @@ export interface SaveRequest {
   /** Always present: null for a new node, which Varys diffs against an empty page. */
   before: PageState | null;
   after: PageState;
+  /** What the person filled from Varys's panel: Varys keeps title, meta_title, meta_description and headings. */
+  varys_filled: VarysFilledField[];
 }
 
 export function toSaveRequest(payload: SavePayload, pageUrl: string, nodeId: string | null): SaveRequest {
@@ -58,6 +61,7 @@ export function toSaveRequest(payload: SavePayload, pageUrl: string, nodeId: str
     body_change_ratio: Math.min(1, Math.max(0, ratio)),
     before: payload.before,
     after: payload.after,
+    varys_filled: payload.varysFilled,
   };
 }
 

@@ -21,6 +21,7 @@ const state = (title: string, over: Partial<PageState> = {}): PageState => ({
   title,
   meta_title: null,
   meta_description: 'A description.',
+  summary: null,
   alias: null,
   headings: [],
   links: [],
@@ -46,6 +47,7 @@ const pending = (over: Partial<PendingSubmit> = {}, payload: Partial<PendingSubm
     before: state('Before'),
     after: state('After'),
     bodyChangeRatio: 0.1,
+    varysFilled: [],
     ...payload,
   },
 });
@@ -228,8 +230,23 @@ test.describe('the request Varys is sent', () => {
       body_change_ratio: 0.1,
       before: null,
       after: p.payload.after,
+      varys_filled: [],
     });
     expect(Object.keys(request)).toContain('before');
+  });
+
+  test('toSaveRequest carries varys_filled', () => {
+    const payload = pending({}, { varysFilled: ['meta_title'] }).payload;
+    expect(toSaveRequest(payload, HOST, null).varys_filled).toEqual(['meta_title']);
+    const two = pending({}, { varysFilled: ['headings', 'title'] }).payload;
+    expect(toSaveRequest(two, HOST, null).varys_filled).toEqual(['headings', 'title']);
+  });
+
+  test('the summary rides inside the before and after, as they are', () => {
+    const p = pending({}, { before: state('Before', { summary: 'Old.' }), after: state('After', { summary: 'New.' }) });
+    const request = toSaveRequest(p.payload, HOST, null);
+    expect(request.before?.summary).toBe('Old.');
+    expect(request.after.summary).toBe('New.');
   });
 
   test('a ratio outside 0..1, or not a number, never reaches Varys', () => {

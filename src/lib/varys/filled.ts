@@ -1,0 +1,36 @@
+/**
+ * Which fields the person filled in from Varys on this page, so a save can say so.
+ *
+ * The Varys panel calls `markFilled` when it writes a suggestion into the form and
+ * `unmarkFilled` when the person takes it back. The capture (src/content/varysCapture.ts)
+ * reads `filledFields()` at Save and sends the list with the save, and Varys shows it beside
+ * the change as "Filled from Varys: search title". Only the panel marks or unmarks.
+ *
+ * Plain module state, with no extension API: it lives as long as the page does, which is as
+ * long as the form it describes. The panel and the capture are in the same content script, so
+ * they share it. A save reloads the page and the list starts empty again.
+ *
+ * Varys keeps only these four (it drops anything else), so this is their whole vocabulary.
+ */
+
+export type VarysFilledField = 'title' | 'meta_title' | 'meta_description' | 'headings';
+
+const filled = new Set<VarysFilledField>();
+
+export function markFilled(field: VarysFilledField): void {
+  filled.add(field);
+}
+
+export function unmarkFilled(field: VarysFilledField): void {
+  filled.delete(field);
+}
+
+/** The fields marked, each once, in alphabetical order. A copy: changing it changes nothing here. */
+export function filledFields(): VarysFilledField[] {
+  return Array.from(filled).sort();
+}
+
+/** Forgets every mark. For tests; a page never needs it. */
+export function resetFilled(): void {
+  filled.clear();
+}

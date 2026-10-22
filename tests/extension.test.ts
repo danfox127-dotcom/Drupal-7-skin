@@ -4200,6 +4200,81 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     expect(await stored(context, 'varysPendingNotice')).toBeUndefined();
   });
 
+  /**
+   * The captured list form, served with its alias box holding `alias` (the capture is
+   * value-scrubbed, so the box is empty) and, when asked, a View tab pointing at it.
+   * Registered first, so saveGoesThrough's POST answer still comes before it.
+   */
+  const formWithAlias = (context: BrowserContext, opts: { box?: string; viewTab?: string }) =>
+    context.route(FORM, route => {
+      if (route.request().method() !== 'GET') return route.fallback();
+      let html = read('captured/list-populated.html');
+      if (opts.box !== undefined) {
+        html = html.replace('id="edit-path-alias" name="path[alias]" value=""',
+          `id="edit-path-alias" name="path[alias]" value="${opts.box}"`);
+      }
+      if (opts.viewTab !== undefined) {
+        html = html.replace(/(<body[^>]*>)/, `$1<ul class="tabs primary"><li><a href="${opts.viewTab}">View</a></li>`
+          + `<li><a href="/node/23110/edit">Edit</a></li></ul>`);
+      }
+      return route.fulfill({ status: 200, contentType: 'text/html', body: html });
+    });
+
+  test('a save with pathauto unticked and the alias left alone sends the same, real alias before and after', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await formWithAlias(context, { box: 'faculty/our-list' });
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    // On this form pathauto is ticked and the box holds the page's alias, disabled.
+    expect(await page.evaluate(() => ({
+      pathauto: (document.querySelector('[name="path[pathauto]"]') as HTMLInputElement).checked,
+      alias: (document.querySelector('[name="path[alias]"]') as HTMLInputElement).value,
+    }))).toEqual({ pathauto: true, alias: 'faculty/our-list' });
+    await page.evaluate(() => {
+      (document.querySelector('[name="path[pathauto]"]') as HTMLInputElement).checked = false;
+    });
+    await saveAndPublish(page);
+
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    const [save] = savesIn(calls);
+    expect(save.body.after.alias).toBe('faculty/our-list');
+    expect(save.body.before.alias).toBe(save.body.after.alias);
+  });
+
+  test('an empty alias box under pathauto still records the alias the page has, from its View tab', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await formWithAlias(context, { viewTab: '/faculty/our-list' });
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    const [save] = savesIn(calls);
+    expect(save.body.after.alias).toBe('faculty/our-list');
+    expect(save.body.before.alias).toBe('faculty/our-list');
+  });
+
+  test('a save carries the Summary, and says nothing was filled from Varys when nothing was', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    const before = await page.evaluate(() =>
+      (document.querySelector('[name="field_summary[und][0][value]"]') as HTMLTextAreaElement).value);
+    await saveAndPublish(page, { 'field_summary[und][0][value]': 'What the search result should say.' });
+
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    const [save] = savesIn(calls);
+    expect(save.body.after.summary).toBe('What the search result should say.');
+    expect(save.body.before.summary).toBe(before);
+    expect(save.body.varys_filled).toEqual([]);
+  });
+
   test('failed save is not sent', async ({ page, context, settings }) => {
     await settings({ varysConnection: connected, nodeEditor: false });
     const calls = await stubVarys(context, varysUp());

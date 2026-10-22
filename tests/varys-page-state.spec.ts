@@ -25,6 +25,7 @@ test.beforeAll(async () => {
   const result = await esbuild.build({
     stdin: {
       contents: `export * from './src/lib/varys/pageState';
+                 export * from './src/lib/varys/filled';
                  export * from './src/content/varysCapture';`,
       resolveDir: ROOT,
       loader: 'ts',
@@ -75,13 +76,14 @@ const sent = (page: Page) => page.evaluate(() => (window as any).__sent as any[]
 const submits = async (page: Page) => (await sent(page)).filter(m => m.type === 'varysSubmit');
 
 /** A node form with the field names Drupal 7 and the live sites use. */
-const FORM = (extra: { pathauto?: boolean; body?: string; title?: string } = {}) => `
+const FORM = (extra: { pathauto?: boolean; body?: string; title?: string; summary?: string; alias?: string } = {}) => `
 <form class="node-form node-condition-form" id="condition-node-form" method="post" action="">
   <input type="text" name="title_field[und][0][value]" value="${extra.title ?? 'Asthma in adults'}">
   <input type="text" name="metatags[und][title][value]" value="Asthma | [site:name]">
   <textarea name="metatags[und][description][value]">Learn about asthma care.</textarea>
   <input type="checkbox" name="path[pathauto]" value="1" ${extra.pathauto === false ? '' : 'checked'}>
-  <input type="text" name="path[alias]" value="${extra.pathauto === false ? '/conditions/asthma' : ''}" ${extra.pathauto === false ? '' : 'disabled'}>
+  <input type="text" name="path[alias]" value="${extra.alias ?? (extra.pathauto === false ? '/conditions/asthma' : '')}" ${extra.pathauto === false ? '' : 'disabled'}>
+  ${extra.summary === undefined ? '' : `<textarea name="field_summary[und][0][value]">${extra.summary}</textarea>`}
   <textarea id="edit-body-und-0-value" name="body[und][0][value]">${
     extra.body ?? '<h2>Symptoms</h2><p>Wheezing and a tight chest are common signs of asthma in adults.</p>'
   }</textarea>
@@ -176,7 +178,7 @@ test.describe('bodyChangeRatio', () => {
 
 test.describe('pageStateFrom', () => {
   const raw = (over: Record<string, unknown> = {}) => ({
-    title: 'Asthma', metaTitle: null, metaDescription: null, alias: null, pathauto: false,
+    title: 'Asthma', metaTitle: null, metaDescription: null, summary: null, alias: null, pathauto: false,
     bodyHtml: '', host: 'www.cuimc.columbia.edu', ...over,
   });
 
@@ -248,14 +250,37 @@ test.describe('pageStateFrom', () => {
     expect(state.links).toEqual(['/doctors', '/conditions/asthma', '/about', '/care/plans', '/Shouting']);
   });
 
-  test('the alias is null when pathauto is on or the value is blank, and has no leading slash', async ({ page }) => {
+  test('the alias is the current one whether or not pathauto is ticked, has no leading slash, and is null only when blank', async ({ page }) => {
     const alias = async (r: object) => (await stateFrom(page, raw(r), null)).alias;
-    expect(await alias({ alias: 'conditions/asthma', pathauto: true })).toBeNull();
+    // Ticking pathauto says how the alias is MADE, not what it is: the box still holds it.
+    expect(await alias({ alias: 'conditions/asthma', pathauto: true })).toBe('conditions/asthma');
+    expect(await alias({ alias: '/news/foo', pathauto: true })).toBe('news/foo');
+    expect(await alias({ alias: '', pathauto: true })).toBeNull();
     expect(await alias({ alias: '', pathauto: false })).toBeNull();
     expect(await alias({ alias: '   ', pathauto: false })).toBeNull();
     expect(await alias({ alias: null, pathauto: false })).toBeNull();
     expect(await alias({ alias: '/conditions/asthma', pathauto: false })).toBe('conditions/asthma');
     expect(await alias({ alias: ' conditions/asthma ', pathauto: false })).toBe('conditions/asthma');
+  });
+
+  test('unticking pathauto with the alias left alone is not an alias change', async ({ page }) => {
+    const ticked = await stateFrom(page, raw({ alias: 'news/foo', pathauto: true }), null);
+    const unticked = await stateFrom(page, raw({ alias: 'news/foo', pathauto: false }), null);
+    expect(unticked.alias).not.toBeNull();
+    expect(unticked.alias).toBe(ticked.alias);
+  });
+
+  test('the summary is carried, null stays null, and it is clipped to what Varys accepts', async ({ page }) => {
+    const summary = async (r: object) => (await stateFrom(page, raw(r), null)).summary;
+    expect(await summary({ summary: 'A short summary.' })).toBe('A short summary.');
+    expect(await summary({ summary: null })).toBeNull();
+    // Blank is blank, not "no field": the two stay apart.
+    expect(await summary({ summary: '' })).toBe('');
+    // 2,100 characters, counted as Varys counts them (not in UTF-16 units).
+    const long = await summary({ summary: 'x'.repeat(2100) });
+    expect(Array.from(long!).length).toBe(2000);
+    const astral = await summary({ summary: '😀'.repeat(2100) });
+    expect(Array.from(astral!).length).toBe(2000);
   });
 
   test('the title and the raw search title and description pass through, tokens and all', async ({ page }) => {
@@ -393,13 +418,14 @@ test.describe('publicUrlFor', () => {
 
 test.describe('readRawValues', () => {
   test('reads the live field names', async ({ page }) => {
-    await open(page, '/node/23110/edit', FORM({ pathauto: false }));
+    await open(page, '/node/23110/edit', FORM({ pathauto: false, summary: 'A plain summary.' }));
     const raw = await page.evaluate(() => (window as any).Capture.readRawValues(
       document.querySelector('.node-form'), '<p>body</p>'));
     expect(raw).toEqual({
       title: 'Asthma in adults',
       metaTitle: 'Asthma | [site:name]',
       metaDescription: 'Learn about asthma care.',
+      summary: 'A plain summary.',
       alias: '/conditions/asthma',
       pathauto: false,
       bodyHtml: '<p>body</p>',
@@ -419,7 +445,56 @@ test.describe('readRawValues', () => {
     const raw = await page.evaluate(() => (window as any).Capture.readRawValues(
       document.querySelector('.node-form'), ''));
     expect(raw).toMatchObject({
-      title: 'Old form', metaTitle: null, metaDescription: null, alias: null, pathauto: false,
+      title: 'Old form', metaTitle: null, metaDescription: null, summary: null, alias: null, pathauto: false,
+    });
+  });
+
+  test('the summary is read by its field name; a form without one is null, and a blank one is empty', async ({ page }) => {
+    const summaryOf = async (form: string) => {
+      await open(page, '/node/23110/edit', form);
+      return page.evaluate(() => (window as any).Capture.readRawValues(
+        document.querySelector('.node-form'), '').summary);
+    };
+    expect(await summaryOf(FORM({ summary: 'What the search result says.' }))).toBe('What the search result says.');
+    expect(await summaryOf(FORM())).toBeNull();
+    expect(await summaryOf(FORM({ summary: '' }))).toBe('');
+  });
+
+  test('the alias box is read as it is when it holds the alias, pathauto or not', async ({ page }) => {
+    await open(page, '/node/23110/edit', FORM({ alias: 'conditions/asthma' }));
+    const raw = await page.evaluate(() => (window as any).Capture.readRawValues(
+      document.querySelector('.node-form'), ''));
+    expect(raw).toMatchObject({ alias: 'conditions/asthma', pathauto: true });
+  });
+
+  test.describe('an empty alias box with pathauto ticked on an edit form', () => {
+    // Drupal can leave the box empty while pathauto owns the alias. The page's own address,
+    // from its View tab, is then the alias it really has.
+    const VIEW = (href: string) => `<ul class="tabs primary"><li><a href="${href}">View</a></li>
+      <li><a href="/node/23110/edit">Edit</a></li></ul>`;
+    const aliasWith = async (page: Page, pathname: string, tabs: string, form = FORM()) => {
+      await open(page, pathname, tabs + form);
+      return page.evaluate(() => (window as any).Capture.readRawValues(
+        document.querySelector('.node-form'), '').alias);
+    };
+
+    test('takes the alias from the page address', async ({ page }) => {
+      // As the box itself would hold it, leading slash and all; pageStateFrom drops the slash.
+      expect(await aliasWith(page, '/node/23110/edit', VIEW('/conditions/asthma'))).toBe('/conditions/asthma');
+      // Only the path: the host is not part of an alias.
+      expect(await aliasWith(page, '/node/23110/edit', VIEW(`${HOST}/news/foo/bar`))).toBe('/news/foo/bar');
+    });
+
+    test('leaves it empty when the page has no alias, only /node/N', async ({ page }) => {
+      expect(await aliasWith(page, '/node/23110/edit', VIEW('/node/23110'))).toBe('');
+      // No View tab at all: publicUrlFor falls back to /node/<id>.
+      expect(await aliasWith(page, '/node/23110/edit', '')).toBe('');
+    });
+
+    test('is not used when the box holds an alias, or pathauto is off, or the form is an add form', async ({ page }) => {
+      expect(await aliasWith(page, '/node/23110/edit', VIEW('/conditions/asthma'), FORM({ alias: 'my/own' }))).toBe('my/own');
+      expect(await aliasWith(page, '/node/23110/edit', VIEW('/conditions/asthma'), FORM({ pathauto: false, alias: '' }))).toBe('');
+      expect(await aliasWith(page, '/node/add/news', VIEW('/conditions/asthma'))).toBe('');
     });
   });
 
@@ -565,6 +640,7 @@ test.describe('mountVarysCapture', () => {
       title: 'Asthma in adults',
       meta_title: 'Asthma | [site:name]',
       meta_description: 'Learn about asthma care.',
+      summary: null,
       alias: null,
       headings: [{ level: 2, text: 'Symptoms' }],
       links: [],
@@ -600,6 +676,76 @@ test.describe('mountVarysCapture', () => {
       button: 'draft', isNew: true, bodyChangeRatio: 1,
     });
     expect(message.after.new_sentences).toEqual(['Columbia opens a new asthma program for adults this fall.']);
+  });
+
+  test('a save carries the summary, and the fields the person filled from Varys', async ({ page }) => {
+    await open(page, '/node/23110/edit', FORM({ summary: 'The old summary.' }));
+    await stubRuntime(page);
+    await mount(page);
+    await page.evaluate(() => {
+      const w = window as any;
+      w.Capture.resetFilled();
+      w.Capture.markFilled('title');
+      w.Capture.markFilled('meta_title');
+      w.Capture.markFilled('title');
+      (document.querySelector('[name="field_summary[und][0][value]"]') as HTMLTextAreaElement).value = 'A new summary.';
+    });
+    await submitWith(page, '#edit-submit');
+    const [message] = await submits(page);
+    expect(message.before.summary).toBe('The old summary.');
+    expect(message.after.summary).toBe('A new summary.');
+    expect(message.varysFilled).toEqual(['meta_title', 'title']);
+  });
+
+  test('a save with nothing filled from Varys carries an empty list, never a missing one', async ({ page }) => {
+    await open(page, '/node/23110/edit', FORM());
+    await stubRuntime(page);
+    await mount(page);
+    await page.evaluate(() => (window as any).Capture.resetFilled());
+    await submitWith(page, '#edit-submit');
+    const [message] = await submits(page);
+    expect('varysFilled' in message).toBe(true);
+    expect(message.varysFilled).toEqual([]);
+  });
+
+  test('a field unmarked before Save is not sent as filled', async ({ page }) => {
+    await open(page, '/node/23110/edit', FORM());
+    await stubRuntime(page);
+    await mount(page);
+    await page.evaluate(() => {
+      const w = window as any;
+      w.Capture.resetFilled();
+      w.Capture.markFilled('meta_description');
+      w.Capture.markFilled('headings');
+      w.Capture.unmarkFilled('meta_description');
+    });
+    await submitWith(page, '#edit-submit');
+    const [message] = await submits(page);
+    expect(message.varysFilled).toEqual(['headings']);
+  });
+
+  test('unticking pathauto with the alias untouched sends the same alias before and after', async ({ page }) => {
+    await open(page, '/node/23110/edit', FORM({ alias: 'conditions/asthma' }));
+    await stubRuntime(page);
+    await mount(page);
+    await page.evaluate(() => {
+      (document.querySelector('[name="path[pathauto]"]') as HTMLInputElement).checked = false;
+    });
+    await submitWith(page, '#edit-submit');
+    const [message] = await submits(page);
+    expect(message.after.alias).toBe('conditions/asthma');
+    expect(message.before.alias).toBe(message.after.alias);
+  });
+
+  test('an empty alias box under pathauto reads as the page\'s own address, before and after alike', async ({ page }) => {
+    await open(page, '/node/23110/edit',
+      '<ul class="tabs primary"><li><a href="/conditions/asthma">View</a></li></ul>' + FORM());
+    await stubRuntime(page);
+    await mount(page);
+    await submitWith(page, '#edit-submit');
+    const [message] = await submits(page);
+    expect(message.before.alias).toBe('conditions/asthma');
+    expect(message.after.alias).toBe('conditions/asthma');
   });
 
   test('before is what the form held when it opened, not what it held at Save', async ({ page }) => {
@@ -836,7 +982,7 @@ test.describe('the form tells the worker it opened', () => {
     // The worker kept the values from when the form first opened, before any of this.
     const original = {
       title: 'Asthma in adults', metaTitle: 'Asthma | [site:name]', metaDescription: 'Learn about asthma care.',
-      alias: '', pathauto: true, host: 'www.cuimc.columbia.edu',
+      summary: null, alias: '', pathauto: true, host: 'www.cuimc.columbia.edu',
       bodyHtml: '<p>Wheezing and a tight chest are common signs of asthma in adults.</p>',
     };
     await stubRuntime(page, undefined, { raw: original });
@@ -851,6 +997,35 @@ test.describe('the form tells the worker it opened', () => {
     // and the body would read as unchanged.
     expect(message.after.new_sentences).toEqual(['Controller inhalers are the mainstay of treatment for most people.']);
     expect(message.bodyChangeRatio).toBeGreaterThan(0);
+  });
+
+  test('an answer carrying a summary is a set of form values, and its summary is the before', async ({ page }) => {
+    await open(page, '/node/23110/edit', FORM({ summary: 'Typed since the form opened.' }));
+    const original = {
+      title: 'Asthma in adults', metaTitle: null, metaDescription: null, summary: 'As the form first opened.',
+      alias: '', pathauto: true, host: 'www.cuimc.columbia.edu', bodyHtml: '',
+    };
+    await stubRuntime(page, undefined, { raw: original });
+    await mount(page);
+    await expect.poll(async () => (await opened(page)).length).toBe(1);
+    await submitWith(page, '#edit-submit');
+    const [message] = await submits(page);
+    expect(message.before.summary).toBe('As the form first opened.');
+    expect(message.after.summary).toBe('Typed since the form opened.');
+  });
+
+  test('an answer with no summary key is not a set of form values, and the page keeps its own before', async ({ page }) => {
+    await open(page, '/node/23110/edit', FORM({ title: 'Attempt two' }));
+    const stale = {
+      title: 'Asthma in adults', metaTitle: null, metaDescription: null,
+      alias: '', pathauto: true, host: 'www.cuimc.columbia.edu', bodyHtml: '',
+    };
+    await stubRuntime(page, undefined, { raw: stale });
+    await mount(page);
+    await expect.poll(async () => (await opened(page)).length).toBe(1);
+    await submitWith(page, '#edit-submit');
+    const [message] = await submits(page);
+    expect(message.before.title).toBe('Attempt two');
   });
 
   test('an answer that is not a set of form values is ignored', async ({ page }) => {

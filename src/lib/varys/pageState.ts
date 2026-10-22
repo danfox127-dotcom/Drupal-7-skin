@@ -15,12 +15,24 @@
  * confirm a body-only edit went live.
  */
 
+import type { VarysFilledField } from './filled';
+
 export interface PageState {
   title: string;
   /** Raw values: tokens such as [node:title] are kept, as typed. */
   meta_title: string | null;
   meta_description: string | null;
-  /** No leading slash. Null when the alias is generated (pathauto) or blank. */
+  /**
+   * The Summary field. On ColumbiaDoctors it is the search description, so Varys needs it to
+   * see a description edit. Null when the form has no such field, which is not the same as a
+   * blank one.
+   */
+  summary: string | null;
+  /**
+   * The page's alias, no leading slash, whatever pathauto says: ticking pathauto says how the
+   * alias is made, not what it is, and a save that unticks it to keep the address must not
+   * read as an alias change. Null only when there is none.
+   */
   alias: string | null;
   /** The body's h2 and h3, in order. */
   headings: { level: 2 | 3; text: string }[];
@@ -37,6 +49,8 @@ export interface RawFormValues {
   /** Null when the form has no such field, which is not the same as an empty one. */
   metaTitle: string | null;
   metaDescription: string | null;
+  /** The Summary field, null when the form has none. */
+  summary: string | null;
   alias: string | null;
   pathauto: boolean;
   bodyHtml: string;
@@ -66,6 +80,11 @@ export interface VarysSubmitMessage {
   before: PageState | null;
   after: PageState;
   bodyChangeRatio: number;
+  /**
+   * The fields the person filled from Varys's panel and has not taken back (see filled.ts),
+   * sorted and unique. Always present: empty when none.
+   */
+  varysFilled: VarysFilledField[];
   /**
    * When Save was pressed (Date.now() in the page). The worker reads a tab's loads against it:
    * only one that started after this is the answer to the save.
@@ -287,12 +306,15 @@ export function pageStateFrom(
     if (text !== '') headings.push({ level: el.tagName === 'H2' ? 2 : 3, text });
   }
 
-  const alias = raw.pathauto ? null : (raw.alias ?? '').trim().replace(/^\/+/, '') || null;
+  // The alias as the form holds it, whatever pathauto says: unticking pathauto to keep the
+  // address must not read as the alias changing.
+  const alias = (raw.alias ?? '').trim().replace(/^\/+/, '') || null;
 
   return {
     title: clip(raw.title, MAX_FIELD_CHARS),
     meta_title: clipOrNull(raw.metaTitle, MAX_FIELD_CHARS),
     meta_description: clipOrNull(raw.metaDescription, MAX_FIELD_CHARS),
+    summary: clipOrNull(raw.summary, MAX_FIELD_CHARS),
     alias: clipOrNull(alias, MAX_FIELD_CHARS),
     headings,
     links: internalLinks(body, raw.host),
