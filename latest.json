@@ -1,5 +1,5 @@
 {
-  "version": "0.5.0",
-  "notes": "Optional Connect to Varys: logs your search edits in Varys automatically, with Undo and Log it anyway. Off until you connect.",
-  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.5.0/d7-studio-extension-0.5.0.zip"
+  "version": "0.6.0",
+  "notes": "Page Health suggestions in the edit form: Varys's recommended title, description and headings beside each field, with Use, Undo, Copy and Insert. Also logs Summary edits. Only on sites Varys tracks.",
+  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.6.0/d7-studio-extension-0.6.0.zip"
 }
