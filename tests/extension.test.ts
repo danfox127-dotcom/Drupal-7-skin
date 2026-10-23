@@ -4112,6 +4112,41 @@ const stubVarys = async (context: BrowserContext, answer: (call: VarysCall) => V
   return calls;
 };
 
+/**
+ * Sends the worker a message the way the panel will, from a content script in the tab.
+ *
+ * A message from an extension page would reach the worker too, but with that page as its
+ * sender, and the insert acts on the SENDER's tab. So this evaluates in the content script's
+ * own isolated world, over CDP, and the worker sees the fixture tab.
+ */
+const asContentScript = async (page: Page, context: BrowserContext, extensionId: string, message: unknown) => {
+  const cdp = await context.newCDPSession(page);
+  try {
+    const worlds: { id: number; origin: string; auxData?: { frameId?: string } }[] = [];
+    cdp.on('Runtime.executionContextCreated', e => worlds.push(e.context));
+    await cdp.send('Runtime.enable');
+    const { frameTree } = await cdp.send('Page.getFrameTree');
+    const ours = () => worlds.find(w =>
+      w.origin === `chrome-extension://${extensionId}` && w.auxData?.frameId === frameTree.frame.id);
+    // The content script is injected once the page is idle, which can be just after `load`.
+    for (let waited = 0; !ours() && waited < 10_000; waited += 100) await page.waitForTimeout(100);
+    const world = ours();
+    if (!world) throw new Error('The extension has no content script in this tab.');
+
+    const { result, exceptionDetails } = await cdp.send('Runtime.evaluate', {
+      contextId: world.id,
+      awaitPromise: true,
+      returnByValue: true,
+      expression: `new Promise(resolve => chrome.runtime.sendMessage(${JSON.stringify(message)}, response =>
+        resolve(response === undefined ? { noAnswer: chrome.runtime.lastError?.message } : response)))`,
+    });
+    if (exceptionDetails) throw new Error(exceptionDetails.text);
+    return result.value;
+  } finally {
+    await cdp.detach();
+  }
+};
+
 test.describe('Sending a save to Varys, and telling the editor what happened', () => {
   const KEY = 'vxk_' + 'a'.repeat(43);
   const EMAIL = 'x@cumc.columbia.edu';
@@ -4782,41 +4817,6 @@ test.describe('Varys suggestions: worker', () => {
   const suggestionsIn = (calls: VarysCall[]) => calls.filter(c => c.path.startsWith('/api/extension/suggestions'));
   const worker = (context: BrowserContext) => context.serviceWorkers()[0];
 
-  /**
-   * Sends the worker a message the way the panel will, from a content script in the tab.
-   *
-   * A message from an extension page would reach the worker too, but with that page as its
-   * sender, and the insert acts on the SENDER's tab. So this evaluates in the content script's
-   * own isolated world, over CDP, and the worker sees the fixture tab.
-   */
-  const asContentScript = async (page: Page, context: BrowserContext, extensionId: string, message: unknown) => {
-    const cdp = await context.newCDPSession(page);
-    try {
-      const worlds: { id: number; origin: string; auxData?: { frameId?: string } }[] = [];
-      cdp.on('Runtime.executionContextCreated', e => worlds.push(e.context));
-      await cdp.send('Runtime.enable');
-      const { frameTree } = await cdp.send('Page.getFrameTree');
-      const ours = () => worlds.find(w =>
-        w.origin === `chrome-extension://${extensionId}` && w.auxData?.frameId === frameTree.frame.id);
-      // The content script is injected once the page is idle, which can be just after `load`.
-      for (let waited = 0; !ours() && waited < 10_000; waited += 100) await page.waitForTimeout(100);
-      const world = ours();
-      if (!world) throw new Error('The extension has no content script in this tab.');
-
-      const { result, exceptionDetails } = await cdp.send('Runtime.evaluate', {
-        contextId: world.id,
-        awaitPromise: true,
-        returnByValue: true,
-        expression: `new Promise(resolve => chrome.runtime.sendMessage(${JSON.stringify(message)}, response =>
-          resolve(response === undefined ? { noAnswer: chrome.runtime.lastError?.message } : response)))`,
-      });
-      if (exceptionDetails) throw new Error(exceptionDetails.text);
-      return result.value;
-    } finally {
-      await cdp.detach();
-    }
-  };
-
   const openEditor = async (page: Page) => {
     await page.goto(EDITOR_FORM);
     await expect(page.locator(`#${BODY}`)).toHaveCount(1);
@@ -5130,6 +5130,378 @@ test.describe('Varys suggestions: worker', () => {
 
     expect(reply).toEqual({ ok: false, result: 'no-editor' });
     expect(await page.evaluate(() => (window as any).__inserted)).toEqual([]);
+  });
+});
+
+test.describe('Varys drafts: worker', () => {
+  const KEY = 'vxk_' + 'a'.repeat(43);
+  const EMAIL = 'x@cumc.columbia.edu';
+  const connected = { key: KEY, email: EMAIL, connectedAt: '2026-10-23T12:00:00.000Z' };
+  const SITES = { email: EMAIL, user_id: '00000000-0000-0000-0000-000000000001', sites: ['cuimc.columbia.edu'] };
+  /** A node/add form with a rich editor on it, which is the tab the panel's messages come from. */
+  const EDITOR_FORM = `${HOST}/node/add/news-ckeditor`;
+  const BODY = 'edit-body-value';
+  /** What the panel sends on an add form: the form's origin, nothing of the page. */
+  const ADD_URL = `${HOST}/`;
+  /** The callout the Overview box is written in, as the editor's own rule spells it. */
+  const CALLOUT_RULE = 'aside(ck-callout,ck-callout--background-sky,ck-callout--center)[aria-labelledby]';
+
+  const NOT_CONNECTED = "This browser isn't connected to Varys any more, so nothing changed.";
+  const EXPIRED = 'Your Varys connection has expired. Reconnect from the extension menu.';
+  const UNREACHABLE = "Varys couldn't be reached, so nothing changed. Try again in a moment.";
+
+  const SUMMARY = { id: 'job-1', title: 'Heart failure explained', made_at: '2026-10-23T10:00:00+00:00' };
+  const LIST = { status: 'ok', drafts: [SUMMARY, { id: 'job-2', title: 'Asthma in adults', made_at: '2026-10-22T08:00:00+00:00' }] };
+  const READY = {
+    status: 'ready',
+    id: 'job-1',
+    title: 'Heart failure: what to know',
+    label: 'Heart failure explained',
+    made_at: '2026-10-23T10:00:00+00:00',
+    body_html: '<h2>Symptoms</h2><p>Shortness of breath.</p>',
+    overview_bullets: ['What heart failure is', 'How it is treated'],
+    summary: 'A short summary.',
+    meta_title: 'Heart failure | CUIMC',
+    doctors: [{ name: 'Jane Roe', status: 'matched', full_name: 'Jane Q. Roe, MD', source: 'quoted', exact: true }],
+    dropped: { tables: 1, images: 2 },
+    counts: { words: 850, headings: 4, lists: 2, links: 3 },
+  };
+
+  /** Varys as it is when all is well: it tracks this site, and answers the list and the draft as given. */
+  const varysUp = (
+    drafts: VarysAnswer = { status: 200, body: LIST },
+    draft: VarysAnswer = { status: 200, body: READY },
+  ) => (call: VarysCall): VarysAnswer => {
+    if (call.path === '/api/extension/connection') return { status: 200, body: SITES };
+    if (call.path === '/api/extension/drafts') return drafts;
+    if (call.path.startsWith('/api/extension/drafts/')) return draft;
+    return { status: 404, body: { detail: 'Not Found' } };
+  };
+
+  const draftsIn = (calls: VarysCall[]) => calls.filter(c => c.path.startsWith('/api/extension/drafts'));
+  const worker = (context: BrowserContext) => context.serviceWorkers()[0];
+  const TYPES = ['varysDrafts', 'varysDraft'] as const;
+  /** The request the panel sends for either message: the draft's takes an id as well. */
+  const request = (type: typeof TYPES[number], pageUrl: string = ADD_URL) =>
+    type === 'varysDraft' ? { type, pageUrl, id: 'job-1' } : { type, pageUrl };
+
+  const openEditor = async (page: Page) => {
+    await page.goto(EDITOR_FORM);
+    await expect(page.locator(`#${BODY}`)).toHaveCount(1);
+  };
+
+  /** The list of sites Varys last gave this person, two days old: a dead key never refreshes it. */
+  const lastList = (context: BrowserContext, sites: string[]) => worker(context).evaluate(([email, list]) =>
+    chrome.storage.session.set({ varysSites: { email, sites: list, fetchedAt: Date.now() - 2 * 86_400_000 } }),
+  [EMAIL, sites] as const);
+
+  test('the list is fetched with the form\'s origin and the key', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await openEditor(page);
+
+    const reply = await asContentScript(page, context, extensionId, { type: 'varysDrafts', pageUrl: ADD_URL });
+
+    expect(reply).toEqual({ ok: true, answer: LIST });
+    const [call] = draftsIn(calls);
+    expect(draftsIn(calls)).toHaveLength(1);
+    expect(call.method).toBe('GET');
+    expect(call.path).toBe('/api/extension/drafts');
+    expect(call.search).toBe('?page_url=' + encodeURIComponent(ADD_URL));
+    expect(call.authorization).toBe(`Bearer ${KEY}`);
+  });
+
+  test('an empty list is an answer', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varysUp({ status: 200, body: { status: 'ok', drafts: [] } }));
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, { type: 'varysDrafts', pageUrl: ADD_URL }))
+      .toEqual({ ok: true, answer: { status: 'ok', drafts: [] } });
+  });
+
+  test('a draft is fetched by its job id, in the path and encoded, with the form\'s origin', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await openEditor(page);
+
+    const reply = await asContentScript(page, context, extensionId,
+      { type: 'varysDraft', pageUrl: ADD_URL, id: 'job/1 a?b' });
+
+    expect(reply).toEqual({ ok: true, answer: READY });
+    const [call] = draftsIn(calls);
+    expect(draftsIn(calls)).toHaveLength(1);
+    expect(call.method).toBe('GET');
+    expect(call.path).toBe('/api/extension/drafts/job%2F1%20a%3Fb');
+    expect(call.search).toBe('?page_url=' + encodeURIComponent(ADD_URL));
+    expect(call.authorization).toBe(`Bearer ${KEY}`);
+  });
+
+  test('a draft with no confirmed title and no doctors reaches the panel with those as null', async ({ page, context, extensionId, settings }) => {
+    const bare = { ...READY, title: null, summary: null, meta_title: null, doctors: null };
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varysUp(undefined, { status: 200, body: bare }));
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, request('varysDraft')))
+      .toEqual({ ok: true, answer: bare });
+  });
+
+  test('an untracked host sends nothing about its drafts', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await openEditor(page);
+
+    for (const type of TYPES) {
+      expect(await asContentScript(page, context, extensionId, request(type, 'https://vagelos.columbia.edu/')))
+        .toEqual({ ok: true, answer: { status: 'not_tracked' } });
+    }
+    expect(draftsIn(calls)).toEqual([]);
+  });
+
+  test('a draft or a list Varys itself calls not tracked reaches the panel as that', async ({ page, context, extensionId, settings }) => {
+    // The list Varys gave can be a day old; its answer for the page is the later word.
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varysUp({ status: 200, body: { status: 'not_tracked' } }, { status: 200, body: { status: 'not_tracked' } }));
+    await openEditor(page);
+
+    for (const type of TYPES) {
+      expect(await asContentScript(page, context, extensionId, request(type)))
+        .toEqual({ ok: true, answer: { status: 'not_tracked' } });
+    }
+  });
+
+  test('with no list of tracked sites to check against, nothing is sent about the form', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, call => call.path === '/api/extension/connection'
+      ? { status: 503, body: { detail: 'Database unavailable.' } }
+      : varysUp()(call));
+    await openEditor(page);
+
+    for (const type of TYPES) {
+      expect(await asContentScript(page, context, extensionId, request(type)))
+        .toEqual({ ok: false, reason: 'unreachable', message: UNREACHABLE });
+    }
+    expect(draftsIn(calls)).toEqual([]);
+    // Varys was not refused, so the key is not in doubt.
+    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    expect(stored.varysConnection.expired).toBeUndefined();
+  });
+
+  test('a browser that is not connected sends nothing', async ({ page, context, extensionId, settings }) => {
+    await settings({ nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await openEditor(page);
+
+    for (const type of TYPES) {
+      expect(await asContentScript(page, context, extensionId, request(type)))
+        .toEqual({ ok: false, reason: 'not_connected', message: NOT_CONNECTED });
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test('an already expired connection sends nothing', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: { ...connected, expired: true }, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await openEditor(page);
+
+    for (const type of TYPES) {
+      expect(await asContentScript(page, context, extensionId, request(type)))
+        .toEqual({ ok: false, reason: 'expired', message: EXPIRED });
+    }
+    expect(calls).toEqual([]);
+  });
+
+  test('an expired key on a site the last list does not track answers not tracked, and asks nothing', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: { ...connected, expired: true }, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await lastList(context, ['nursing.columbia.edu']);
+    await openEditor(page);
+
+    for (const type of TYPES) {
+      expect(await asContentScript(page, context, extensionId, request(type)))
+        .toEqual({ ok: true, answer: { status: 'not_tracked' } });
+    }
+    expect(calls).toEqual([]);
+  });
+
+  for (const type of TYPES) {
+    test(`a 401 on ${type} marks the connection expired`, async ({ page, context, extensionId, settings }) => {
+      const refused: VarysAnswer = { status: 401, body: { detail: 'This key has expired.' } };
+      await settings({ varysConnection: connected, nodeEditor: false });
+      await stubVarys(context, varysUp(refused, refused));
+      await openEditor(page);
+
+      expect(await asContentScript(page, context, extensionId, request(type)))
+        .toEqual({ ok: false, reason: 'expired', message: EXPIRED });
+      const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+      expect(stored.varysConnection.expired).toBe(true);
+    });
+  }
+
+  test('a 401 on the list of sites marks it expired too, before anything is asked about the form', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, () => ({ status: 401, body: { detail: 'This key has expired.' } }));
+    await openEditor(page);
+
+    for (const type of TYPES) {
+      expect(await asContentScript(page, context, extensionId, request(type)))
+        .toEqual({ ok: false, reason: 'expired', message: EXPIRED });
+    }
+    expect(draftsIn(calls)).toEqual([]);
+    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    expect(stored.varysConnection.expired).toBe(true);
+  });
+
+  test('a 404 on one draft is not_found, and the key is not in doubt', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varysUp(undefined, { status: 404, body: { detail: "Varys can't find that draft." } }));
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, request('varysDraft')))
+      .toEqual({ ok: false, reason: 'not_found', message: "Varys can't find that draft." });
+    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    expect(stored.varysConnection.expired).toBeUndefined();
+  });
+
+  test('a 404 is not_found in the extension\'s words whatever Varys said, so "Not Found" never reaches the person', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    // A Varys that predates the route answers {"detail":"Not Found"}; another might send no body at all.
+    let draft: VarysAnswer = { status: 404, body: { detail: 'Not Found' } };
+    await stubVarys(context, call => call.path.startsWith('/api/extension/drafts/') ? draft : varysUp()(call));
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, request('varysDraft')))
+      .toEqual({ ok: false, reason: 'not_found', message: "Varys can't find that draft." });
+    draft = { status: 404 };
+    expect(await asContentScript(page, context, extensionId, request('varysDraft')))
+      .toEqual({ ok: false, reason: 'not_found', message: "Varys can't find that draft." });
+  });
+
+  test('a draft without an id sends nothing, because there is nothing to ask for', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp());
+    await openEditor(page);
+
+    for (const id of [undefined, '', 7, null]) {
+      expect(await asContentScript(page, context, extensionId, { type: 'varysDraft', pageUrl: ADD_URL, id }))
+        .toMatchObject({ ok: false, reason: 'not_found' });
+    }
+    expect(draftsIn(calls)).toEqual([]);
+  });
+
+  test('another status is an error, with Varys\'s own words when it gave any', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varysUp(
+      { status: 503, body: { detail: 'Database unavailable.' } },
+      { status: 400, body: { detail: 'page_url is not a page address.' } },
+    ));
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, request('varysDrafts')))
+      .toEqual({ ok: false, reason: 'error', message: 'Database unavailable.' });
+    expect(await asContentScript(page, context, extensionId, request('varysDraft')))
+      .toEqual({ ok: false, reason: 'error', message: 'page_url is not a page address.' });
+    // Neither refused the key.
+    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    expect(stored.varysConnection.expired).toBeUndefined();
+  });
+
+  test('an error with no words of its own says Varys could not be reached', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varysUp({ status: 500, body: { detail: [{ msg: 'x' }] } }, { status: 500 }));
+    await openEditor(page);
+
+    for (const type of TYPES) {
+      expect(await asContentScript(page, context, extensionId, request(type)))
+        .toEqual({ ok: false, reason: 'error', message: UNREACHABLE });
+    }
+  });
+
+  test('no answer from Varys is unreachable, and the key is not in doubt', async ({ page, context, extensionId, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, call => call.path === '/api/extension/connection'
+      ? { status: 200, body: SITES }
+      : 'abort');
+    await openEditor(page);
+
+    for (const type of TYPES) {
+      expect(await asContentScript(page, context, extensionId, request(type)))
+        .toEqual({ ok: false, reason: 'unreachable', message: UNREACHABLE });
+    }
+    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    expect(stored.varysConnection.expired).toBeUndefined();
+  });
+
+  test('an answer that is not one of Varys\'s shapes is an error, not something for the panel to guess at', async ({ page, context, extensionId, settings }) => {
+    const { body_html, ...noBody } = READY;
+    void body_html;
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varysUp(
+      { status: 200, body: { status: 'ok', drafts: [{ id: 'job-1' }] } },
+      { status: 200, body: noBody },
+    ));
+    await openEditor(page);
+
+    for (const type of TYPES) {
+      expect(await asContentScript(page, context, extensionId, request(type)))
+        .toEqual({ ok: false, reason: 'error', message: UNREACHABLE });
+    }
+  });
+
+  test('the editor is asked whether its filter keeps a rule, and says yes only for one it does', async ({ page, context, extensionId, settings }) => {
+    await settings({ nodeEditor: false });
+    await openEditor(page);
+    const ask = (rule: string) =>
+      asContentScript(page, context, extensionId, { type: 'richEditorAllows', elementId: BODY, rule });
+
+    expect(await ask('h2')).toEqual({ allowed: true });
+    // The page lists only a few tags as allowed, and the callout is not one of them.
+    expect(await ask(CALLOUT_RULE)).toEqual({ allowed: false });
+
+    await page.evaluate(rule => (window as any).__ckAllows.push(rule), CALLOUT_RULE);
+    expect(await ask(CALLOUT_RULE)).toEqual({ allowed: true });
+  });
+
+  test('asking an editor that is not there, or that cannot say, is null and not no', async ({ page, context, extensionId, settings }) => {
+    await settings({ nodeEditor: false });
+    await openEditor(page);
+    const ask = (elementId: string) =>
+      asContentScript(page, context, extensionId, { type: 'richEditorAllows', elementId, rule: 'h2' });
+
+    // No CKEditor instance for that field.
+    expect(await ask('edit-nothing-here')).toEqual({ allowed: null });
+
+    // An instance with no content filter to ask.
+    await page.evaluate(id => { delete (window as any).CKEDITOR.instances[id].filter; }, BODY);
+    expect(await ask(BODY)).toEqual({ allowed: null });
+
+    // A filter that fails when asked.
+    await page.evaluate(id => {
+      (window as any).CKEDITOR.instances[id].filter = { check: () => { throw new Error('no'); } };
+    }, BODY);
+    expect(await ask(BODY)).toEqual({ allowed: null });
+
+    // A filter that answers with something that is not a yes or a no.
+    await page.evaluate(id => {
+      (window as any).CKEDITOR.instances[id].filter = { check: () => undefined };
+    }, BODY);
+    expect(await ask(BODY)).toEqual({ allowed: null });
+  });
+
+  test('asking about a rule that is not text is null, and nothing is asked of the editor', async ({ page, context, extensionId, settings }) => {
+    await settings({ nodeEditor: false });
+    await openEditor(page);
+    await page.evaluate(id => {
+      (window as any).__asked = 0;
+      (window as any).CKEDITOR.instances[id].filter = { check: () => { (window as any).__asked += 1; return true; } };
+    }, BODY);
+
+    for (const rule of [undefined, null, 7, '']) {
+      expect(await asContentScript(page, context, extensionId, { type: 'richEditorAllows', elementId: BODY, rule }))
+        .toEqual({ allowed: null });
+    }
+    expect(await page.evaluate(() => (window as any).__asked)).toBe(0);
   });
 });
 

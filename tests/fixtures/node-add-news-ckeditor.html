@@ -54,6 +54,8 @@
 <script>
 // ---- Minimal but behaviourally honest CKEditor 4 stub ----------------------
 window.__inserted = [];
+// The rules this editor's filter keeps: the tags the page lists as allowed, and nothing else.
+window.__ckAllows = ['p', 'a[href]', 'em', 'strong', 'h2', 'ul', 'li'];
 window.CKEDITOR = {
   instances: {},
   // The site's configured buttons. A reimplemented toolbar could not know these.
@@ -100,6 +102,11 @@ window.CKEDITOR = {
       // it is before anyone has clicked in it returns no ranges here, as CKEditor does.
       getSelection: function () { return { getRanges: function () { return [{}]; } }; },
       focus: function () {},
+      // CKEditor 4's content filter. `check(rule)` says whether the editor would KEEP markup
+      // written to that rule, which is what the filter list on this page ("Allowed HTML tags")
+      // governs. The stub knows exactly the rules in window.__ckAllows, by the rule's own text,
+      // where the real one parses it; a test that wants the editor to accept more adds to it.
+      filter: { check: function (rule) { return window.__ckAllows.indexOf(rule) !== -1; } },
       // Recorded, and appended to the data (the stub has no caret to put it at), so
       // updateElement() has something to carry to the textarea.
       insertHtml: function (html) { window.__inserted.push(html); this._data += html; },

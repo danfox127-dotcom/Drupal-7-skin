@@ -28,6 +28,11 @@ import {
 import type {
   VarysFormOpenedMessage, VarysFormOpenedResponse, VarysSubmitMessage,
 } from '../lib/varys/pageState';
+import {
+  DRAFT_NOT_FOUND_COPY, parseDraft, parseDraftList,
+  type DraftFailureReason, type DraftReply, type DraftsReply, type RichEditorAllowsRequest,
+  type RichEditorAllowsResponse, type VarysDraftRequest, type VarysDraftsRequest,
+} from '../lib/varys/drafts';
 import { showVarysNotice } from '../lib/varys/notice';
 import {
   parseSuggestionsAnswer,
@@ -270,6 +275,47 @@ async function insertRichEditorHtml(
   } catch (err) {
     console.warn('[D7 Studio] Could not insert into the rich text editor', err);
     return { ok: false, result: 'error' };
+  }
+}
+
+/**
+ * Whether the field's CKEditor 4 would KEEP markup written to `rule`, by the editor's own
+ * content filter (`CKEDITOR.instances[id].filter.check(rule)`, e.g. `p(lead)[title]`).
+ *
+ * Only the editor knows: a site's allowed content is configuration the extension cannot read
+ * from outside the page, and markup the filter does not allow is silently stripped on the way
+ * into the editor. `allowed` is null when there is no telling, which is not a no: no
+ * instance for that field, one with no filter to ask, a rule that is not text, a filter that
+ * throws or answers with anything but a boolean. The caller treats null as "do not rely on it".
+ */
+async function richEditorAllows(
+  tabId: number, elementId: unknown, rule: unknown,
+): Promise<RichEditorAllowsResponse> {
+  if (typeof elementId !== 'string' || typeof rule !== 'string' || rule === '') return { allowed: null };
+  try {
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      args: [elementId, rule],
+      func: (id: string, test: string) => {
+        const w = window as unknown as {
+          CKEDITOR?: { instances?: Record<string, { filter?: { check?: (rule: string) => unknown } }> };
+        };
+        try {
+          const filter = w.CKEDITOR?.instances?.[id]?.filter;
+          if (!filter || typeof filter.check !== 'function') return null;
+          const allowed = filter.check(test);
+          return typeof allowed === 'boolean' ? allowed : null;
+        } catch {
+          return null;
+        }
+      },
+    });
+    const result = injection?.result;
+    return { allowed: typeof result === 'boolean' ? result : null };
+  } catch (err) {
+    console.warn('[D7 Studio] Could not ask the rich text editor what it allows', err);
+    return { allowed: null };
   }
 }
 
@@ -1018,6 +1064,101 @@ async function siteTracked(request: VarysSiteTrackedRequest): Promise<VarysSiteT
   return { tracked: isTrackedSite(request.pageUrl, sites) };
 }
 
+/** What stops a drafts request before any is sent, or says there is nothing for the site. */
+type DraftStop =
+  | { ok: true; answer: { status: 'not_tracked' } }
+  | { ok: false; reason: DraftFailureReason; message: string };
+
+/**
+ * The steps a request about a form's drafts takes before it is sent, which are the ones
+ * `suggestionsFor` takes, in the same order, so the drafts request leaves the browser under
+ * the same conditions: connected; the key not expired (an expired key on a site the last list
+ * does not track is still "not tracked"); the host on the list of tracked sites, fetched fresh
+ * when the day-old one has gone, with the old one answering "not tracked" when Varys cannot
+ * give a new one. With no list at all, nothing is sent: the request is passive and the next
+ * form open retries. Returns the connection to ask with, or the answer that ends it.
+ */
+async function draftGate(pageUrl: string): Promise<{ connection: VarysConnection } | { stop: DraftStop }> {
+  const connection = await getConnection();
+  if (!connection) return { stop: { ok: false, reason: 'not_connected', message: ACTION_NOT_CONNECTED_COPY } };
+
+  const notTracked: DraftStop = { ok: true, answer: { status: 'not_tracked' } };
+  const expired = async (): Promise<{ stop: DraftStop }> => ({
+    stop: knownUntracked(pageUrl, await sessionGet<SitesCache>(SITES_KEY), connection.email)
+      ? notTracked
+      : { ok: false, reason: 'expired', message: ACTION_EXPIRED_COPY },
+  });
+  if (connection.expired) return expired();
+
+  const sites = await trackedSites(connection);
+  if (sites === 'expired') {
+    await markExpired(connection);
+    return expired();
+  }
+  if (sites === null) return { stop: { ok: false, reason: 'unreachable', message: ACTION_UNREACHABLE_COPY } };
+  if (!isTrackedSite(pageUrl, sites)) return { stop: notTracked };
+  return { connection };
+}
+
+/**
+ * Why a drafts request that got an answer did not succeed, as the panel is told it. A 401
+ * marks the key expired; no answer at all is unreachable; anything else is an error, in
+ * Varys's own words when it gave any.
+ */
+async function draftFailure(
+  connection: VarysConnection, answer: VarysAnswer,
+): Promise<{ ok: false; reason: DraftFailureReason; message: string }> {
+  if (answer.status === 401) {
+    await markExpired(connection);
+    return { ok: false, reason: 'expired', message: ACTION_EXPIRED_COPY };
+  }
+  if (answer.status === null) return { ok: false, reason: 'unreachable', message: ACTION_UNREACHABLE_COPY };
+  const detail = (answer.json as { detail?: unknown } | null)?.detail;
+  return { ok: false, reason: 'error', message: typeof detail === 'string' ? detail : ACTION_UNREACHABLE_COPY };
+}
+
+/** The Varys drafts the person has for the form's site, for the Drafts panel. See `draftGate`. */
+async function draftsFor(request: VarysDraftsRequest): Promise<DraftsReply> {
+  const { pageUrl } = request;
+  const gate = await draftGate(pageUrl);
+  if ('stop' in gate) return gate.stop;
+
+  const answer = await callVarys(gate.connection, 'GET', `/api/extension/drafts?page_url=${encodeURIComponent(pageUrl)}`);
+  if (succeeded(answer)) {
+    const parsed = parseDraftList(answer.json);
+    if (parsed) return { ok: true, answer: parsed };
+    console.warn('[D7 Studio] Varys answered the drafts list with a shape this version does not know', answer.json);
+    return { ok: false, reason: 'error', message: ACTION_UNREACHABLE_COPY };
+  }
+  return draftFailure(gate.connection, answer);
+}
+
+/**
+ * One of those drafts, ready to fill in. The same steps as the list, and a 404 is Varys saying
+ * it has no such draft for this person (gone, or never theirs), which the panel tells apart
+ * from Varys being down. The words for it are the extension's own: Varys's `detail` for a 404
+ * is the same sentence from this route and "Not Found" from a Varys that predates it.
+ */
+async function draftFor(request: VarysDraftRequest): Promise<DraftReply> {
+  const { pageUrl, id } = request;
+  // Nothing to ask for, so nothing is sent: the id is the panel's, but the message is not trusted.
+  if (typeof id !== 'string' || id === '') return { ok: false, reason: 'not_found', message: DRAFT_NOT_FOUND_COPY };
+  const gate = await draftGate(pageUrl);
+  if ('stop' in gate) return gate.stop;
+
+  const answer = await callVarys(
+    gate.connection, 'GET', `/api/extension/drafts/${encodeURIComponent(id)}?page_url=${encodeURIComponent(pageUrl)}`,
+  );
+  if (succeeded(answer)) {
+    const parsed = parseDraft(answer.json);
+    if (parsed) return { ok: true, answer: parsed };
+    console.warn('[D7 Studio] Varys answered a draft with a shape this version does not know', answer.json);
+    return { ok: false, reason: 'error', message: ACTION_UNREACHABLE_COPY };
+  }
+  if (answer.status === 404) return { ok: false, reason: 'not_found', message: DRAFT_NOT_FOUND_COPY };
+  return draftFailure(gate.connection, answer);
+}
+
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
   if (changeInfo.status === 'loading') {
     // Stamped as it arrives, before any queued work, so the time is the event's own.
@@ -1072,7 +1213,8 @@ chrome.runtime.onMessage.addListener((
   message: FetchSourceRequest | SyncRichEditorRequest | RichEditorLifecycleRequest
     | CheckForUpdateRequest | ReadRichEditorRequest | VarysStatusRequest | VarysDisconnectRequest
     | VarysFormOpenedMessage | VarysSubmitMessage | VarysActionRequest | VarysSuggestionsRequest
-    | InsertRichEditorHtmlRequest | VarysCarryFillsMessage | VarysCarriedFillsRequest | VarysSiteTrackedRequest,
+    | InsertRichEditorHtmlRequest | VarysCarryFillsMessage | VarysCarriedFillsRequest | VarysSiteTrackedRequest
+    | VarysDraftsRequest | VarysDraftRequest | RichEditorAllowsRequest,
   sender,
   sendResponse
 ) => {
@@ -1153,6 +1295,16 @@ chrome.runtime.onMessage.addListener((
     return true;
   }
 
+  if (message?.type === 'varysDrafts') {
+    void draftsFor(message).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'varysDraft') {
+    void draftFor(message).then(sendResponse);
+    return true;
+  }
+
   if (message?.type === 'fetchSource') {
     void fetchSource(message.url).then(sendResponse);
     // Keeps the message channel open for the async reply.
@@ -1177,6 +1329,16 @@ chrome.runtime.onMessage.addListener((
       return false;
     }
     void insertRichEditorHtml(tabId, message.elementId, message.html).then(sendResponse);
+    return true;
+  }
+
+  if (message?.type === 'richEditorAllows') {
+    const tabId = sender.tab?.id;
+    if (tabId === undefined) {
+      sendResponse({ allowed: null } satisfies RichEditorAllowsResponse);
+      return false;
+    }
+    void richEditorAllows(tabId, message.elementId, message.rule).then(sendResponse);
     return true;
   }
 
