@@ -23,7 +23,7 @@ test.beforeAll(async () => {
   fs.writeFileSync(entry, `
     export { discoverSchema } from '../../src/lib/formSchema';
     export {
-      autocompletePathFor, probeReference, resolveReference,
+      autocompletePathFor, probeReference, probeReferenceExact, resolveReference,
     } from '../../src/lib/clone/references';
   `);
   const built = await esbuild.build({
@@ -248,6 +248,80 @@ test.describe('one lookup', () => {
 
     expect(result.status).toBe('unavailable');
     expect(result.reason).toContain('another site');
+    expect(endpoint.requests(), 'a cross-origin lookup was actually attempted').toEqual([]);
+  });
+});
+
+test.describe('one lookup that must be exact and single', () => {
+  /**
+   * `probeReference` returns the FIRST key that matches, which is right for a Related
+   * Condition and wrong for a doctor: two people can share a full name, and picking one of
+   * them puts a stranger's profile on a medical page. `probeReferenceExact` collects every
+   * match so the caller can refuse to guess.
+   */
+  test('one exact key is a match, carrying the destination\'s own value', async ({ page }) => {
+    await withEndpoint(page, {
+      'Jane Doe, MD': { 'Jane Doe, MD (1234)': 'Jane Doe, MD', 'Jane Doe, MD, PhD (77)': 'Jane Doe, MD, PhD' },
+    });
+    const result = await page.evaluate(
+      ([p, here]) => (window as any).R.probeReferenceExact(p, 'Jane Doe, MD', here),
+      [PATH, HERE] as const);
+
+    expect(result).toEqual({
+      status: 'match', value: 'Jane Doe, MD (1234)', matches: ['Jane Doe, MD (1234)'],
+    });
+  });
+
+  test('two exact keys are ambiguous and name neither as the value', async ({ page }) => {
+    await withEndpoint(page, {
+      'Jane Doe, MD': { 'Jane Doe, MD (1)': 'Jane Doe, MD', 'Jane Doe, MD (2)': 'Jane Doe, MD' },
+    });
+    const result = await page.evaluate(
+      ([p, here]) => (window as any).R.probeReferenceExact(p, 'Jane Doe, MD', here),
+      [PATH, HERE] as const);
+
+    expect(result.status).toBe('ambiguous');
+    expect(result.value).toBeNull();
+    expect(result.matches).toEqual(['Jane Doe, MD (1)', 'Jane Doe, MD (2)']);
+  });
+
+  test('a longer name is not an exact match', async ({ page }) => {
+    await withEndpoint(page, {
+      'Jane Doe, MD': { 'Jane Doe, MD, PhD (1)': 'Jane Doe, MD, PhD' },
+    });
+    const result = await page.evaluate(
+      ([p, here]) => (window as any).R.probeReferenceExact(p, 'Jane Doe, MD', here),
+      [PATH, HERE] as const);
+
+    expect(result).toEqual({ status: 'no-match', value: null, matches: [] });
+  });
+
+  test('an error response is unavailable, with no match to offer', async ({ page }) => {
+    await withEndpoint(page, {}, { status: 500 });
+    const result = await page.evaluate(
+      ([p, here]) => (window as any).R.probeReferenceExact(p, 'Jane Doe, MD', here),
+      [PATH, HERE] as const);
+
+    expect(result).toEqual({ status: 'unavailable', value: null, matches: [] });
+  });
+
+  test('a timeout is unavailable', async ({ page }) => {
+    await withEndpoint(page, {}, { hang: true });
+    const result = await page.evaluate(
+      ([p, here]) => (window as any).R.probeReferenceExact(p, 'Jane Doe, MD', here, 150),
+      [PATH, HERE] as const);
+
+    expect(result.status).toBe('unavailable');
+  });
+
+  test('a lookup pointing at another site is refused, not followed', async ({ page }) => {
+    const endpoint = await withEndpoint(page, {});
+    const result = await page.evaluate(
+      (here) => (window as any).R.probeReferenceExact(
+        'https://elsewhere.example.com/entityreference/autocomplete/x', 'Jane Doe, MD', here),
+      HERE);
+
+    expect(result.status).toBe('unavailable');
     expect(endpoint.requests(), 'a cross-origin lookup was actually attempted').toEqual([]);
   });
 });

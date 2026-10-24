@@ -78,32 +78,38 @@ export function autocompletePathFor(
   return raw || null;
 }
 
+/** What the site answered to one lookup: every key it offered, or why it could not be asked. */
+type KeysLookup =
+  | { ok: true; keys: string[] }
+  | { ok: false; reason: string };
+
 /**
- * Looks one title up against the destination.
+ * Asks the destination's autocomplete about one title and returns every key it offers.
+ *
+ * The part `probeReference` and `probeReferenceExact` share, so the origin refusal, the
+ * session credentials and the timeout are written once. Deciding WHICH of the keys is the
+ * answer is each caller's business: one takes the first match, the other refuses to guess.
  *
  * Refuses anything that is not same-origin. The path comes from the page currently open,
  * so it should always be this site — but a fetch built from DOM content should be
  * checked rather than trusted, and an autocomplete pointing elsewhere is not something
  * to follow with the user's session cookies attached.
  */
-export async function probeReference(
+async function lookupKeys(
   path: string,
   title: string,
-  location: Pick<Location, 'origin' | 'href'> = window.location,
-  timeoutMs: number = PROBE_TIMEOUT_MS
-): Promise<ProbeResult> {
+  location: Pick<Location, 'origin' | 'href'>,
+  timeoutMs: number
+): Promise<KeysLookup> {
   let url: URL;
   try {
     url = new URL(`${path.replace(/\/$/, '')}/${encodeURIComponent(title)}`, location.href);
   } catch {
-    return { status: 'unavailable', value: null, reason: 'the lookup address could not be read' };
+    return { ok: false, reason: 'the lookup address could not be read' };
   }
 
   if (url.origin !== location.origin) {
-    return {
-      status: 'unavailable', value: null,
-      reason: 'the lookup address points at another site, so it was not followed',
-    };
+    return { ok: false, reason: 'the lookup address points at another site, so it was not followed' };
   }
 
   const controller = new AbortController();
@@ -115,7 +121,7 @@ export async function probeReference(
       signal: controller.signal,
     });
     if (!response.ok) {
-      return { status: 'unavailable', value: null, reason: `the site answered ${response.status}` };
+      return { ok: false, reason: `the site answered ${response.status}` };
     }
 
     /**
@@ -125,26 +131,78 @@ export async function probeReference(
      */
     const data = await response.json() as unknown;
     if (!data || typeof data !== 'object') {
-      return { status: 'unavailable', value: null, reason: 'the site\'s answer could not be read' };
+      return { ok: false, reason: 'the site\'s answer could not be read' };
     }
 
-    const wanted = labelKey(title);
-    for (const key of Object.keys(data as Record<string, string>)) {
-      if (labelKey(stripEntityId(key)) === wanted) {
-        return { status: 'match', value: key, reason: null };
-      }
-    }
-
-    return { status: 'no-match', value: null, reason: null };
+    return { ok: true, keys: Object.keys(data as Record<string, string>) };
   } catch (error) {
     const aborted = error instanceof Error && error.name === 'AbortError';
     return {
-      status: 'unavailable', value: null,
+      ok: false,
       reason: aborted ? 'the lookup timed out' : 'the lookup could not be completed',
     };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/** The keys whose own title, entity id removed, is the one asked for. */
+function keysTitled(keys: string[], title: string): string[] {
+  const wanted = labelKey(title);
+  return keys.filter(key => labelKey(stripEntityId(key)) === wanted);
+}
+
+/**
+ * Looks one title up against the destination, and takes the first key that matches.
+ *
+ * Fine for a condition or a group. For a person, where two can share a name, use
+ * `probeReferenceExact`, which will not pick between them.
+ */
+export async function probeReference(
+  path: string,
+  title: string,
+  location: Pick<Location, 'origin' | 'href'> = window.location,
+  timeoutMs: number = PROBE_TIMEOUT_MS
+): Promise<ProbeResult> {
+  const found = await lookupKeys(path, title, location, timeoutMs);
+  if (!found.ok) return { status: 'unavailable', value: null, reason: found.reason };
+
+  const [first] = keysTitled(found.keys, title);
+  return first === undefined
+    ? { status: 'no-match', value: null, reason: null }
+    : { status: 'match', value: first, reason: null };
+}
+
+export interface ExactProbeResult {
+  status: 'match' | 'ambiguous' | 'no-match' | 'unavailable';
+  /** The destination's own key — set only for `match`, never when there was a choice to make. */
+  value: string | null;
+  /** Every key whose title is exactly the one asked for. */
+  matches: string[];
+}
+
+/**
+ * Looks one title up and answers `match` only when EXACTLY ONE key has that exact title.
+ *
+ * For a reference where being wrong costs more than being empty — a doctor, whose profile
+ * must not be put on a page because it happened to be first. Two keys with the same title
+ * are `ambiguous` and carry no value, so a caller cannot write one by reading `value`. A
+ * longer title that merely begins with the one asked for ("Jane Doe, MD, PhD" for
+ * "Jane Doe, MD") is not a match: the comparison is the whole title, as in `probeReference`.
+ */
+export async function probeReferenceExact(
+  path: string,
+  title: string,
+  location: Pick<Location, 'origin' | 'href'> = window.location,
+  timeoutMs: number = PROBE_TIMEOUT_MS
+): Promise<ExactProbeResult> {
+  const found = await lookupKeys(path, title, location, timeoutMs);
+  if (!found.ok) return { status: 'unavailable', value: null, matches: [] };
+
+  const matches = keysTitled(found.keys, title);
+  if (matches.length === 0) return { status: 'no-match', value: null, matches };
+  if (matches.length > 1) return { status: 'ambiguous', value: null, matches };
+  return { status: 'match', value: matches[0], matches };
 }
 
 export interface ResolvedReference {
