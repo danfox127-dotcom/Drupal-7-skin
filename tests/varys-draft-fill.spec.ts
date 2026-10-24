@@ -362,8 +362,8 @@ test.describe('planDraftFill', () => {
       A.planDraftFill(ready({ overview_bullets: [], counts: { words: 1, headings: 1, lists: 0, links: 0 } }), form({ 'body[und][0][value]': '' }))
         .find((r: any) => r.kind === 'body').preview,
     ]);
-    expect(rows[0]).toBe('Overview box (2 points), then the draft: 1,234 words · 3 headings · 1 list · 2 Varys links');
-    expect(rows[1]).toBe('The draft: 1 word · 1 heading · 0 lists · 0 Varys links');
+    expect(rows[0]).toBe('Overview box (2 points), then the draft: 1,234 words · 3 headings · 1 list · 2 links');
+    expect(rows[1]).toBe('The draft: 1 word · 1 heading · 0 lists · 0 links');
   });
 });
 

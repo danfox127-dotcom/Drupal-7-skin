@@ -53,10 +53,13 @@ const hasText = (value: string | null): value is string => value !== null && val
 
 const plural = (n: number, one: string, many = `${one}s`): string => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 
-/** What the body row says will be written: the Overview box if there is one, then the draft. */
+/**
+ * What the body row says will be written: the Overview box if there is one, then the draft.
+ * `links` counts every link in the body, the writer's own as well as Varys's, so it is "links".
+ */
 function bodyPreview(draft: ReadyDraft): string {
   const { words, headings, lists, links } = draft.counts;
-  const counts = [plural(words, 'word'), plural(headings, 'heading'), plural(lists, 'list'), plural(links, 'Varys link')]
+  const counts = [plural(words, 'word'), plural(headings, 'heading'), plural(lists, 'list'), plural(links, 'link')]
     .join(' · ');
   const points = draft.overview_bullets.length;
   return points > 0

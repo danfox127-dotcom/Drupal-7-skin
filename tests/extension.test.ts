@@ -6783,7 +6783,7 @@ test.describe('Varys drafts: panel', () => {
   const UNDO_LASTS = 'Undo lasts until this page reloads (Preview or Save).';
   const ALREADY_HOLDS = 'The body already holds this draft.';
   const FILL_FAILED = "This field couldn't be filled, so nothing changed.";
-  const BODY_LINE = 'Overview box (2 points), then the draft: 1,240 words · 4 headings · 2 lists · 3 Varys links';
+  const BODY_LINE = 'Overview box (2 points), then the draft: 1,240 words · 4 headings · 2 lists · 3 links';
   const DROPPED = "Tables (1) and images (2) aren't carried over; add them in Drupal.";
 
   const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
