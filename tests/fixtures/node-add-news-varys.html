@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<!--
+  A new News page on a site Varys tracks, for the Varys drafts panel.
+
+  The fields a draft fills, as the live News add form (captured/news.html) renders them:
+  Title, the body with its rich editor, Summary, the search title and description
+  (metatags), "Generate automatic URL alias" ticked over a disabled alias box, which a fill
+  must leave exactly as they are, and Related Profiles: one empty row with its hidden
+  autocomplete address, and the "Add another item" button.
+
+  Two departures from the capture, both deliberate:
+
+   * The autocomplete address is filled in (the capture strips it). It points at this site,
+     as Drupal's does, and a test answers it with a route.
+   * The search title holds the metatag module's pattern, `[current-page:title] | [site:name]`,
+     so a fill that keeps the site-name token is told apart from one that does not.
+
+  The CKEditor 4 stub is node-add-news-ckeditor.html's, attached only to the body (the
+  textarea Drupal marks `ckeditor-mod`), and faithful where the drafts panel depends on it:
+
+   * content lives in the instance, not the textarea, until updateElement();
+   * setData is ASYNCHRONOUS and NORMALISES what it is given (a line break between tags, as
+     CKEditor's own writer puts between blocks), so a fill that records what it SENT rather
+     than what the editor holds cannot Undo, and one that reads too soon reads the old body;
+   * filter.check(rule) answers by window.__ckAllows, which lists the tags this page allows.
+     The Overview callout is not among them: a test that wants the editor to keep it pushes
+     the rule onto window.__ckAllows.
+
+  The editor syncs the textarea on submit and the form posts, so a save is a real one.
+-->
+<html>
+<head><title>Create News | CUIMC</title></head>
+<body class="logged-in">
+<div id="toolbar"><a href="/user/1">testuser</a></div>
+<form class="node-form node-news-form" enctype="multipart/form-data" action="/node/add/news-varys" method="post" id="news-node-form" accept-charset="UTF-8">
+  <div class="field-type-text field-name-title-field field-widget-text-textfield form-wrapper" id="edit-title-field">
+    <div class="form-item form-type-textfield form-item-title-field-und-0-value">
+      <label for="edit-title-field-und-0-value">Title <span class="form-required">*</span></label>
+      <input class="text-full form-text required" type="text" id="edit-title-field-und-0-value" name="title_field[und][0][value]" value="" size="60" maxlength="255" required="required">
+    </div>
+  </div>
+
+  <div class="field-type-text-with-summary field-name-body field-widget-text-textarea-with-summary form-wrapper" id="edit-body">
+    <div class="form-item form-type-textarea text-format-wrapper form-item-body-und-0-value">
+      <label for="edit-body-und-0-value">Body </label>
+      <div class="form-textarea-wrapper resizable">
+        <textarea class="text-full ckeditor-mod form-textarea" id="edit-body-und-0-value" name="body[und][0][value]" cols="60" rows="20"></textarea>
+      </div>
+      <div class="filter-wrapper">
+        <div class="form-item form-type-select form-item-body-und-0-format">
+          <label for="edit-body-und-0-format">Text format </label>
+          <select class="filter-list form-select" id="edit-body-und-0-format" name="body[und][0][format]">
+            <option value="filtered_html" selected="selected">Filtered HTML</option>
+            <option value="full_html">Full HTML</option>
+          </select>
+        </div>
+        <div class="filter-guidelines">
+          <p>Allowed HTML tags: &lt;a&gt; &lt;em&gt; &lt;strong&gt; &lt;h2&gt; &lt;h3&gt; &lt;ul&gt; &lt;ol&gt; &lt;li&gt; &lt;p&gt;</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="field-type-text field-name-field-summary field-widget-text-textarea form-wrapper" id="edit-field-summary">
+    <div id="field-summary-add-more-wrapper"><div class="form-item form-type-textarea form-item-field-summary-und-0-value">
+      <label for="edit-field-summary-und-0-value">Summary <span class="form-required">*</span></label>
+      <div class="form-textarea-wrapper resizable"><textarea class="text-full form-textarea" id="edit-field-summary-und-0-value" name="field_summary[und][0][value]" cols="60" rows="5" required="required"></textarea></div>
+      <div class="description">Enter a short plain text description about this article. This summary is also used as the default text for the page's metadata description used by external search engines and some social media sites.</div>
+    </div></div>
+  </div>
+
+  <div class="field-type-entityreference field-name-field-cola-cups-profiles field-widget-entityreference-autocomplete form-wrapper" id="edit-field-cola-cups-profiles"><div id="field-cola-cups-profiles-add-more-wrapper"><div class="form-item"><table id="field-cola-cups-profiles-values" class="field-multiple-table sticky-enabled">
+ <thead><tr><th colspan="2" class="field-label"><label>Related Profiles </label></th><th class="tabledrag-hide" style="display: none;">Order</th> </tr></thead>
+<tbody>
+ <tr class="draggable odd"><td class="field-multiple-drag"></td><td><div class="form-item form-type-textfield form-item-field-cola-cups-profiles-und-0-target-id" role="application">
+  <label class="element-invisible" for="edit-field-cola-cups-profiles-und-0-target-id">Related Profiles </label>
+ <input type="text" id="edit-field-cola-cups-profiles-und-0-target-id" name="field_cola_cups_profiles[und][0][target_id]" value="" size="60" maxlength="1024" class="form-text form-autocomplete" autocomplete="OFF" aria-autocomplete="list"><input type="hidden" id="edit-field-cola-cups-profiles-und-0-target-id-autocomplete" value="https://www.cuimc.columbia.edu/index.php?q=entityreference/autocomplete/tags/field_cola_cups_profiles/node/news/NULL" disabled="disabled" class="autocomplete">
+<span class="element-invisible" aria-live="assertive" aria-atomic="true" id="edit-field-cola-cups-profiles-und-0-target-id-autocomplete-aria-live"></span></div>
+</td><td class="delta-order tabledrag-hide" style="display: none;"><div class="form-item form-type-select form-item-field-cola-cups-profiles-und-0--weight">
+  <label class="element-invisible" for="edit-field-cola-cups-profiles-und-0-weight">Weight for row 1 </label>
+ <select class="field_cola_cups_profiles-delta-order form-select" id="edit-field-cola-cups-profiles-und-0-weight" name="field_cola_cups_profiles[und][0][_weight]"><option value="0" selected="selected">0</option></select>
+</div>
+</td> </tr>
+</tbody>
+</table>
+<div class="description">Enter the name of an existing profile listed on this site to link it to this news item.</div><div class="clearfix"><input class="field-add-more-submit form-submit" type="submit" id="edit-field-cola-cups-profiles-und-add-more" name="field_cola_cups_profiles_add_more" value="Add another item"></div></div></div></div>
+
+  <fieldset class="form-wrapper" id="edit-metatags-und-basic"><legend><span class="fieldset-legend">Meta tags</span></legend><div class="fieldset-wrapper">
+    <div class="form-item form-type-textfield form-item-metatags-und-title-value">
+      <label for="edit-metatags-und-title-value">Page title </label>
+      <input type="text" id="edit-metatags-und-title-value" name="metatags[und][title][value]" value="[current-page:title] | [site:name]" size="60" maxlength="1024" class="form-text">
+    </div>
+    <input type="hidden" name="metatags[und][title][default]" value="[current-page:title] | [site:name]">
+    <div class="form-item form-type-textarea form-item-metatags-und-description-value">
+      <label for="edit-metatags-und-description-value">Description </label>
+      <div class="form-textarea-wrapper resizable"><textarea maxlength="380" class="maxlength form-textarea" id="edit-metatags-und-description-value" name="metatags[und][description][value]" cols="60" rows="2">[node:summary]</textarea></div>
+    </div>
+    <input type="hidden" name="metatags[und][description][default]" value="[node:summary]">
+  </div></fieldset>
+
+  <fieldset class="path-form form-wrapper" id="edit-path"><legend><span class="fieldset-legend">URL path settings</span></legend><div class="fieldset-wrapper">
+    <div class="form-item form-type-checkbox form-item-path-pathauto">
+      <input type="checkbox" id="edit-path-pathauto" name="path[pathauto]" value="1" checked="checked" class="form-checkbox">  <label class="option" for="edit-path-pathauto">Generate automatic URL alias </label>
+    </div>
+    <div class="form-item form-type-textfield form-item-path-alias form-disabled">
+      <label for="edit-path-alias">URL alias </label>
+      <input type="text" id="edit-path-alias" name="path[alias]" value="" size="60" maxlength="255" class="form-text" disabled="disabled">
+    </div>
+  </div></fieldset>
+
+  <div class="form-actions form-wrapper" id="edit-actions"><input type="submit" id="edit-submit" name="op" value="Save as draft" class="form-submit"><input type="submit" id="edit-submit-publish" name="op" value="Save and publish" class="form-submit"></div>
+</form>
+
+<script>
+// ---- CKEditor 4 stub, after node-add-news-ckeditor.html -------------------------
+// The rules this editor's filter keeps: the tags the page lists as allowed, and nothing else.
+window.__ckAllows = ['p', 'a[href]', 'em', 'strong', 'h2', 'h3', 'ul', 'ol', 'li'];
+// What CKEditor's writer does to markup it is given: a line break between tags. Idempotent.
+window.__ckNormalise = function (html) { return String(html).replace(/></g, '>\n<'); };
+window.CKEDITOR = {
+  instances: {},
+  config: { toolbar: ['Bold', 'Italic', 'Link', 'Format', 'BulletedList', 'CU Media'] },
+
+  replace: function (idOrEl) {
+    var textarea = typeof idOrEl === 'string' ? document.getElementById(idOrEl) : idOrEl;
+    if (!textarea) return null;
+    var id = textarea.id;
+
+    var container = document.createElement('div');
+    container.className = 'cke cke_editor_' + id;
+    var top = document.createElement('div');
+    top.className = 'cke_top';
+    CKEDITOR.config.toolbar.forEach(function (name) {
+      var b = document.createElement('a');
+      b.className = 'cke_button cke_button__' + name.toLowerCase().replace(/\s+/g, '');
+      b.setAttribute('role', 'button');
+      b.setAttribute('title', name);
+      b.textContent = name;
+      top.appendChild(b);
+    });
+    container.appendChild(top);
+    var frame = document.createElement('iframe');
+    frame.className = 'cke_wysiwyg_frame';
+    frame.setAttribute('src', 'about:blank');
+    container.appendChild(frame);
+
+    textarea.style.display = 'none';
+    textarea.parentNode.insertBefore(container, textarea);
+
+    var instance = {
+      _data: window.__ckNormalise(textarea.value),
+      _container: container,
+      _textarea: textarea,
+      getData: function () { return this._data; },
+      // Loaded into the editing frame a moment later, as the real editor does.
+      setData: function (v) {
+        var self = this;
+        setTimeout(function () { self._data = window.__ckNormalise(v); }, 150);
+      },
+      updateElement: function () { this._textarea.value = this._data; },
+      getSelection: function () { return { getRanges: function () { return [{}]; } }; },
+      focus: function () {},
+      filter: { check: function (rule) { return window.__ckAllows.indexOf(rule) !== -1; } },
+      insertHtml: function (html) { this._data += html; },
+      destroy: function (noUpdate) {
+        if (!noUpdate) this.updateElement();
+        this._container.parentNode && this._container.parentNode.removeChild(this._container);
+        this._textarea.style.display = '';
+        delete window.CKEDITOR.instances[id];
+      }
+    };
+    window.CKEDITOR.instances[id] = instance;
+    return instance;
+  }
+};
+
+window.Drupal = window.Drupal || {};
+Drupal.settings = Drupal.settings || {};
+Drupal.behaviors = Drupal.behaviors || {};
+Drupal.behaviors.ckeditorStub = {
+  attach: function (context) {
+    var root = context || document;
+    var areas = root.querySelectorAll ? root.querySelectorAll('textarea.ckeditor-mod') : [];
+    Array.prototype.forEach.call(areas, function (ta) {
+      if (!ta.id || window.CKEDITOR.instances[ta.id]) return;
+      ta.classList.add('ckeditor-processed');
+      window.CKEDITOR.replace(ta);
+    });
+  }
+};
+Drupal.attachBehaviors = function (context) {
+  for (var k in Drupal.behaviors) {
+    if (Drupal.behaviors[k] && typeof Drupal.behaviors[k].attach === 'function') {
+      Drupal.behaviors[k].attach(context || document);
+    }
+  }
+};
+
+// Sync on submit, as the real module does; the form then posts.
+document.getElementById('news-node-form').addEventListener('submit', function () {
+  for (var k in window.CKEDITOR.instances) window.CKEDITOR.instances[k].updateElement();
+});
+
+Drupal.attachBehaviors(document);
+</script>
+</body>
+</html>

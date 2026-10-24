@@ -33,6 +33,8 @@ import { anchorAutocompletePopups } from './autocompletePopups';
 import { mountSpanCleanup } from './spanCleanup';
 import { mountVarysCapture, varysIsConnected } from './varysCapture';
 import { startVarysPanel } from './varysPanel';
+import { startVarysDraftPanel } from './varysDraftPanel';
+import { nodeIdFromPath } from '../lib/extractPublicHtml';
 import { Toast } from '../components/Toast';
 import { PENDING_NOTICE_KEY, storedNoticeFor } from '../lib/varys/submissions';
 import { DoctorBatchAdder } from '../components/editor/DoctorBatchAdder';
@@ -587,6 +589,8 @@ const init = async () => {
     void startVarysCapture();
     // In this same content script, so what it fills is what the capture reports at Save.
     void startVarysPanel(waitForRichEditors);
+    // A new page's form: the person's Varys drafts for this site, to fill it from.
+    if (nodeIdFromPath(window.location.pathname) === null) void startVarysDraftPanel(waitForRichEditors);
 
     /**
      * Before the form is read, not after.

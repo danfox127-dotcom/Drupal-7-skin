@@ -34,7 +34,10 @@ const ROUTES: [RegExp, string][] = [
   [/\/admin\/structure\/menu\/manage\/main-menu/, 'menu-manage.html'],
   [/\/media\/browser/, 'media-browser.html'],
   [/\/admin\/content/, 'admin/content.html'],
+  // The rich-editor form again, on an admin path where no Varys panel runs (see WORKER_TAB).
+  [/\/admin\/d7-test\/news-ckeditor/, 'node-add-news-ckeditor.html'],
   [/\/node\/add\/news-ckeditor/, 'node-add-news-ckeditor.html'],
+  [/\/node\/add\/news-varys/, 'node-add-news-varys.html'],
   [/\/node\/add\/news-media/, 'node-add-news-media.html'],
   [/\/node\/add\/news/, 'node-add-news-live.html'],
   [/\/node\/add\/page-bigmenu/, 'node-add-page-bigmenu.html'],
@@ -4078,6 +4081,15 @@ interface VarysCall {
 type VarysAnswer = { status: number; body?: unknown } | 'abort';
 
 /**
+ * A tab for testing the worker on its own: node-add-news-ckeditor.html, with its rich editor,
+ * on an admin path. The content script runs there, so a message can come from the tab, but
+ * neither Varys panel does. On a node form one of them asks Varys for itself as the page
+ * opens (suggestions on an edit form, drafts on an add form), and the worker tests count
+ * every request the worker makes.
+ */
+const WORKER_TAB = `${HOST}/admin/d7-test/news-ckeditor`;
+
+/**
  * Stands in for Varys, and records every request the worker makes to it.
  *
  * CORS is answered in full, preflight included, because in a test the optional host
@@ -4784,8 +4796,8 @@ test.describe('Varys suggestions: worker', () => {
   const SITES = { email: EMAIL, user_id: '00000000-0000-0000-0000-000000000001', sites: ['cuimc.columbia.edu'] };
   /** The page being edited, by its public address: what the panel asks Varys about. */
   const PAGE = 'https://www.cuimc.columbia.edu/heart-failure';
-  /** A form with a rich editor on it, which is the tab the panel's messages come from. */
-  const EDITOR_FORM = `${HOST}/node/add/news-ckeditor`;
+  /** A form with a rich editor on it, in a tab no panel runs in (see WORKER_TAB). */
+  const EDITOR_FORM = WORKER_TAB;
   const BODY = 'edit-body-value';
   const HEADING = '<h2>Myths about Down syndrome</h2>';
 
@@ -5138,8 +5150,8 @@ test.describe('Varys drafts: worker', () => {
   const EMAIL = 'x@cumc.columbia.edu';
   const connected = { key: KEY, email: EMAIL, connectedAt: '2026-10-23T12:00:00.000Z' };
   const SITES = { email: EMAIL, user_id: '00000000-0000-0000-0000-000000000001', sites: ['cuimc.columbia.edu'] };
-  /** A node/add form with a rich editor on it, which is the tab the panel's messages come from. */
-  const EDITOR_FORM = `${HOST}/node/add/news-ckeditor`;
+  /** A form with a rich editor on it, in a tab no panel runs in (see WORKER_TAB). */
+  const EDITOR_FORM = WORKER_TAB;
   const BODY = 'edit-body-value';
   /** What the panel sends on an add form: the form's origin, nothing of the page. */
   const ADD_URL = `${HOST}/`;
@@ -6360,5 +6372,535 @@ test.describe('Varys suggestions: panel', () => {
     expect((await panel(page).boundingBox())!.height).toBeLessThan(60);
     await panel(page).getByRole('button', { name: new RegExp(HEADER) }).click();
     await expect(row(page, 'Search result title')).toBeVisible();
+  });
+});
+
+test.describe('Varys drafts: panel', () => {
+  const KEY = 'vxk_' + 'a'.repeat(43);
+  const EMAIL = 'x@cumc.columbia.edu';
+  const connected = { key: KEY, email: EMAIL, connectedAt: '2026-10-23T12:00:00.000Z' };
+  const SITES = { email: EMAIL, user_id: '00000000-0000-0000-0000-000000000001', sites: ['cuimc.columbia.edu'] };
+  const LOGGED = {
+    save_id: 52, edit_id: 9, outcome: 'logged', change_type: 'new_page', message: 'Logged in Varys as a new page.',
+  };
+
+  /** A new News page: Title, a CKEditor body, Summary, the metatags, pathauto, Related Profiles. */
+  const FORM = `${HOST}/node/add/news-varys`;
+  /** What the panel sends Varys about an add form: the site's address and nothing of the page. */
+  const SITE = `${HOST}/`;
+  const BODY_ID = 'edit-body-und-0-value';
+  const TITLE = '[name="title_field[und][0][value]"]';
+  const SUMMARY = '[name="field_summary[und][0][value]"]';
+  const META_TITLE = '[name="metatags[und][title][value]"]';
+  const META_DESCRIPTION = '[name="metatags[und][description][value]"]';
+  const PATHAUTO = '[name="path[pathauto]"]';
+  const ALIAS_BOX = '[name="path[alias]"]';
+  const PROFILE_ROWS = '[name^="field_cola_cups_profiles[und]"][name$="[target_id]"]';
+  const FIRST_PROFILE = '[name="field_cola_cups_profiles[und][0][target_id]"]';
+  /** The search title field's own pattern, as the fixture holds it. */
+  const META_PATTERN = '[current-page:title] | [site:name]';
+  const CALLOUT_RULE = 'aside(ck-callout,ck-callout--background-sky,ck-callout--center)[aria-labelledby]';
+
+  const NOTHING_SAVED = "Nothing is saved: review, then press Drupal's own Save.";
+  const EXPIRED = 'Your Varys connection has expired. Reconnect from the extension menu.';
+  const UNREACHABLE = "Varys couldn't be reached, so nothing changed. Try again in a moment.";
+  const NOT_FOUND = 'That draft is no longer available in Varys.';
+  const BODY_LINE = 'Overview box (2 points), then the draft: 1,240 words · 4 headings · 2 lists · 3 Varys links';
+  const DROPPED = "Tables (1) and images (2) aren't carried over; add them in Drupal.";
+
+  const ago = (ms: number) => new Date(Date.now() - ms).toISOString();
+  const LIST = {
+    status: 'ok',
+    drafts: [
+      { id: 'job-1', title: 'Heart failure explained', made_at: ago(2 * 86_400_000) },
+      { id: 'job-2', title: 'Asthma in adults', made_at: ago(5 * 3_600_000) },
+    ],
+  };
+  const ROE = { name: 'Jane Roe', status: 'matched', full_name: 'Jane Q. Roe, MD', source: 'quoted', exact: true };
+  const ROE_KEY = 'Jane Q. Roe, MD (9001)';
+  const READY = {
+    status: 'ready',
+    id: 'job-1',
+    title: 'Heart failure: what to know',
+    label: 'Heart failure explained',
+    made_at: ago(2 * 86_400_000),
+    body_html: '<h2>Symptoms</h2><p>Shortness of breath &amp; swelling.</p>',
+    overview_bullets: ['What heart failure is', 'How it is treated & managed'],
+    summary: 'What heart failure is, and how our specialists treat it.',
+    meta_title: 'Heart failure: symptoms and care',
+    doctors: [ROE],
+    dropped: { tables: 1, images: 2 },
+    counts: { words: 1240, headings: 4, lists: 2, links: 3 },
+  };
+  const ITEMS = '<ul><li>What heart failure is</li><li>How it is treated &amp; managed</li></ul>';
+  const CALLOUT = '<aside aria-labelledby="ck-callout--1000" class="ck-callout ck-callout--background-sky ck-callout--center">'
+    + '<h2 class="ck-callout__title" id="ck-callout--1000">Overview</h2>'
+    + `<div class="ck-callout__content">${ITEMS}</div></aside>`;
+  const PLAIN_OVERVIEW = `<h2>Overview</h2>${ITEMS}`;
+  /** What the fixture's CKEditor makes of markup it is given (see its own comment). */
+  const normalised = (html: string) => html.replace(/></g, '>\n<');
+
+  /** Varys tracking cuimc.columbia.edu, with the list and the draft as a test gives them. */
+  const varys = (over: { drafts?: VarysAnswer; draft?: VarysAnswer; sites?: string[] } = {}) =>
+    (call: VarysCall): VarysAnswer => {
+      if (call.path === '/api/extension/connection') return { status: 200, body: { ...SITES, sites: over.sites ?? SITES.sites } };
+      if (call.path === '/api/extension/drafts') return over.drafts ?? { status: 200, body: LIST };
+      if (call.path.startsWith('/api/extension/drafts/')) return over.draft ?? { status: 200, body: READY };
+      if (call.path === '/api/extension/saves') return { status: 200, body: LOGGED };
+      return { status: 404, body: { detail: 'Not Found' } };
+    };
+  const ready = (over: Record<string, unknown>): VarysAnswer => ({ status: 200, body: { ...READY, ...over } });
+  const listsIn = (calls: VarysCall[]) => calls.filter(c => c.path === '/api/extension/drafts');
+
+  /**
+   * The site's own Related Profiles lookup, answering from `people` (name → the keys Drupal
+   * would offer) and recording every name it was asked about. Anything else is answered empty.
+   */
+  const directory = async (context: BrowserContext, people: Record<string, Record<string, string> | 'fail'>) => {
+    const asked: string[] = [];
+    await context.route('**cuimc.columbia.edu/index.php**cola_cups_profiles**', route => {
+      const url = decodeURIComponent(route.request().url());
+      const name = url.slice(url.lastIndexOf('/') + 1);
+      asked.push(name);
+      const answer = people[name] ?? {};
+      if (answer === 'fail') return route.fulfill({ status: 500, contentType: 'text/html', body: 'Error' });
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(answer) });
+    });
+    return asked;
+  };
+  const roeOnly = { 'Jane Q. Roe, MD': { [ROE_KEY]: 'Jane Q. Roe, MD' } };
+
+  /** Listens in the service worker for the messages a content script sends it. */
+  const listenInWorker = async (context: BrowserContext) => {
+    const [worker] = context.serviceWorkers();
+    await worker.evaluate(() => {
+      const w = self as unknown as { __seen: unknown[] };
+      w.__seen = [];
+      chrome.runtime.onMessage.addListener(message => {
+        if (message?.type) w.__seen.push(message);
+        return false;
+      });
+    });
+    return () => worker.evaluate(() => (self as unknown as { __seen: any[] }).__seen);
+  };
+
+  const panel = (page: Page) => page.locator('[data-varys-draft-panel]');
+  const row = (page: Page, name: string) => panel(page).getByRole('group', { name, exact: true });
+  const fillButton = (page: Page) => panel(page).getByRole('button', { name: /^Fill/ });
+
+  const open = async (page: Page) => {
+    await page.goto(FORM);
+    await expect(panel(page)).toHaveCount(1, { timeout: OVERLAY_MOUNT_TIMEOUT });
+  };
+  const pick = async (page: Page, title = 'Heart failure explained') => {
+    await panel(page).getByRole('button', { name: new RegExp(title) }).click();
+    await expect(fillButton(page)).toBeVisible({ timeout: RICH_EDITOR_TIMEOUT });
+  };
+  const fill = async (page: Page) => {
+    await fillButton(page).click();
+    await expect(panel(page).getByText(NOTHING_SAVED)).toBeVisible();
+    await expect(fillButton(page)).toHaveCount(0);
+  };
+  const editorData = (page: Page) =>
+    page.evaluate(id => (window as any).CKEDITOR.instances[id].getData() as string, BODY_ID);
+  /** Lets this page's editor keep the Overview callout, as a site whose filter allows it does. */
+  const allowCallout = (page: Page) => page.evaluate(rule => (window as any).__ckAllows.push(rule), CALLOUT_RULE);
+
+  /** Presses Save as draft, waits for the post, and returns what the page told the worker. */
+  const save = async (page: Page, seen: () => Promise<any[]>) => {
+    await Promise.all([
+      page.waitForRequest(r => r.method() === 'POST' && r.url() === FORM),
+      page.evaluate(() => (document.querySelector('#edit-submit') as HTMLElement).click()),
+    ]);
+    await expect.poll(async () => (await seen()).filter(m => m.type === 'varysSubmit').length).toBe(1);
+    return (await seen()).find(m => m.type === 'varysSubmit');
+  };
+
+  test('panel lists drafts only for a tracked site with drafts', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varys());
+    await open(page);
+
+    const first = panel(page).getByRole('button', { name: /Heart failure explained/ });
+    await expect(first).toBeVisible();
+    await expect(first).toContainText('made 2 days ago');
+    await expect(panel(page).getByRole('button', { name: /Asthma in adults/ })).toContainText('made 5 hours ago');
+    await expect(panel(page).getByRole('link', { name: 'Open Draft Assistant' }))
+      .toHaveAttribute('href', 'https://varys-wine.vercel.app/draft-assistant');
+    await expect(panel(page).getByText(NOTHING_SAVED)).toBeVisible();
+
+    // The site's address, and nothing of the page, went to Varys; no draft was fetched yet.
+    expect(listsIn(calls).map(c => c.search)).toEqual(['?page_url=' + encodeURIComponent(SITE)]);
+    expect(calls.filter(c => c.path.startsWith('/api/extension/drafts/'))).toEqual([]);
+    expect(await page.inputValue(TITLE)).toBe('');
+  });
+
+  for (const [label, over] of [
+    ['the person has no drafts for the site', { drafts: { status: 200, body: { status: 'ok', drafts: [] } } }],
+    ['Varys says the site is not tracked', { drafts: { status: 200, body: { status: 'not_tracked' } } }],
+    ['Varys cannot be reached', { drafts: 'abort' }],
+    ['Varys answers with an error', { drafts: { status: 503, body: { detail: 'Database unavailable.' } } }],
+  ] as [string, { drafts: VarysAnswer }][]) {
+    test(`no panel when ${label}`, async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      const calls = await stubVarys(context, varys(over));
+      await page.goto(FORM);
+
+      await expect.poll(() => listsIn(calls).length).toBe(1);
+      await page.waitForTimeout(500);
+      await expect(panel(page)).toHaveCount(0);
+    });
+  }
+
+  test('no panel, and no drafts asked for, on a site Varys does not track', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varys({ sites: ['nursing.columbia.edu'] }));
+    await page.goto(FORM);
+
+    await expect.poll(() => calls.filter(c => c.path === '/api/extension/connection').length).toBe(1);
+    await page.waitForTimeout(500);
+    await expect(panel(page)).toHaveCount(0);
+    expect(calls.filter(c => c.path.startsWith('/api/extension/drafts'))).toEqual([]);
+  });
+
+  test("an existing page's edit form never asks for drafts", async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varys());
+    await page.goto(`${HOST}/node/23110/edit`);
+
+    // The suggestions panel's own question is the sign this page has done its asking.
+    await expect.poll(() => calls.filter(c => c.path.startsWith('/api/extension/suggestions')).length).toBe(1);
+    await page.waitForTimeout(500);
+    expect(calls.filter(c => c.path.startsWith('/api/extension/drafts'))).toEqual([]);
+    await expect(panel(page)).toHaveCount(0);
+  });
+
+  test('nothing is requested while disconnected', async ({ page, context, settings }) => {
+    await settings({ nodeEditor: false });
+    const calls = await stubVarys(context, varys());
+    const seen = await listenInWorker(context);
+    await page.goto(FORM);
+
+    // The page asked whether it is connected and was told no: the check ran.
+    await expect.poll(async () => (await seen()).some(m => m.type === 'varysStatus')).toBe(true);
+    await page.waitForTimeout(500);
+    await expect(panel(page)).toHaveCount(0);
+    expect(calls).toEqual([]);
+    expect((await seen()).filter(m =>
+      ['varysSiteTracked', 'varysDrafts', 'varysDraft', 'richEditorAllows', 'readRichEditor'].includes(m.type))).toEqual([]);
+  });
+
+  test('a key Varys refuses shows the reconnect copy and nothing else', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys({ drafts: { status: 401, body: { detail: 'This key has expired.' } } }));
+    await open(page);
+
+    await expect(panel(page).getByText(EXPIRED)).toBeVisible();
+    await expect(panel(page).getByRole('button', { name: /Heart failure/ })).toHaveCount(0);
+    await expect(panel(page).getByRole('link')).toHaveCount(0);
+    await expect(panel(page).getByText(NOTHING_SAVED)).toHaveCount(0);
+  });
+
+  test('fill writes title, summary, search title, body with the callout box and one matched doctor', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varys());
+    const asked = await directory(context, roeOnly);
+    await open(page);
+    await allowCallout(page);
+    await pick(page);
+
+    // What will be filled, field by field, each ticked.
+    expect(calls.filter(c => c.path.startsWith('/api/extension/drafts/')).map(c => c.path + c.search))
+      .toEqual(['/api/extension/drafts/job-1?page_url=' + encodeURIComponent(SITE)]);
+    await expect(row(page, 'Title')).toContainText('Heart failure: what to know');
+    await expect(row(page, 'Body').getByText(BODY_LINE, { exact: true })).toBeVisible();
+    await expect(row(page, 'Body').getByText(DROPPED, { exact: true })).toBeVisible();
+    await expect(row(page, 'Summary')).toContainText(READY.summary);
+    // As it will be written: the field's site-name token kept after it.
+    await expect(row(page, 'Search result title')).toContainText('Heart failure: symptoms and care | [site:name]');
+    for (const name of ['Title', 'Body', 'Summary', 'Search result title']) {
+      await expect(row(page, name).getByRole('checkbox')).toBeChecked();
+    }
+    await expect(row(page, 'Related Profiles').getByRole('checkbox', { name: 'Jane Q. Roe, MD', exact: true })).toBeChecked();
+    await expect(panel(page).getByText(NOTHING_SAVED)).toBeVisible();
+
+    await fill(page);
+
+    expect(await page.inputValue(TITLE)).toBe('Heart failure: what to know');
+    expect(await page.inputValue(SUMMARY)).toBe(READY.summary);
+    expect(await page.inputValue(META_TITLE)).toBe('Heart failure: symptoms and care | [site:name]');
+    // The description is left following Summary.
+    expect(await page.inputValue(META_DESCRIPTION)).toBe('[node:summary]');
+    await expect.poll(() => editorData(page)).toBe(normalised(CALLOUT + READY.body_html));
+    expect(await page.inputValue(FIRST_PROFILE)).toBe(ROE_KEY);
+    expect(await page.locator(PROFILE_ROWS).count()).toBe(1);
+    expect(asked).toEqual(['Jane Q. Roe, MD']);
+    // A new page's address is Drupal's to make, and is left exactly as it was.
+    expect(await page.isChecked(PATHAUTO)).toBe(true);
+    expect(await page.inputValue(ALIAS_BOX)).toBe('');
+    expect(await page.isDisabled(ALIAS_BOX)).toBe(true);
+
+    for (const name of ['Title', 'Body', 'Summary', 'Search result title']) {
+      await expect(row(page, name).getByText('Filled', { exact: true })).toBeVisible();
+      await expect(row(page, name).getByRole('button', { name: 'Undo' })).toBeVisible();
+    }
+    await expect(row(page, 'Related Profiles')).toContainText('Added');
+    // Nothing was saved or submitted: the page is still the form, unposted.
+    expect(page.url()).toBe(FORM);
+    expect(await page.inputValue(TITLE)).toBe('Heart failure: what to know');
+  });
+
+  for (const [label, editorCannotSay] of [['refuses', false], ['cannot say whether it keeps', true]] as const) {
+    test(`fallback overview when filter.check ${label} the callout`, async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      await stubVarys(context, varys());
+      await directory(context, roeOnly);
+      await open(page);
+      if (editorCannotSay) {
+        await page.evaluate(id => { delete (window as any).CKEDITOR.instances[id].filter; }, BODY_ID);
+      }
+      await pick(page);
+      await fill(page);
+
+      await expect.poll(() => editorData(page)).toBe(normalised(PLAIN_OVERVIEW + READY.body_html));
+      expect(await editorData(page)).not.toContain('<aside');
+    });
+  }
+
+  test('undo restores each field', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys());
+    await directory(context, roeOnly);
+    const seen = await listenInWorker(context);
+    await open(page);
+    // What the person had written before choosing the draft: filling replaces it, Undo puts it back.
+    await page.fill(TITLE, 'My own title');
+    await page.fill(SUMMARY, 'My own summary.');
+    await page.evaluate(id => { (window as any).CKEDITOR.instances[id]._data = '<p>Typed first.</p>'; }, BODY_ID);
+    await allowCallout(page);
+    await pick(page);
+    await fill(page);
+    await expect(row(page, 'Related Profiles')).toContainText('Added');
+    await expect.poll(() => editorData(page)).toBe(normalised(CALLOUT + READY.body_html));
+
+    await row(page, 'Title').getByRole('button', { name: 'Undo' }).click();
+    expect(await page.inputValue(TITLE)).toBe('My own title');
+    await row(page, 'Summary').getByRole('button', { name: 'Undo' }).click();
+    expect(await page.inputValue(SUMMARY)).toBe('My own summary.');
+    await row(page, 'Search result title').getByRole('button', { name: 'Undo' }).click();
+    expect(await page.inputValue(META_TITLE)).toBe(META_PATTERN);
+    await row(page, 'Body').getByRole('button', { name: 'Undo' }).click();
+    await expect.poll(() => editorData(page)).toBe('<p>Typed first.</p>');
+    await row(page, 'Related Profiles').getByRole('button', { name: 'Undo' }).click();
+    expect(await page.inputValue(FIRST_PROFILE)).toBe('');
+
+    for (const name of ['Title', 'Body', 'Summary', 'Search result title', 'Related Profiles']) {
+      await expect(row(page, name)).toContainText('Undone');
+    }
+    await expect(panel(page).getByRole('button', { name: 'Undo' })).toHaveCount(0);
+    expect(await page.isChecked(PATHAUTO)).toBe(true);
+
+    // Put back, so the save reports nothing as filled from Varys.
+    const message = await save(page, seen);
+    expect(message.varysFilled).toEqual([]);
+  });
+
+  test('a field changed after the fill is the person\'s: Undo leaves it alone', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys());
+    await directory(context, roeOnly);
+    await open(page);
+    await pick(page);
+    await fill(page);
+    await expect.poll(() => editorData(page)).toBe(normalised(PLAIN_OVERVIEW + READY.body_html));
+
+    // Typed over the search title: its Undo goes.
+    await page.fill(META_TITLE, 'Typed by hand');
+    await expect(row(page, 'Search result title').getByRole('button', { name: 'Undo' })).toHaveCount(0);
+    await expect(row(page, 'Title').getByRole('button', { name: 'Undo' })).toBeVisible();
+
+    // Edited in the editor: Undo finds the body changed and does not overwrite it.
+    await page.evaluate(id => { (window as any).CKEDITOR.instances[id]._data = '<p>Edited since.</p>'; }, BODY_ID);
+    await row(page, 'Body').getByRole('button', { name: 'Undo' }).click();
+    await expect(row(page, 'Body')).toContainText("You've changed the body since it was filled, so Undo left it as it is.");
+    await expect(row(page, 'Body').getByRole('button', { name: 'Undo' })).toHaveCount(0);
+    expect(await editorData(page)).toBe('<p>Edited since.</p>');
+    expect(await page.inputValue(META_TITLE)).toBe('Typed by hand');
+  });
+
+  test('save carries varys_filled body and related_profiles', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys());
+    await directory(context, roeOnly);
+    const seen = await listenInWorker(context);
+    await open(page);
+    await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+    await allowCallout(page);
+    await pick(page);
+    await fill(page);
+    await expect(row(page, 'Related Profiles')).toContainText('Added');
+
+    const message = await save(page, seen);
+    expect(message.isNew).toBe(true);
+    expect(message.varysFilled).toEqual(['body', 'meta_description', 'meta_title', 'related_profiles', 'title']);
+  });
+
+  test('only an exact quoted match starts ticked, and a doctor not matched is never added', async ({ page, context, settings }) => {
+    const doctors = [
+      ROE,
+      { name: 'Dr. Smith', status: 'matched', full_name: 'John A. Smith, MD', source: 'quoted', exact: false },
+      { name: 'Ana Lee', status: 'matched', full_name: 'Ana Lee, MD, PhD', source: 'topic', exact: true },
+      { name: 'Dr. Patel', status: 'ambiguous', full_name: null, source: 'quoted', exact: false },
+      { name: 'Bob Stone', status: 'not_matched', full_name: null, source: 'quoted', exact: false },
+    ];
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys({ draft: ready({ doctors }) }));
+    // The site would find every one of them, so only the tickboxes decide.
+    const asked = await directory(context, {
+      ...roeOnly,
+      'John A. Smith, MD': { 'John A. Smith, MD (11)': 'John A. Smith, MD' },
+      'Ana Lee, MD, PhD': { 'Ana Lee, MD, PhD (12)': 'Ana Lee, MD, PhD' },
+      'Dr. Patel': { 'Dr. Patel (13)': 'Dr. Patel' },
+      'Bob Stone': { 'Bob Stone (14)': 'Bob Stone' },
+    });
+    await open(page);
+    await pick(page);
+
+    const profiles = row(page, 'Related Profiles');
+    await expect(profiles.getByRole('checkbox', { name: 'Jane Q. Roe, MD', exact: true })).toBeChecked();
+    await expect(profiles.getByRole('checkbox', { name: 'John A. Smith, MD — quoted as “Dr. Smith”', exact: true }))
+      .not.toBeChecked();
+    await expect(profiles.getByRole('checkbox', { name: 'Ana Lee, MD, PhD (suggested by topic)', exact: true }))
+      .not.toBeChecked();
+    await expect(profiles.getByText('Quoted, not matched — add by hand: Dr. Patel', { exact: true })).toBeVisible();
+    await expect(profiles.getByText('Quoted, not matched — add by hand: Bob Stone', { exact: true })).toBeVisible();
+    await expect(profiles.getByRole('checkbox')).toHaveCount(3);
+
+    await fill(page);
+    await expect(profiles).toContainText('Added');
+    expect(asked).toEqual(['Jane Q. Roe, MD']);
+    expect(await page.locator(PROFILE_ROWS).count()).toBe(1);
+    expect(await page.inputValue(FIRST_PROFILE)).toBe(ROE_KEY);
+    await expect(profiles.getByText('Quoted, not matched — add by hand: Dr. Patel', { exact: true })).toBeVisible();
+    await expect(profiles.getByText('Quoted, not matched — add by hand: Bob Stone', { exact: true })).toBeVisible();
+  });
+
+  test('a ticked doctor the person chose is the one looked up', async ({ page, context, settings }) => {
+    const smith = { name: 'Dr. Smith', status: 'matched', full_name: 'John A. Smith, MD', source: 'quoted', exact: false };
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys({ draft: ready({ doctors: [ROE, smith] }) }));
+    const asked = await directory(context, { ...roeOnly, 'John A. Smith, MD': { 'John A. Smith, MD (11)': 'John A. Smith, MD' } });
+    await open(page);
+    await pick(page);
+
+    const profiles = row(page, 'Related Profiles');
+    await profiles.getByRole('checkbox', { name: 'Jane Q. Roe, MD', exact: true }).uncheck();
+    await profiles.getByRole('checkbox', { name: 'John A. Smith, MD — quoted as “Dr. Smith”', exact: true }).check();
+    await fill(page);
+
+    await expect(profiles).toContainText('Added');
+    expect(asked).toEqual(['John A. Smith, MD']);
+    expect(await page.inputValue(FIRST_PROFILE)).toBe('John A. Smith, MD (11)');
+  });
+
+  for (const [label, answer, copy] of [
+    ['the site has no such profile', {}, 'Not found in Related Profiles — add by hand'],
+    ['the site has two with that name', { [ROE_KEY]: 'Jane Q. Roe, MD', 'Jane Q. Roe, MD (9002)': 'Jane Q. Roe, MD' },
+      'More than one match — add by hand'],
+    ['the site cannot be asked', 'fail', "Couldn't check — add by hand"],
+  ] as [string, Record<string, string> | 'fail', string][]) {
+    test(`when ${label}, nobody is added, the panel says so, and the save does not claim it`, async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      await stubVarys(context, varys());
+      await directory(context, { 'Jane Q. Roe, MD': answer });
+      const seen = await listenInWorker(context);
+      await open(page);
+      await pick(page);
+      await fill(page);
+
+      await expect(row(page, 'Related Profiles')).toContainText(copy);
+      await expect(row(page, 'Related Profiles').getByRole('button', { name: 'Undo' })).toHaveCount(0);
+      expect(await page.inputValue(FIRST_PROFILE)).toBe('');
+      const message = await save(page, seen);
+      expect(message.varysFilled).not.toContain('related_profiles');
+    });
+  }
+
+  test('a doctor already in Related Profiles is said to be, and is not added twice', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys());
+    const asked = await directory(context, roeOnly);
+    await open(page);
+    await page.fill(FIRST_PROFILE, ROE_KEY);
+    await pick(page);
+    await fill(page);
+
+    await expect(row(page, 'Related Profiles')).toContainText('Already in Related Profiles');
+    expect(asked).toEqual([]);
+    expect(await page.locator(PROFILE_ROWS).count()).toBe(1);
+  });
+
+  test('the over-limit Summary tickbox is disabled, and the fill leaves Summary alone', async ({ page, context, settings }) => {
+    const long = 'Heart failure means the heart cannot pump as well as it should. '.repeat(7).trim();
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys({ draft: ready({ summary: long }) }));
+    await directory(context, roeOnly);
+    await open(page);
+    await pick(page);
+
+    const summary = row(page, 'Summary');
+    await expect(summary.getByRole('checkbox')).toBeDisabled();
+    await expect(summary.getByRole('checkbox')).not.toBeChecked();
+    await expect(summary).toContainText(`Too long for Summary (${long.length} characters; the limit is 380).`);
+
+    await fill(page);
+    expect(await page.inputValue(SUMMARY)).toBe('');
+    await expect(summary).toContainText('Not filled');
+    // The rest went in.
+    expect(await page.inputValue(TITLE)).toBe('Heart failure: what to know');
+  });
+
+  test('a draft with no confirmed title shows no Title row, and its label is never written', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys({ draft: ready({ title: null, doctors: null }) }));
+    await open(page);
+    await pick(page);
+
+    await expect(row(page, 'Title')).toHaveCount(0);
+    await expect(row(page, 'Body')).toBeVisible();
+    // Doctors Varys could not check: said, and nothing to tick.
+    await expect(row(page, 'Related Profiles')).toContainText("Varys couldn't check the quoted doctors.");
+    await expect(row(page, 'Related Profiles').getByRole('checkbox')).toHaveCount(0);
+
+    await fill(page);
+    expect(await page.inputValue(TITLE)).toBe('');
+    expect(await page.inputValue(SUMMARY)).toBe(READY.summary);
+    await expect.poll(() => editorData(page)).toBe(normalised(PLAIN_OVERVIEW + READY.body_html));
+  });
+
+  test('not_found returns to the list and says the draft is gone', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys({ draft: { status: 404, body: { detail: "Varys can't find that draft." } } }));
+    await open(page);
+    await panel(page).getByRole('button', { name: /Heart failure explained/ }).click();
+
+    await expect(panel(page).getByText(NOT_FOUND, { exact: true })).toBeVisible();
+    await expect(panel(page).getByRole('button', { name: /Asthma in adults/ })).toBeVisible();
+    await expect(panel(page).getByRole('button', { name: /Heart failure explained/ })).toHaveCount(0);
+    await expect(fillButton(page)).toHaveCount(0);
+    expect(await page.inputValue(TITLE)).toBe('');
+  });
+
+  test('a draft Varys cannot be reached for stays in the list, to try again', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    let draft: VarysAnswer = 'abort';
+    await stubVarys(context, call => call.path.startsWith('/api/extension/drafts/') ? draft : varys()(call));
+    await open(page);
+    await panel(page).getByRole('button', { name: /Heart failure explained/ }).click();
+
+    await expect(panel(page).getByText(UNREACHABLE, { exact: true })).toBeVisible();
+    draft = { status: 200, body: READY };
+    await pick(page);
+    await expect(row(page, 'Title')).toContainText('Heart failure: what to know');
   });
 });

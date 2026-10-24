@@ -166,12 +166,13 @@ extension tells Varys about the save: the page's address; what its title, search
 search description, Summary, web address, headings and internal links were before and after;
 how much of the body changed; up to three new sentences, so Varys can check the change
 really went live; which button you pressed; and which fields, if any, you filled in from
-Varys's suggestions (see below). It never sends the full text of the page. Varys decides
-whether the save counts as a **search edit** (a change to the title, search description,
-URL, headings or internal links, or a substantial rewrite of the body; a typo fix is not
-one), and later reads the live page to see whether the change went out. Changes that count
-appear on Varys's **What's Working** page, with who made them, so their effect on search can
-be read later. `docs/PRIVACY.md` lists everything that is sent and kept, and for how long.
+Varys's suggestions or one of your drafts (see below). It never sends the full text of the
+page. Varys decides whether the save counts as a **search edit** (a change to the title,
+search description, URL, headings or internal links, or a substantial rewrite of the body; a
+typo fix is not one), and later reads the live page to see whether the change went out.
+Changes that count appear on Varys's **What's Working** page, with who made them, so their
+effect on search can be read later. `docs/PRIVACY.md` lists everything that is sent and
+kept, and for how long.
 
 **To connect:**
 
@@ -280,6 +281,42 @@ Varys does not track, for a new page, or while you are not connected. If you pre
 the extension keeps a small marker in that browser tab for 3 minutes (the address and the
 time), so that reloading the page keeps waiting instead of asking again. `docs/PRIVACY.md`
 has the full list.
+
+### Start a new page from a Varys draft — part of Connect to Varys
+
+Once you have connected, open the form for a **new** page (Add content) on a site Varys
+tracks. If you have made drafts for that site in Varys's **Draft Assistant**, a panel appears
+in the corner of the screen, **Varys · start from a draft**, listing them with when you made
+each. **Open Draft Assistant** takes you to Varys to make another.
+
+- **Pick a draft, and the panel shows field by field what it will fill**: the title you
+  confirmed in Draft Assistant, the body (opened by the site's blue Overview box with the
+  draft's key points, then the draft itself, with how many words, headings, lists and Varys
+  links it has), Summary, the search result title and the doctors for Related Profiles. Each
+  has a tickbox. A draft with no confirmed title fills no title.
+- **Tables and images are not carried over**: if the draft had any, the panel says how many,
+  so you can add them in Drupal.
+- **A Summary too long for Drupal's Summary field** (over 380 characters) is shown but cannot
+  be ticked; write a shorter one.
+- **Doctors.** A doctor the draft quotes by the very name Columbia's physician directory has
+  starts ticked. One Varys matched only by a likely name ("quoted as …"), or suggested by the
+  page's topic, starts unticked, for you to decide. A doctor Varys could not match is listed
+  to add by hand. The extension then looks each ticked doctor up in Related Profiles' own
+  search on the site and adds them only when exactly one profile has exactly that name;
+  otherwise it adds nobody and says why.
+- **Fill** writes the ticked fields. If a field already had text, filling replaces it. That
+  is all it does: it never saves, previews or publishes, and it leaves the page's web
+  address to Drupal, so you still review and press Save. **Undo** beside each field puts back
+  what was there, as long as you have not changed the field since.
+- **When you save, Varys is told which fields you filled from the draft** (title,
+  description for Summary, search title, body, Related Profiles; not one you put back with
+  Undo).
+
+**What is sent for this.** When you open a new page's form, only the site's address goes to
+Varys, to list your drafts for it; picking one sends the same address and that draft's id.
+Nothing from the form goes with either, and nothing is asked for an existing page's form, for
+a site Varys does not track, or while you are not connected. Looking a doctor up asks the
+Drupal site you are on, not Varys. The draft is shown in the panel and is not stored.
 
 ---
 

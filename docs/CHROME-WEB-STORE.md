@@ -104,8 +104,10 @@ URL, and it can be changed later.
       suggestions for the page you are editing (search title, description, title, section
       headings) appear in a panel on the edit form. A suggestion goes into the form only
       when you press Use (or Insert at cursor, for a heading), and Undo takes a Use back; a
-      heading inserted into the body is reversed with the editor's own undo. It is off until
-      you click Connect to Varys.
+      heading inserted into the body is reversed with the editor's own undo. On a new page's
+      form it lists your Varys drafts for the site instead, and Fill writes the fields you
+      leave ticked (title, body with its Overview box, Summary, search title, Related
+      Profiles), each with its own Undo. It is off until you click Connect to Varys.
 
     Everything happens in the browser, unless you connect to Varys. The extension fills
     forms in; it never saves or publishes anything on its own — you press Save.
@@ -116,12 +118,14 @@ URL, and it can be changed later.
     Connect to Varys. If you do, a summary of each page you save (its address, the before
     and after of its title, search title, search description, Summary field, web address,
     headings and internal links, how much of the body changed, up to three new sentences, and
-    which fields you filled from Varys's suggestions) is sent to Varys; the full body text
-    never is. When you open an existing page's edit form on a site Varys tracks, or press Ask
-    Varys, the page's public address is sent to Varys so it can offer suggestions for the
-    page; nothing from the form is sent for that. After a save, a small notice saying what
-    Varys did can appear on the page you land on, which may be a public page of the same
-    site. See the privacy policy for everything that is sent and kept.
+    which fields you filled from Varys) is sent to Varys; the full body text never is. When
+    you open an existing page's edit form on a site Varys tracks, or press Ask Varys, the
+    page's public address is sent to Varys so it can offer suggestions for the page; when you
+    open a new page's form there, only the site's address is sent, to list your drafts for it,
+    and picking one fetches that draft. Nothing from the form is sent for either. After a
+    save, a small notice saying what Varys did can appear on the page you land on, which may
+    be a public page of the same site. See the privacy policy for everything that is sent
+    and kept.
 
 **Category:** Workflow & Planning
 **Language:** English
@@ -205,6 +209,13 @@ common cause of a slow review. These are accurate as of the current manifest.
     inserts nothing and says so. The heading is written as plain text inside an h2, and the
     form is not saved or submitted: the user presses Save.
 
+    Also, only once the user has connected to Varys and only on a new page's form, writes the
+    Varys draft the user picked into the body's editor when they press Fill (the first use
+    above), and reads the body back from it so that Undo can tell whether it has changed
+    since. Before that it asks the editor's content filter whether it keeps the site's
+    Overview box markup, and reads nothing else from the editor for that. Nothing read is
+    sent, and the form is not saved or submitted: the user presses Save.
+
 **`clipboardWrite`**
 
     The "copy this node's public HTML" feature writes to the clipboard, and so does Copy
@@ -282,17 +293,21 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
   Varys**. Each save that goes through sends the address of the page saved, with the paths
   of the same-site pages its body links to. It sends the address of no other page the user
   visits. Opening an add form, or an edit form on a site Varys does not track, sends
-  nothing for suggestions. (A save on a site Varys does not track is sent only if the
-  extension could not fetch the list of tracked sites, and Varys then discards it.)
+  nothing for suggestions. Opening an add form on a site Varys tracks sends the site's
+  address (not a page's), to list the user's own Varys drafts for it. (A save on a site
+  Varys does not track is sent only if the extension could not fetch the list of tracked
+  sites, and Varys then discards it.)
 - **User activity:** **Yes**, only once the user connects to Varys, and only this: that a
   save was made on a Drupal node form, which button was pressed (Publish, Save draft or
-  Save), which fields were filled from Varys's suggestions (page title, search title,
-  description, headings), and when Varys received it; and that the user opened an existing
-  page's edit form or pressed Ask Varys, which sends that page's address with the user's
-  key. No keystrokes, mouse position or scrolling are recorded, and no clicks beyond those.
-  Pressing Use, or Insert at cursor on a heading, is reported only as an entry in the list
-  of filled fields sent with the next save (Insert at cursor reports "headings"); pressing
-  Copy is not reported at all.
+  Save), which fields were filled from Varys (page title, search title, description,
+  headings, body, Related Profiles), and when Varys received it; that the user opened an
+  existing page's edit form or pressed Ask Varys, which sends that page's address with the
+  user's key; and that the user opened a new page's form on a tracked site or picked one of
+  their drafts there, which sends the site's address (and the draft's id) with the key. No
+  keystrokes, mouse position or scrolling are recorded, and no clicks beyond those. Pressing
+  Use, Fill, or Insert at cursor on a heading, is reported only as entries in the list of
+  filled fields sent with the next save (Insert at cursor reports "headings"); pressing Copy
+  is not reported at all.
 - **Website content:** **Yes.** The extension reads the content of the Drupal admin form
   on the page, and — only for an origin the user has explicitly approved — the content of
   a page they asked to import.
@@ -305,8 +320,8 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
     URL alias (as the form holds it, including an automatic one), headings (H2 and H3) and
     internal body links; the body's word count; how much of the body changed; up to three
     new sentences (at most 200 characters each) used only to confirm the change went live;
-    and which of the page title, search title, description and headings the user filled
-    from Varys's suggestions. The full body text is never sent. It is kept as the
+    and which of the page title, search title, description, headings, body and Related
+    Profiles the user filled from Varys. The full body text is never sent. It is kept as the
     privacy policy states: a page's edits that never counted as a search edit are deleted
     after 7 days; an undone entry stops counting, is shown as "Undone", and is deleted up to
     30 days after that page's last save; and one that counts stays in Varys's record of
@@ -328,6 +343,18 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
     the user presses Use, or Insert at cursor for a heading. Use can be undone with Undo; a
     heading inserted into the body is reversed with the editor's own undo, as the panel has
     no Undo for it. The extension never saves or publishes.
+  - Separately, when the user opens a new page's form (an add form) on a site Varys tracks,
+    the extension sends only that site's address, to list the user's own Varys drafts for
+    it, and the same address with a draft's id when the user picks one. No content of the
+    form goes with either, and nothing is asked for an existing page's edit form, for a site
+    Varys does not track, or when the extension cannot tell which sites Varys tracks. What
+    comes back is the list (each draft's name and when it was made) and then the draft (its
+    confirmed title, body, Overview points, Summary, search title, the doctors it names with
+    their physician-directory matches, and counts of tables and images not carried over);
+    it is shown in a panel and not stored by the extension. Fill writes only the fields the
+    user leaves ticked, never the web address, and each can be undone. To add a doctor to
+    Related Profiles the extension asks that field's own search on the same Drupal site, and
+    adds the doctor only on exactly one exact match. The extension never saves or publishes.
 
 Then certify all three:
 

@@ -239,9 +239,10 @@ function pathOf(address: string): string | null {
 
 /**
  * True only when the worker says, by the list Varys last gave, that this page's site is one
- * Varys tracks. Anything else (untracked, no telling, no answer) is false.
+ * Varys tracks. Anything else (untracked, no telling, no answer) is false. Shared with the
+ * drafts panel on a new page's form (varysDraftPanel.tsx).
  */
-async function siteIsTracked(pageUrl: string): Promise<boolean> {
+export async function siteIsTracked(pageUrl: string): Promise<boolean> {
   try {
     const reply: VarysSiteTrackedResponse | undefined = await chrome.runtime.sendMessage(
       { type: 'varysSiteTracked', pageUrl } satisfies VarysSiteTrackedRequest);
@@ -326,7 +327,8 @@ function placement(): Placement {
   return { ...place, hidden: place.maxHeight < MIN_HEIGHT };
 }
 
-function usePlacement(deps: unknown[]): Placement {
+/** Where a Varys panel sits right now; shared with the drafts panel (varysDraftPanel.tsx). */
+export function usePlacement(deps: unknown[]): Placement {
   const [place, setPlace] = useState<Placement>(placement);
   const frame = useRef(0);
 

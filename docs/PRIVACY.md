@@ -187,11 +187,12 @@ so that Varys can log the search edits you make in Drupal (a changed title, sear
 description, page address, heading or internal link, or a substantial rewrite of the body)
 and later check whether they went live. It also lets Varys show you its suggestions for a
 page while you edit it: a search title, search description, title and section headings,
-which you can use with a click.
+which you can use with a click. And on a new page's form it lists the drafts you made in
+Varys's Draft Assistant for that site, so that you can fill the new page in from one.
 
 **This is off until you connect it.** Unless you click **Connect to Varys** in the popup,
-nothing is sent to Varys, no form is recorded, no suggestions are asked for, no tab is
-followed on its behalf, and nothing is stored for it.
+nothing is sent to Varys, no form is recorded, no suggestions or drafts are asked for, no
+tab is followed on its behalf, and nothing is stored for it.
 
 ### The two addresses, and how connecting works
 
@@ -201,9 +202,11 @@ followed on its behalf, and nothing is stored for it.
 - **`https://varys-wine.vercel.app`** is the Varys web app, where you sign in. The
   extension makes no request to it, apart from opening it in a tab when you click Connect
   to Varys (the address includes the extension's own id, so the page knows which extension
-  to hand the key to). That page can send one message to the extension, to hand over the
-  key, through Chrome's `externally_connectable` feature. Only pages at that exact origin
-  can do so, and the extension checks the sender again itself and refuses any other.
+  to hand the key to). The connect page can send one message to the extension, to hand
+  over the key, through Chrome's `externally_connectable` feature. Only pages at that exact
+  origin can do so, and the extension checks the sender again itself and refuses any other.
+  The drafts panel also has an **Open Draft Assistant** link to the web app: an ordinary
+  link, which opens only if you click it.
 
 To connect, you click **Connect to Varys**; Chrome asks whether the extension may contact
 `https://varys.fly.dev`, which you must approve (this is the optional `*://*/*`
@@ -231,10 +234,11 @@ one request to `https://varys.fly.dev` containing exactly this:
 - **Up to three new sentences** from the body, at most 200 characters each. Varys looks for
   them on the live page to confirm that the change went live, which is the only way to
   confirm an edit that changed nothing but the body.
-- **Which fields you filled from Varys's suggestions**, if any: some of the page title, search
-  title, description and headings, as the panel described below filled them. Only those four
-  names are sent, and a field you put back with Undo is not listed. Varys shows it beside the
-  change.
+- **Which fields you filled from Varys**, if any: some of the page title, search title,
+  description (Summary, for a new page) and headings, as the suggestions panel described below
+  filled them, and the body and Related Profiles, as the drafts panel on a new page filled
+  them. Only those six names are sent, and a field you put back with Undo is not listed.
+  Varys shows it beside the change.
 - **Which button you pressed**: Publish, Save draft, or a plain Save.
 - **Who saved it, and when.** The request carries your key, and Varys knows which account
   the key belongs to; the extension does not send your name or email with it. Varys records
@@ -248,22 +252,31 @@ cookie.
 Other kinds of request go to the same address, each carrying your key and only what is
 noted:
 
-- **A list of the sites Varys tracks.** Before sending a save, or the address of a page for
-  suggestions, the extension asks Varys which sites it tracks, so that nothing is sent about
-  a page on any other site. The answer is cached for 24 hours in the browser session. If
-  Varys cannot be asked, the save is sent anyway and Varys discards it, keeping nothing, when
-  the site is not one it tracks. A page's address for suggestions is different: when the
-  extension has no list at all and cannot get one, it sends nothing.
+- **A list of the sites Varys tracks.** Before sending a save, the address of a page for
+  suggestions, or a site's address for drafts, the extension asks Varys which sites it
+  tracks, so that nothing is sent about a page on any other site. The answer is cached for
+  24 hours in the browser session. If Varys cannot be asked, the save is sent anyway and
+  Varys discards it, keeping nothing, when the site is not one it tracks. A page's address
+  for suggestions, and a site's for drafts, are different: when the extension has no list
+  at all and cannot get one, it sends nothing.
 - **Suggestions, when you open a page's edit form.** On the edit form of a page that already
-  exists (not an add form) on a site Varys tracks, the extension sends the **page's public
-  address**, in the address of the request, to ask for the suggestions Varys already has
-  for that page. Nothing from the form goes with it, and nothing is sent for a site Varys
-  does not track.
+  exists on a site Varys tracks, the extension sends the **page's public address**, in the
+  address of the request, to ask for the suggestions Varys already has for that page.
+  Nothing from the form goes with it, and nothing is sent for a site Varys does not track.
+  A new page's form (an add form) asks for no suggestions; it asks for your drafts instead,
+  as described below.
 - **Ask Varys.** When you press **Ask Varys** in the panel, the extension sends the page's
   public address, so that Varys can write suggestions for it. While Varys writes them, the
   extension asks again with the same address every few seconds, for up to 3 minutes. Nothing
   from the form is sent for this; Varys writes the suggestions from its own reading of the
   site.
+- **Your drafts, when you open a new page's form.** On the form for a new page (an add
+  form) on a site Varys tracks, the extension asks Varys for **your** recent drafts for
+  that site: the ones you made in Draft Assistant. Only the **site's address** is sent (for
+  example `https://www.cuimc.columbia.edu/`, in the address of the request), never anything
+  from the form, and Varys answers with your drafts alone. When you pick one, the extension
+  sends the same address and that draft's id, to fetch the draft you picked. Nothing is
+  asked for an existing page's edit form, or for a site Varys does not track.
 - **Undo and Log it anyway.** Pressing either sends the number of that save.
 - **Disconnect.** Asks Varys to cancel your key.
 
@@ -272,6 +285,8 @@ Preview, Delete and Cancel buttons, for a save that landed on the login page or 
 site, for a new page whose address the extension cannot work out, or for any save made
 while you are not connected. No address is sent for suggestions while you are not connected,
 for a page on a site Varys does not track, for an add form, or when the extension cannot
+tell which sites Varys tracks. No drafts are asked for while you are not connected, on an
+existing page's edit form, for a site Varys does not track, or when the extension cannot
 tell which sites Varys tracks.
 
 ### What comes back: the suggestions panel
@@ -299,6 +314,36 @@ it is held in the page only while the panel is open.
   and reads nothing from the editor but whether it has a cursor. The panel has no Undo for
   it; the editor's own undo reverses it. Insert at cursor is reported with the next save as
   a filled field ("headings"); Copy is not reported.
+
+### What comes back: drafts on a new page
+
+Varys answers the list with each of your drafts' names and when you made them, and nothing
+else. When you pick one, it answers with that draft as Draft Assistant left it: the title
+you confirmed (if you did), the body with Varys's links, the points for its Overview box, a
+Summary, a search title, the doctors the draft names (each with the name Varys matched in
+Columbia's physician directory, when it found one), and a count of the tables and images it
+could not carry over. The
+extension does not store any of it: it is held in the page only while the panel is open.
+
+- **It fills a form field only when you press Fill**, and only the fields you leave ticked:
+  the title, the body, Summary, the search title and Related Profiles. It never presses
+  Save, Preview or Publish: you press Save yourself, using Drupal's own button. It never
+  touches the page's web address or "Generate automatic URL alias"; Drupal makes the address
+  when you save. **Undo** beside each field puts back what was there before, for as long as
+  the field still holds the fill.
+- **The body** is written into the body's editor in your browser. To choose how the Overview
+  box looks, the extension first asks the editor whether its content filter keeps the
+  site's blue Overview box; if it does not say yes, the box is a plain heading and list.
+  After the fill it reads the body back from the editor, so that Undo can tell whether you
+  have changed it since. None of this is sent anywhere.
+- **Related Profiles.** For each doctor you leave ticked, the extension looks the name up in
+  the Related Profiles field's own search on the Drupal site you are on, as typing the name
+  would (a request to that site, with your Drupal login, and to no other), and adds the
+  doctor only when exactly one profile has exactly that name. Otherwise it adds nobody and
+  says so.
+- **The next save reports what Fill filled**, as listed above: the title, the description
+  (for Summary), the search title, the body and Related Profiles, leaving out any you put
+  back with Undo.
 
 ### What the extension keeps on your computer while you are connected
 
