@@ -30,6 +30,13 @@ test.describe('the fields filled from Varys', () => {
     expect(filledFields()).toEqual(['headings', 'meta_description', 'meta_title', 'title']);
   });
 
+  test('a draft filled into a new page can mark the body and Related Profiles too', () => {
+    for (const field of ['related_profiles', 'title', 'body'] as const) markFilled(field);
+    expect(filledFields()).toEqual(['body', 'related_profiles', 'title']);
+    unmarkFilled('body');
+    expect(filledFields()).toEqual(['related_profiles', 'title']);
+  });
+
   test('what filledFields returns is a copy, so changing it does not change what is marked', () => {
     markFilled('title');
     filledFields().push('headings');
