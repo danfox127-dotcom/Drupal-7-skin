@@ -9,7 +9,11 @@ import {
   undoFill, valueToFill,
   type AdoptedFills, type CarriedFills, type FillKind, type FillRecord,
 } from '../lib/varys/suggestionFill';
-import { markFilled } from '../lib/varys/filled';
+import { markFilled, unmarkFilled } from '../lib/varys/filled';
+import {
+  addProfiles, profileInputs, profileStillAdded, undoProfiles, type ProfileOutcome, type ProfileResult,
+} from '../lib/varys/profileFill';
+import { labelKey, stripEntityId } from '../lib/clone/values';
 import { fetchSitePage, isNodeAddress, resolvePublicAddress } from '../lib/varys/publicAddress';
 import {
   SUGGESTIONS_ERROR_COPY, SUGGESTIONS_NO_CURSOR_COPY,
@@ -17,7 +21,9 @@ import {
   type VarysSiteTrackedRequest, type VarysSiteTrackedResponse, type VarysSuggestionsRequest,
 } from '../lib/varys/suggestions';
 import { ACTION_EXPIRED_COPY, ACTION_NOT_CONNECTED_COPY, ACTION_UNREACHABLE_COPY } from '../lib/varys/submissions';
-import { SuggestionsPanel, type PanelBody, type SuggestionRow } from '../components/varys/SuggestionsPanel';
+import {
+  SuggestionsPanel, type DoctorRow, type PanelBody, type SuggestionRow,
+} from '../components/varys/SuggestionsPanel';
 import type { InsertRichEditorHtmlRequest, InsertRichEditorHtmlResponse } from '../background';
 
 /**
@@ -58,6 +64,15 @@ const INTO_SUMMARY_FOLLOWED_COPY = 'Goes into Summary, which is also the search 
 const INTO_SUMMARY_ONLY_COPY = 'Goes into Summary.';
 const INTO_OVERRIDE_OVER_SUMMARY_COPY = 'Goes into the search description field, which overrides Summary on this page.';
 const INTO_OVERRIDE_ONLY_COPY = 'Goes into the search description field.';
+
+/** What an Add to Related Profiles came to, in the panel's words. */
+const PROFILE_COPY: Record<ProfileResult, string> = {
+  added: 'Added.',
+  already: 'Already in Related Profiles.',
+  ambiguous: 'More than one match — add by hand.',
+  not_found: 'Not found in Related Profiles — add by hand.',
+  unavailable: "Couldn't check — add by hand.",
+};
 
 /** The body's textarea, by name: its id is the one its rich editor is registered under. */
 const BODY_FIELD = 'textarea[name="body[und][0][value]"]';
@@ -270,6 +285,57 @@ function carryFills(formPath: string, fills: CarriedFills): void {
   }
 }
 
+/**
+ * How one doctor the article names is shown, or null for no row.
+ *
+ * A doctor missing from Related Profiles is offered with Add. After an Add the row says what it
+ * came to, for as long as that is still true of the form: an `added` doctor offers Undo while
+ * the row still holds what was written, and an outcome the form has since overtaken (the person
+ * typed over the row, or put the doctor in by hand) is forgotten. Only a lookup that could not
+ * be made is worth pressing Add for again; a name the site lacks, or has twice, is for the person.
+ */
+function doctorRow(
+  fullName: string,
+  outcome: ProfileOutcome | undefined,
+  isPresent: boolean,
+  disabled: boolean,
+): DoctorRow | null {
+  if (outcome?.result === 'added' && profileStillAdded(outcome)) {
+    return { fullName, action: 'undo', disabled, message: PROFILE_COPY.added };
+  }
+  if (outcome?.result === 'already' && isPresent) {
+    return { fullName, action: 'none', disabled, message: PROFILE_COPY.already };
+  }
+  if (outcome && outcome.result !== 'added' && outcome.result !== 'already' && !isPresent) {
+    return {
+      fullName, action: outcome.result === 'unavailable' ? 'add' : 'none', disabled, message: PROFILE_COPY[outcome.result],
+    };
+  }
+  return isPresent ? null : { fullName, action: 'add', disabled, message: null };
+}
+
+/**
+ * The doctors the article names that Related Profiles lacks, each once (names are compared as
+ * the site's own key is, without its id and by case and spacing). None when the form has no
+ * Related Profiles field.
+ */
+function doctorRows(named: string[], outcomes: Record<string, ProfileOutcome>, disabled: boolean): DoctorRow[] {
+  const inputs = profileInputs();
+  if (inputs.length === 0) return [];
+  const present = new Set(inputs.map(input => labelKey(stripEntityId(input.value))));
+
+  const seen = new Set<string>();
+  const rows: DoctorRow[] = [];
+  for (const fullName of named) {
+    const key = labelKey(fullName);
+    if (key === '' || seen.has(key)) continue;
+    seen.add(key);
+    const row = doctorRow(fullName, outcomes[key], present.has(key), disabled);
+    if (row) rows.push(row);
+  }
+  return rows;
+}
+
 // ---------------------------------------------------------------------------- the placement
 
 /** Drupal's admin toolbar, which the panel stays below (the extension's overlays all start at 44px). */
@@ -383,6 +449,11 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
   const [headingsInserted, setHeadingsInserted] = useState(adopted.headings);
   const [headingMessage, setHeadingMessage] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState(false);
+  // What each Add to Related Profiles came to, by the doctor's name as the site compares it.
+  const [outcomes, setOutcomes] = useState<Record<string, ProfileOutcome>>({});
+  // True while an Add is under way. A ref as well, because two presses can land before a render.
+  const [adding, setAdding] = useState(false);
+  const addingNow = useRef(false);
   // Bumped by any edit in the page, so "Now" and Undo follow what the person types.
   const [edits, setEdits] = useState(0);
 
@@ -552,6 +623,46 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
     if (kind === 'title') setAddressKept(false);
   }, [records, fields]);
 
+  // ------------------------------------------------------------------------ the doctors
+
+  const addDoctor = useCallback(async (fullName: string) => {
+    // One change to Related Profiles at a time: two Adds at once would pick the same empty row.
+    if (addingNow.current) return;
+    const [anyInput] = profileInputs();
+    if (!anyInput) return;
+    addingNow.current = true;
+    setAdding(true);
+    try {
+      let outcome: ProfileOutcome = { name: fullName, result: 'unavailable', delta: null };
+      try {
+        // One name, so one outcome.
+        outcome = (await addProfiles([fullName], anyInput))[0] ?? outcome;
+      } catch (err) {
+        console.warn('[D7 Studio] Varys: adding a doctor to Related Profiles failed', err);
+      }
+      if (outcome.result === 'added') markFilled('related_profiles');
+      setOutcomes(prev => ({ ...prev, [labelKey(fullName)]: outcome }));
+    } finally {
+      addingNow.current = false;
+      setAdding(false);
+    }
+  }, []);
+
+  const undoDoctor = useCallback((fullName: string) => {
+    if (addingNow.current) return;
+    const key = labelKey(fullName);
+    const outcome = outcomes[key];
+    if (!outcome || !profileStillAdded(outcome)) return;
+    undoProfiles([outcome]);
+    // Undo only takes a row that still holds what was written; if it did not clear, say nothing.
+    if (profileStillAdded(outcome)) return;
+    const rest = { ...outcomes };
+    delete rest[key];
+    setOutcomes(rest);
+    // Marked while any doctor added here is still where it was put.
+    if (!Object.values(rest).some(other => profileStillAdded(other))) unmarkFilled('related_profiles');
+  }, [outcomes]);
+
   const letItChange = useCallback(() => {
     letAddressChange(fields());
     setAddressKept(false);
@@ -638,6 +749,7 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
       madeAt: answer.made_at,
       clinicalNote: answer.clinical_review_note,
       rows,
+      doctors: doctorRows(answer.named_doctors, outcomes, adding),
       addressKept,
       headings: { current: answer.current.h2s, suggested: answer.suggested.h2s },
       headingMessage,
@@ -659,6 +771,8 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
         onAsk={ask}
         onUse={use}
         onUndo={undo}
+        onAddDoctor={name => { void addDoctor(name); }}
+        onUndoDoctor={undoDoctor}
         onLetAddressChange={letItChange}
         onCopy={copy}
         onInsert={text => { void insert(text); }}

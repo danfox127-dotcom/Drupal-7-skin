@@ -32,6 +32,11 @@ export type SuggestionsAnswer =
       clinical_review_note: string | null;
       current: ScaffoldSide;
       suggested: ScaffoldSide;
+      /**
+       * Full names (the directory's: "Jacqueline L Steele, MD") of the doctors the crawled
+       * article names. Empty when it names none, and when this Varys is older than the field.
+       */
+      named_doctors: string[];
     };
 
 /** The worker's reply to either request. `message` is for the person, in the extension's words. */
@@ -120,6 +125,8 @@ export function parseSuggestionsAnswer(json: unknown): SuggestionsAnswer | null 
           clinical_review_note: a.clinical_review_note,
           current: a.current,
           suggested: a.suggested,
+          // Optional: an older Varys omits it. Not text all through means none, never a rejected answer.
+          named_doctors: Array.isArray(a.named_doctors) && a.named_doctors.every(isText) ? a.named_doctors : [],
         }
         : null;
     default:

@@ -339,12 +339,15 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
     does not track, for an add form, or when the extension cannot tell which sites Varys
     tracks. What comes back is
     Varys's suggestions (search title, description, page title, section headings and an
-    optional clinical review note) and Varys's own copy of the page's current title,
-    description and headings, from its last read of the page; they are shown in a panel on
-    the page and not stored by the extension. A suggestion is put into the form only when
-    the user presses Use, or Insert at cursor for a heading. Use can be undone with Undo; a
-    heading inserted into the body is reversed with the editor's own undo, as the panel has
-    no Undo for it. The extension never saves or publishes.
+    optional clinical review note), Varys's own copy of the page's current title,
+    description and headings, from its last read of the page, and the names of any doctors
+    the page's article names; they are shown in a panel on the page and not stored by the
+    extension. A suggestion is put into the form only when the user presses Use, or Insert
+    at cursor for a heading, or Add beside a doctor (which asks the Related Profiles field's
+    own search on the same Drupal site, sending nothing to Varys, and adds the doctor only on
+    one exact match). Use and Add can be undone with Undo; a heading inserted into the body
+    is reversed with the editor's own undo, as the panel has no Undo for it. The extension
+    never saves or publishes.
   - Separately, when the user opens a new page's form (an add form) on a site Varys tracks,
     the extension sends only that site's address, to list the user's own Varys drafts for
     it, and the same address with a draft's id when the user picks one. No content of the

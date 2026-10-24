@@ -291,16 +291,18 @@ tell which sites Varys tracks.
 
 ### What comes back: the suggestions panel
 
-Varys answers a suggestions request with two things and nothing else: its suggestions for
+Varys answers a suggestions request with three things and nothing else: its suggestions for
 the page (a search title, a search description, a page title and section headings, an
-optional clinical review note, and when Varys made them), and its own copy of the page's
+optional clinical review note, and when Varys made them), its own copy of the page's
 current title, search title, search description and headings, from Varys's last read of the
-page. The panel shows the suggestions beside what the form holds now, and shows the headings
+page, and the names of any doctors the page's article names, as Columbia's physician
+directory has them (the list may be empty). The panel shows the suggestions beside what the form holds now, and shows the headings
 from Varys's copy as the headings on the page now. The extension does not store the answer:
 it is held in the page only while the panel is open.
 
-- **It fills a form field only when you press Use**, and only the page title, search title
-  or search description (or Summary, when the page's description follows it). It never
+- **It fills a form field only when you press Use** (or Add, for a doctor: see below), and
+  only the page title, search title or search description (or Summary, when the page's
+  description follows it). It never
   presses Save or Publish: you press Save yourself, using Drupal's own button. **Undo** puts
   the old text back, for as long as the field still holds the fill. Using a suggested title
   also touches the page's web address, so that it stays as it is: if Drupal's "Generate
@@ -314,6 +316,16 @@ it is held in the page only while the panel is open.
   and reads nothing from the editor but whether it has a cursor. The panel has no Undo for
   it; the editor's own undo reverses it. Insert at cursor is reported with the next save as
   a filled field ("headings"); Copy is not reported.
+- **Doctors the article names.** When the form has a Related Profiles field, the panel lists
+  each doctor Varys found named in the page's article who is not already in that field, with
+  **Add**. Pressing Add looks the name up in the Related Profiles field's own search on the
+  Drupal site you are on, as typing the name would (a request to that site, with your Drupal
+  login, and to no other), and puts the doctor in a row only when exactly one profile has
+  exactly that name; otherwise it adds nobody and says so. Nothing is sent to Varys for it:
+  the names came with the suggestions. **Undo** empties the row Add filled, for as long as the
+  row still holds it. It never presses Save. An Add is reported with the next save made
+  without a reload in between as a filled field ("related_profiles"), unless you put it back
+  with Undo; a Preview, or a save Drupal rejects, reloads the form and ends Undo for it.
 
 ### What comes back: drafts on a new page
 

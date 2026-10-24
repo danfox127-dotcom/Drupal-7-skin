@@ -31,6 +31,21 @@ export interface SuggestionRow {
   note?: string | null;
 }
 
+/**
+ * A doctor the article names who is not in Related Profiles (or who was just added there).
+ * Offered with Add, and once added with Undo.
+ */
+export interface DoctorRow {
+  /** The directory's full name, as Varys gave it. */
+  fullName: string;
+  /** `add` offers Add, `undo` offers Undo (the doctor was added here and the row still holds it), `none` no button. */
+  action: 'add' | 'undo' | 'none';
+  /** An Add is under way, so Related Profiles is not changed again until it ends. */
+  disabled: boolean;
+  /** What the last Add came to, in words, or null. */
+  message: string | null;
+}
+
 /** What the panel's body shows. */
 export type PanelBody =
   | {
@@ -39,6 +54,8 @@ export type PanelBody =
     madeAt: string | null;
     clinicalNote: string | null;
     rows: SuggestionRow[];
+    /** Doctors the article names that Related Profiles lacks; empty when the form has no such field. */
+    doctors: DoctorRow[];
     /** A title fill unticked "Generate automatic URL alias", so the address stays as it is. */
     addressKept: boolean;
     headings: { current: string[]; suggested: string[] };
@@ -60,6 +77,8 @@ export interface SuggestionsPanelProps {
   onAsk: () => void;
   onUse: (kind: FillKind) => void;
   onUndo: (kind: FillKind) => void;
+  onAddDoctor: (fullName: string) => void;
+  onUndoDoctor: (fullName: string) => void;
   onLetAddressChange: () => void;
   onCopy: (text: string) => void;
   onInsert: (text: string) => void;
@@ -73,6 +92,7 @@ export const STILL_WRITING_COPY = 'Still writing. Check back in a few minutes.';
 export const NOT_CRAWLED_COPY = "Varys hasn't read this page yet, so it has no suggestions. It reads each site weekly.";
 export const KEEPS_ADDRESS_COPY = 'Using this title keeps the current web address.';
 export const LET_ADDRESS_CHANGE_COPY = 'Let the address change instead';
+export const doctorCopy = (fullName: string) => `Named in this article but not in Related Profiles: ${fullName}`;
 
 /**
  * "2 days ago", "yesterday", "just now". Null when the time cannot be read, so nothing is
@@ -149,6 +169,32 @@ function Row({ row, onUse, onUndo }: {
   );
 }
 
+function Doctor({ doctor, onAdd, onUndo }: {
+  doctor: DoctorRow;
+  onAdd: (fullName: string) => void;
+  onUndo: (fullName: string) => void;
+}) {
+  const labelId = useId();
+  return (
+    <div role="group" aria-labelledby={labelId} className="py-3 border-t border-rule-hair">
+      <div className="flex items-start gap-3">
+        <p id={labelId} className="flex-1 text-control text-ink break-words pt-1">{doctorCopy(doctor.fullName)}</p>
+        {doctor.action === 'add' && (
+          <button type="button" className={PRIMARY} disabled={doctor.disabled} onClick={() => onAdd(doctor.fullName)}>
+            Add
+          </button>
+        )}
+        {doctor.action === 'undo' && (
+          <button type="button" className={QUIET} disabled={doctor.disabled} onClick={() => onUndo(doctor.fullName)}>
+            Undo
+          </button>
+        )}
+      </div>
+      {doctor.message && <p role="status" className="mt-1 text-help text-ink-secondary">{doctor.message}</p>}
+    </div>
+  );
+}
+
 function HeadingColumn({ title, headings, actions }: {
   title: string;
   headings: string[];
@@ -174,9 +220,10 @@ function HeadingColumn({ title, headings, actions }: {
   );
 }
 
-function Ready({ body, onUse, onUndo, onLetAddressChange, onCopy, onInsert }: {
+function Ready({ body, onUse, onUndo, onAddDoctor, onUndoDoctor, onLetAddressChange, onCopy, onInsert }: {
   body: Extract<PanelBody, { state: 'ready' }>;
-} & Pick<SuggestionsPanelProps, 'onUse' | 'onUndo' | 'onLetAddressChange' | 'onCopy' | 'onInsert'>) {
+} & Pick<SuggestionsPanelProps,
+  'onUse' | 'onUndo' | 'onAddDoctor' | 'onUndoDoctor' | 'onLetAddressChange' | 'onCopy' | 'onInsert'>) {
   return (
     <>
       {body.clinicalNote && (
@@ -187,6 +234,10 @@ function Ready({ body, onUse, onUndo, onLetAddressChange, onCopy, onInsert }: {
       )}
 
       {body.rows.map(row => <Row key={row.kind} row={row} onUse={onUse} onUndo={onUndo} />)}
+
+      {body.doctors.map(doctor => (
+        <Doctor key={doctor.fullName} doctor={doctor} onAdd={onAddDoctor} onUndo={onUndoDoctor} />
+      ))}
 
       {body.addressKept && (
         <p className="pb-3 text-help text-ink">

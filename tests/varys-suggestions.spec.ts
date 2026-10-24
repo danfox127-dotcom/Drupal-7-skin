@@ -9,6 +9,7 @@ import { SUGGESTIONS_NO_CURSOR_COPY, parseSuggestionsAnswer } from '../src/lib/v
 const side = { meta_title: 'Heart failure', meta_description: null, h1: 'Heart failure', h2s: ['Overview'] };
 const ready = {
   status: 'ready', made_at: '2026-10-21T09:30:00Z', clinical_review_note: null, current: side, suggested: side,
+  named_doctors: ['Jacqueline L Steele, MD', 'Jane Q. Roe, MD'],
 };
 
 test.describe('parsing a suggestions answer', () => {
@@ -22,6 +23,23 @@ test.describe('parsing a suggestions answer', () => {
     expect(parseSuggestionsAnswer({ ...ready, extra: 1 })).toEqual(ready);
     expect(parseSuggestionsAnswer({ ...ready, clinical_review_note: 'Check the dose.' }))
       .toMatchObject({ clinical_review_note: 'Check the dose.' });
+  });
+
+  test('a ready answer keeps the doctors Varys found named in the article', () => {
+    expect(parseSuggestionsAnswer(ready)).toMatchObject({ named_doctors: ['Jacqueline L Steele, MD', 'Jane Q. Roe, MD'] });
+    expect(parseSuggestionsAnswer({ ...ready, named_doctors: [] })).toMatchObject({ named_doctors: [] });
+  });
+
+  test('an older Varys answer without named_doctors still parses', () => {
+    const { named_doctors, ...older } = ready;
+    void named_doctors;
+    expect(parseSuggestionsAnswer(older)).toEqual({ ...ready, named_doctors: [] });
+  });
+
+  test('named_doctors that is not a list of text is dropped to none, without rejecting the answer', () => {
+    for (const bad of ['Jane Q. Roe, MD', 7, null, { 0: 'Jane Q. Roe, MD' }, ['Jane Q. Roe, MD', 3], [null], [['Jane Q. Roe, MD']]]) {
+      expect(parseSuggestionsAnswer({ ...ready, named_doctors: bad })).toEqual({ ...ready, named_doctors: [] });
+    }
   });
 
   test('a ready answer may have no made_at time, because Varys\'s generated_at can be null', () => {

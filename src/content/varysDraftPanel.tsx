@@ -10,7 +10,9 @@ import {
   bodyToFill, canUndoBody, canUndoText, DRAFT_FIELDS, fillText, planDraftFill, undoText,
   type BodyFillRecord, type DraftRow, type DraftRowKind, type ReadyDraft, type TextFillRecord,
 } from '../lib/varys/draftFill';
-import { addProfiles, undoProfiles, type ProfileOutcome, type ProfileResult } from '../lib/varys/profileFill';
+import {
+  addProfiles, profileInputs, profileStillAdded, undoProfiles, type ProfileOutcome, type ProfileResult,
+} from '../lib/varys/profileFill';
 import { markFilled, unmarkFilled } from '../lib/varys/filled';
 import type {
   DraftDoctor, DraftReply, DraftsReply, DraftSummary, RichEditorAllowsRequest, RichEditorAllowsResponse,
@@ -39,9 +41,6 @@ import {
 
 /** The body's textarea, by name: its id is the one its rich editor is registered under. */
 const BODY_FIELD = `textarea[name=${JSON.stringify(DRAFT_FIELDS.body)}]`;
-/** Every row of Related Profiles, whatever its delta: `addProfiles` finds the widget from any. */
-const PROFILE_INPUTS = '[name^="field_cola_cups_profiles[und]["][name$="][target_id]"]';
-const PROFILES_FIELD = 'field_cola_cups_profiles';
 
 /**
  * The Overview box is the site's callout: an aside with these classes, titled by an id. Only
@@ -139,16 +138,6 @@ function doctorChoice(doctor: DraftDoctor): DoctorChoice {
   if (!doctor.exact) return { kind: 'add', fullName, text: `${fullName} — quoted as “${doctor.name}”`, ticked: false };
   return { kind: 'add', fullName, text: fullName, ticked: true };
 }
-
-/** The Related Profiles row an outcome wrote to, as the page has it now. */
-function profileInput(outcome: ProfileOutcome): HTMLInputElement | null {
-  return document.querySelector<HTMLInputElement>(
-    `[name$=${JSON.stringify(`${PROFILES_FIELD}[und][${outcome.delta}][target_id]`)}]`);
-}
-
-/** True while the row a doctor was added to still holds what was written there. */
-const profileStillAdded = (outcome: ProfileOutcome): boolean =>
-  outcome.result === 'added' && outcome.value !== undefined && profileInput(outcome)?.value === outcome.value;
 
 // -------------------------------------------------------------------------------- the body
 
@@ -383,7 +372,8 @@ function DraftsPanel({ pageUrl, drafts: firstDrafts, first, editorsReady, onClos
           const choice = doctorChoice(d);
           return choice.kind === 'add' && doctorTicks[i] ? [choice.fullName] : [];
         });
-        const anyInput = document.querySelector<HTMLInputElement>(PROFILE_INPUTS);
+        // Any row will do: `addProfiles` finds the widget from it.
+        const [anyInput] = profileInputs();
         let found: ProfileOutcome[] = [];
         if (names.length > 0) {
           found = anyInput

@@ -47,6 +47,8 @@ const ROUTES: [RegExp, string][] = [
   [/\/node\/17176\/edit/, 'node-edit-specialty.html'],
   // Same form, CKEditor attaching on a delay — see the fixture's own comment.
   [/\/node\/17177\/edit/, 'node-edit-specialty-async.html'],
+  // A published News page with Related Profiles: for the doctors a page names but does not list.
+  [/\/node\/9001\/edit/, 'node-edit-news-varys.html'],
   [/\/node\/\d+\/edit/, 'node-edit.html'],
 ];
 
@@ -4816,6 +4818,7 @@ test.describe('Varys suggestions: worker', () => {
       h1: 'Heart failure',
       h2s: ['Overview', 'Myths about heart failure'],
     },
+    named_doctors: ['Jacqueline L Steele, MD'],
   };
 
   /** Varys as it is when all is well: it tracks this site, and answers the one `suggestions` says. */
@@ -4916,6 +4919,17 @@ test.describe('Varys suggestions: worker', () => {
 
     expect(await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE }))
       .toEqual({ ok: true, answer: noTime });
+  });
+
+  test('a ready answer from an older Varys, with no named_doctors, reaches the panel with none named', async ({ page, context, extensionId, settings }) => {
+    const { named_doctors, ...older } = READY;
+    void named_doctors;
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varysUp({ status: 200, body: older }));
+    await openEditor(page);
+
+    expect(await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE }))
+      .toEqual({ ok: true, answer: { ...older, named_doctors: [] } });
   });
 
   test('asking Varys to make them posts the page URL, and says it is generating', async ({ page, context, extensionId, settings }) => {
@@ -6372,6 +6386,318 @@ test.describe('Varys suggestions: panel', () => {
     expect((await panel(page).boundingBox())!.height).toBeLessThan(60);
     await panel(page).getByRole('button', { name: new RegExp(HEADER) }).click();
     await expect(row(page, 'Search result title')).toBeVisible();
+  });
+
+  // ---------------------------------------------------- doctors named but not in Related Profiles
+
+  /** A published News page: Jane Q. Roe, MD is in Related Profiles, with one empty row after her. */
+  const NEWS = `${HOST}/node/9001/edit`;
+  const PROFILE_ROWS = '[name^="field_cola_cups_profiles[und]"][name$="[target_id]"]';
+  const profileRow = (delta: number) => `[name="field_cola_cups_profiles[und][${delta}][target_id]"]`;
+  const ROE = 'Jane Q. Roe, MD';
+  const ROE_IN_FORM = 'Jane Q. Roe, MD (9001)';
+  const STEELE = 'Jacqueline L Steele, MD';
+  const STEELE_KEY = 'Jacqueline L Steele, MD (9002)';
+  const LEE = 'Ana Lee, MD';
+  const LEE_KEY = 'Ana Lee, MD (9003)';
+  const NAMED = /^Named in this article but not in Related Profiles: /;
+  const doctor = (page: Page, name: string) =>
+    row(page, `Named in this article but not in Related Profiles: ${name}`);
+  const addButton = (page: Page, name: string) => doctor(page, name).getByRole('button', { name: 'Add', exact: true });
+  const undoButton = (page: Page, name: string) => doctor(page, name).getByRole('button', { name: 'Undo', exact: true });
+
+  /**
+   * The site's own Related Profiles lookup, answering from `people` (name → the keys Drupal
+   * would offer) and recording every name it was asked about. `hold` keeps one name's answer
+   * back until its promise settles. Anything not listed is answered empty.
+   */
+  const directory = async (
+    context: BrowserContext,
+    people: Record<string, Record<string, string> | 'fail'>,
+    hold: Record<string, Promise<void>> = {},
+  ) => {
+    const asked: string[] = [];
+    await context.route('**cuimc.columbia.edu/index.php**cola_cups_profiles**', async route => {
+      const url = decodeURIComponent(route.request().url());
+      const name = url.slice(url.lastIndexOf('/') + 1);
+      asked.push(name);
+      await hold[name];
+      const answer = people[name] ?? {};
+      if (answer === 'fail') return route.fulfill({ status: 500, contentType: 'text/html', body: 'Error' });
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(answer) });
+    });
+    return asked;
+  };
+  const everyone = { [STEELE]: { [STEELE_KEY]: STEELE }, [LEE]: { [LEE_KEY]: LEE } };
+
+  /** The News form, changed when a test asks. */
+  const serveNews = (context: BrowserContext, edit: (html: string) => string) =>
+    context.route(NEWS, route => route.request().method() !== 'GET'
+      ? route.fallback()
+      : route.fulfill({ status: 200, contentType: 'text/html', body: edit(read('node-edit-news-varys.html')) }));
+
+  test('a doctor named in the article but not in Related Profiles gets a row, and one already there does not', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    // Jane is in the form as "Jane Q. Roe, MD (9001)"; Varys names her by the directory's name, in any case.
+    const calls = await stubVarys(context, answering(ready({ named_doctors: ['jane q.  roe, md', STEELE] })));
+    const asked = await directory(context, everyone);
+    await open(page, NEWS);
+
+    await expect(doctor(page, STEELE)).toBeVisible();
+    await expect(doctor(page, STEELE)).toContainText(`Named in this article but not in Related Profiles: ${STEELE}`);
+    await expect(addButton(page, STEELE)).toBeVisible();
+    await expect(undoButton(page, STEELE)).toHaveCount(0);
+    await expect(panel(page).getByRole('group', { name: NAMED })).toHaveCount(1);
+
+    // Offering is not doing: nothing written, nothing asked of the site, nothing more sent to Varys.
+    expect(await page.inputValue(profileRow(0))).toBe(ROE_IN_FORM);
+    expect(await page.inputValue(profileRow(1))).toBe('');
+    expect(asked).toEqual([]);
+    expect(calls.filter(c => c.path !== '/api/extension/connection' && !c.path.startsWith('/api/extension/suggestions'))).toEqual([]);
+  });
+
+  test('no row when every doctor the article names is already in Related Profiles, or it names none', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready({ named_doctors: [ROE] })));
+    await open(page, NEWS);
+    await expect(row(page, 'Search result title')).toBeVisible();
+    await expect(panel(page).getByRole('group', { name: NAMED })).toHaveCount(0);
+  });
+
+  test('an older Varys answer without named_doctors shows the suggestions and no doctor rows', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    // ready() is the older shape: no named_doctors key at all.
+    expect('named_doctors' in ready()).toBe(false);
+    await stubVarys(context, answering(ready()));
+    await open(page, NEWS);
+
+    await expect(row(page, 'Search result title').getByRole('button', { name: 'Use' })).toBeVisible();
+    await expect(panel(page).getByRole('group', { name: NAMED })).toHaveCount(0);
+  });
+
+  test('rows are hidden on a form without Related Profiles', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready({ named_doctors: [STEELE] })));
+    await serveNews(context, html => {
+      const cut = html.replace(/<div class="field-type-entityreference[\s\S]*?(?=\s*<fieldset class="form-wrapper" id="edit-metatags)/, '');
+      expect(cut).not.toContain('field_cola_cups_profiles');
+      return cut;
+    });
+    await open(page, NEWS);
+
+    await expect(row(page, 'Search result title').getByRole('button', { name: 'Use' })).toBeVisible();
+    await expect(panel(page).getByRole('group', { name: NAMED })).toHaveCount(0);
+    await expect(panel(page).getByText(STEELE)).toHaveCount(0);
+  });
+
+  test('Add fills one Related Profiles row, and Undo clears it', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready({ named_doctors: [STEELE] })));
+    const asked = await directory(context, everyone);
+    await open(page, NEWS);
+
+    await addButton(page, STEELE).click();
+
+    await expect(doctor(page, STEELE)).toContainText('Added.');
+    // The site's own key, in the empty row after Jane, who is left as she was.
+    expect(await page.inputValue(profileRow(1))).toBe(STEELE_KEY);
+    expect(await page.inputValue(profileRow(0))).toBe(ROE_IN_FORM);
+    expect(await page.locator(PROFILE_ROWS).count()).toBe(2);
+    expect(asked).toEqual([STEELE]);
+    await expect(addButton(page, STEELE)).toHaveCount(0);
+    await expect(undoButton(page, STEELE)).toBeVisible();
+
+    await undoButton(page, STEELE).click();
+
+    expect(await page.inputValue(profileRow(1))).toBe('');
+    expect(await page.inputValue(profileRow(0))).toBe(ROE_IN_FORM);
+    expect(await page.locator(PROFILE_ROWS).count()).toBe(2);
+    await expect(doctor(page, STEELE)).not.toContainText('Added.');
+    await expect(addButton(page, STEELE)).toBeVisible();
+    await expect(undoButton(page, STEELE)).toHaveCount(0);
+  });
+
+  test('a second doctor goes in a new row, and each Undo clears only its own', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready({ named_doctors: [STEELE, LEE] })));
+    await directory(context, everyone);
+    await open(page, NEWS);
+
+    await addButton(page, STEELE).click();
+    await expect(doctor(page, STEELE)).toContainText('Added.');
+    await addButton(page, LEE).click();
+    await expect(doctor(page, LEE)).toContainText('Added.');
+
+    // Steele took the empty row; Lee needed "Add another item".
+    expect(await page.locator(PROFILE_ROWS).count()).toBe(3);
+    expect(await page.inputValue(profileRow(1))).toBe(STEELE_KEY);
+    expect(await page.inputValue(profileRow(2))).toBe(LEE_KEY);
+
+    await undoButton(page, STEELE).click();
+    expect(await page.inputValue(profileRow(1))).toBe('');
+    expect(await page.inputValue(profileRow(2))).toBe(LEE_KEY);
+    await expect(undoButton(page, LEE)).toBeVisible();
+
+    await undoButton(page, LEE).click();
+    expect(await page.inputValue(profileRow(2))).toBe('');
+    expect(await page.inputValue(profileRow(0))).toBe(ROE_IN_FORM);
+  });
+
+  test('one Add at a time: the rest wait for the lookup in flight', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready({ named_doctors: [STEELE, LEE] })));
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const asked = await directory(context, everyone, { [STEELE]: held });
+    await open(page, NEWS);
+
+    await addButton(page, STEELE).click();
+    await expect.poll(() => asked).toEqual([STEELE]);
+    // Two adds at once would both choose the same empty row.
+    await expect(addButton(page, STEELE)).toBeDisabled();
+    await expect(addButton(page, LEE)).toBeDisabled();
+
+    release();
+    await expect(doctor(page, STEELE)).toContainText('Added.');
+    await expect(addButton(page, LEE)).toBeEnabled();
+    await addButton(page, LEE).click();
+    await expect(doctor(page, LEE)).toContainText('Added.');
+    expect(await page.inputValue(profileRow(1))).toBe(STEELE_KEY);
+    expect(await page.inputValue(profileRow(2))).toBe(LEE_KEY);
+  });
+
+  for (const [label, answer, copy, retry] of [
+    ['the site has no such profile', {}, 'Not found in Related Profiles — add by hand.', false],
+    ['two profiles have that name', { [STEELE_KEY]: STEELE, 'Jacqueline L Steele, MD (9099)': STEELE },
+      'More than one match — add by hand.', false],
+    ['the site cannot be asked', 'fail', "Couldn't check — add by hand.", true],
+  ] as [string, Record<string, string> | 'fail', string, boolean][]) {
+    test(`when ${label}, nobody is added, the row says so, and the save does not claim it`, async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      const calls = await stubVarys(context, answering(ready({ named_doctors: [STEELE] })));
+      await directory(context, { [STEELE]: answer });
+      await saveLands(context, NEWS);
+      await open(page, NEWS);
+      await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+
+      await addButton(page, STEELE).click();
+
+      await expect(doctor(page, STEELE)).toContainText(copy);
+      await expect(undoButton(page, STEELE)).toHaveCount(0);
+      // Only a lookup that could not be made is worth pressing again.
+      await expect(addButton(page, STEELE)).toHaveCount(retry ? 1 : 0);
+      expect(await page.inputValue(profileRow(1))).toBe('');
+      expect(await page.locator(PROFILE_ROWS).count()).toBe(2);
+
+      await Promise.all([
+        page.waitForEvent('load'),
+        page.evaluate(() => (document.querySelector('#edit-submit-publish') as HTMLElement).click()),
+      ]);
+      await expect.poll(() => savesIn(calls).length).toBe(1);
+      expect(savesIn(calls)[0].body.varys_filled).toEqual([]);
+    });
+  }
+
+  test('a doctor who turns out to be in the form already is said to be, and is not added twice', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready({ named_doctors: [STEELE] })));
+    const asked = await directory(context, everyone);
+    await open(page, NEWS);
+    await expect(addButton(page, STEELE)).toBeVisible();
+    // Put there without an input event, as Drupal's own script might: the panel has not noticed.
+    await page.evaluate(([selector, value]) => {
+      (document.querySelector(selector) as HTMLInputElement).value = value;
+    }, [profileRow(1), STEELE_KEY] as const);
+
+    await addButton(page, STEELE).click();
+
+    await expect(doctor(page, STEELE)).toContainText('Already in Related Profiles.');
+    await expect(doctor(page, STEELE).getByRole('button')).toHaveCount(0);
+    expect(asked).toEqual([]);
+    expect(await page.locator(PROFILE_ROWS).count()).toBe(2);
+    expect(await page.inputValue(profileRow(1))).toBe(STEELE_KEY);
+  });
+
+  test('a row the person has changed since the Add is theirs: Undo goes and Add comes back', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready({ named_doctors: [STEELE] })));
+    await directory(context, everyone);
+    await open(page, NEWS);
+    await addButton(page, STEELE).click();
+    await expect(undoButton(page, STEELE)).toBeVisible();
+
+    await typeInto(page, profileRow(1), 'Someone Else, MD (9100)');
+
+    await expect(undoButton(page, STEELE)).toHaveCount(0);
+    await expect(addButton(page, STEELE)).toBeVisible();
+    await expect(doctor(page, STEELE)).not.toContainText('Added.');
+    expect(await page.inputValue(profileRow(1))).toBe('Someone Else, MD (9100)');
+  });
+
+  test('a doctor the person puts in by hand needs no row', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready({ named_doctors: [STEELE, LEE] })));
+    await open(page, NEWS);
+    await expect(doctor(page, STEELE)).toBeVisible();
+
+    await typeInto(page, profileRow(1), STEELE_KEY);
+
+    await expect(doctor(page, STEELE)).toHaveCount(0);
+    await expect(doctor(page, LEE)).toBeVisible();
+  });
+
+  test('a save after Add sends related_profiles as filled, and after Undo it does not', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready({ named_doctors: [STEELE] })));
+    await directory(context, everyone);
+    await saveLands(context, NEWS);
+    await open(page, NEWS);
+    await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+
+    await addButton(page, STEELE).click();
+    await expect(undoButton(page, STEELE)).toBeVisible();
+    await Promise.all([
+      page.waitForEvent('load'),
+      page.evaluate(() => (document.querySelector('#edit-submit-publish') as HTMLElement).click()),
+    ]);
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    expect(savesIn(calls)[0].body.varys_filled).toEqual(['related_profiles']);
+
+    // The same page again, put back before saving: nothing is claimed.
+    await open(page, NEWS);
+    await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+    await addButton(page, STEELE).click();
+    await undoButton(page, STEELE).click();
+    await expect(addButton(page, STEELE)).toBeVisible();
+    await Promise.all([
+      page.waitForEvent('load'),
+      page.evaluate(() => (document.querySelector('#edit-submit-publish') as HTMLElement).click()),
+    ]);
+    await expect.poll(() => savesIn(calls).length).toBe(2);
+    expect(savesIn(calls)[1].body.varys_filled).toEqual([]);
+  });
+
+  test('Undo of one doctor keeps related_profiles marked while another stays added', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, answering(ready({ named_doctors: [STEELE, LEE] })));
+    await directory(context, everyone);
+    await saveLands(context, NEWS);
+    await open(page, NEWS);
+    await expect(page.locator('form.node-form[data-d7-varys-capture]')).toHaveCount(1);
+
+    await addButton(page, STEELE).click();
+    await expect(undoButton(page, STEELE)).toBeVisible();
+    await addButton(page, LEE).click();
+    await expect(undoButton(page, LEE)).toBeVisible();
+    await undoButton(page, STEELE).click();
+    await expect(addButton(page, STEELE)).toBeVisible();
+    await Promise.all([
+      page.waitForEvent('load'),
+      page.evaluate(() => (document.querySelector('#edit-submit-publish') as HTMLElement).click()),
+    ]);
+
+    await expect.poll(() => savesIn(calls).length).toBe(1);
+    expect(savesIn(calls)[0].body.varys_filled).toEqual(['related_profiles']);
   });
 });
 

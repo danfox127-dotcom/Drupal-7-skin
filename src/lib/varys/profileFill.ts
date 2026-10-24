@@ -56,6 +56,25 @@ function rowsOf(doc: Document, baseName: string): { input: HTMLInputElement; del
   return rows.sort((a, b) => a.delta - b.delta);
 }
 
+/**
+ * Every top-level Related Profiles row on the form, whatever its delta, in document order.
+ * Empty when the form has no such field (a profile field nested in a paragraph is not it).
+ */
+export function profileInputs(root: Document = document): HTMLInputElement[] {
+  return Array.from(root.querySelectorAll<HTMLInputElement>(
+    `[name^=${JSON.stringify(`${PROFILES_FIELD}[und][`)}][name$="][target_id]"]`
+  ));
+}
+
+/** True while the row an Add wrote to still holds exactly what was written there. */
+export function profileStillAdded(outcome: ProfileOutcome, root: Document = document): boolean {
+  if (outcome.result !== 'added' || outcome.delta === null || outcome.value === undefined) return false;
+  const input = root.querySelector<HTMLInputElement>(
+    `[name$=${JSON.stringify(`${PROFILES_FIELD}[und][${outcome.delta}][target_id]`)}]`
+  );
+  return input?.value === outcome.value;
+}
+
 const isEmpty = (input: HTMLInputElement): boolean => input.value.trim() === '';
 
 /** True when a row already holds this doctor, whatever id the site gave them. */

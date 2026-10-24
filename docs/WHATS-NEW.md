@@ -268,8 +268,15 @@ right now. Click its title bar to fold it away.
   inserted heading; use the editor's own undo.
 - The panel also shows the headings the page has now, from Varys's own last read of it, so
   you can compare.
+- **Doctors the article names.** If Varys found a doctor named in the page's article who is
+  not in Related Profiles, the panel lists them (*Named in this article but not in Related
+  Profiles: …*) with **Add**. The extension looks the doctor up in Related Profiles' own
+  search on the site and adds them only when exactly one profile has exactly that name;
+  otherwise it adds nobody and says why. **Undo** empties the row it filled, as long as you
+  have not changed it. It never saves. Unlike the other fills, an Add is not kept across a
+  Preview or a save Drupal sends back with an error: Undo ends there.
 - **When you save, Varys is told which fields you filled from its suggestions** (title,
-  search title, description, headings; not one you put back with Undo), and shows "Filled from
+  search title, description, headings, Related Profiles; not one you put back with Undo), and shows "Filled from
   Varys: …" beside the change, so you can later see whether a suggestion that went live
   worked.
 
@@ -277,7 +284,8 @@ right now. Click its title bar to fold it away.
 to fetch its suggestions (if the form does not show that address, the extension first reads
 the page itself on the same site to learn it); **Ask Varys** sends the same address so that
 Varys can write them. Nothing from the form goes with either, and nothing is sent for a site
-Varys does not track, for a new page, or while you are not connected. If you press Ask Varys,
+Varys does not track, for a new page, or while you are not connected. (Pressing Add on a
+doctor asks only your own Drupal site, never Varys.) If you press Ask Varys,
 the extension keeps a small marker in that browser tab for 3 minutes (the address and the
 time), so that reloading the page keeps waiting instead of asking again. `docs/PRIVACY.md`
 has the full list.
