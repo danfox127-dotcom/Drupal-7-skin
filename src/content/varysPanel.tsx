@@ -239,10 +239,9 @@ function pathOf(address: string): string | null {
 
 /**
  * True only when the worker says, by the list Varys last gave, that this page's site is one
- * Varys tracks. Anything else (untracked, no telling, no answer) is false. Shared with the
- * drafts panel on a new page's form (varysDraftPanel.tsx).
+ * Varys tracks. Anything else (untracked, no telling, no answer) is false.
  */
-export async function siteIsTracked(pageUrl: string): Promise<boolean> {
+async function siteIsTracked(pageUrl: string): Promise<boolean> {
   try {
     const reply: VarysSiteTrackedResponse | undefined = await chrome.runtime.sendMessage(
       { type: 'varysSiteTracked', pageUrl } satisfies VarysSiteTrackedRequest);

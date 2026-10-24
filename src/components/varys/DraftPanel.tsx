@@ -99,6 +99,8 @@ export interface DraftPanelProps {
 
 export const NOTHING_SAVED_COPY = "Nothing is saved: review, then press Drupal's own Save.";
 export const REPLACES_COPY = 'If a field already has text, filling replaces it, and Undo puts it back.';
+/** Undo's records live in the page, so a reload (Drupal's Preview, or any Save) ends them. */
+export const UNDO_LASTS_COPY = 'Undo lasts until this page reloads (Preview or Save).';
 export const OPENING_COPY = 'Opening the draft…';
 export const FILLING_COPY = 'Filling…';
 export const OPEN_APP_COPY = 'Open Draft Assistant';
@@ -211,6 +213,7 @@ function Review({ body, onBack, onFill, onToggle, onUndo, onToggleDoctor, onUndo
         )}
         {body.filling && <p className="text-help text-ink" role="status">{FILLING_COPY}</p>}
         {body.before && <p className="text-help text-ink-help">{REPLACES_COPY}</p>}
+        {!body.before && !body.filling && <p className="text-help text-ink-help">{UNDO_LASTS_COPY}</p>}
         <p className="text-help text-ink">{NOTHING_SAVED_COPY}</p>
       </div>
     </>

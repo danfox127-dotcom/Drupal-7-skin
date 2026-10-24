@@ -211,10 +211,12 @@ common cause of a slow review. These are accurate as of the current manifest.
 
     Also, only once the user has connected to Varys and only on a new page's form, writes the
     Varys draft the user picked into the body's editor when they press Fill (the first use
-    above), and reads the body back from it so that Undo can tell whether it has changed
-    since. Before that it asks the editor's content filter whether it keeps the site's
-    Overview box markup, and reads nothing else from the editor for that. Nothing read is
-    sent, and the form is not saved or submitted: the user presses Save.
+    above). Before the fill it reads the body the editor holds and keeps it in memory, in the
+    page, so that Undo can put it back, and after the fill it reads the body back so that Undo
+    can tell whether it has changed since; a reload of the page (Preview or Save) ends Undo.
+    Before that it asks the editor's content filter whether it keeps the site's Overview box
+    markup, and reads nothing else from the editor for that. Nothing read is stored or sent,
+    and the form is not saved or submitted: the user presses Save.
 
 **`clipboardWrite`**
 
@@ -352,7 +354,9 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
     confirmed title, body, Overview points, Summary, search title, the doctors it names with
     their physician-directory matches, and counts of tables and images not carried over);
     it is shown in a panel and not stored by the extension. Fill writes only the fields the
-    user leaves ticked, never the web address, and each can be undone. To add a doctor to
+    user leaves ticked, never the web address, and each can be undone until the page reloads
+    (a Preview or a save); the next save made without a reload in between reports which
+    fields were filled. To add a doctor to
     Related Profiles the extension asks that field's own search on the same Drupal site, and
     adds the doctor only on exactly one exact match. The extension never saves or publishes.
 

@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { injectOverlay } from './inject';
 import { readBodyHtml, varysIsConnected } from './varysCapture';
-import { siteIsTracked, usePlacement } from './varysPanel';
+import { usePlacement } from './varysPanel';
 import { nodeIdFromPath } from '../lib/extractPublicHtml';
 import { discoverSchema, findNodeForm, type FieldDescriptor } from '../lib/formSchema';
 import { readValue, writeValue } from '../lib/fieldBinding';
@@ -56,6 +56,7 @@ const BODY_POLL_MS = 100;
 const NOT_FOUND_COPY = 'That draft is no longer available in Varys.';
 const OPEN_ERROR_COPY = "Varys couldn't open that draft right now. Try again in a moment.";
 const FILL_FAILED_COPY = "This field couldn't be filled, so nothing changed.";
+const ALREADY_HOLDS_COPY = 'The body already holds this draft.';
 const UNDO_FAILED_COPY = "This couldn't be put back. Use the editor's own undo.";
 const BODY_CHANGED_COPY = "You've changed the body since it was filled, so Undo left it as it is.";
 const NO_DOCTORS_TICKED_COPY = 'Not added';
@@ -154,6 +155,17 @@ const profileStillAdded = (outcome: ProfileOutcome): boolean =>
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 /**
+ * A body's words alone: tags dropped (each a space, so "<h2>A</h2><p>B" is not "AB"), entities
+ * decoded, whitespace collapsed. CKEditor rewrites markup it is given, so two bodies that read
+ * the same are compared this way, never character for character.
+ */
+function bodyText(html: string): string {
+  const spaced = html.replace(/<[^>]*>/g, ' ');
+  const decoded = new DOMParser().parseFromString(spaced, 'text/html').documentElement.textContent ?? spaced;
+  return decoded.replace(/\s+/g, ' ').trim();
+}
+
+/**
  * The body as the editor holds it once it has moved off `from`, or as it stands when it has
  * not within BODY_SETTLE_MS. CKEditor takes a new body a moment after it is given one, and
  * rewrites its markup on the way in, so the editor is read rather than the value sent.
@@ -175,6 +187,8 @@ type Result =
   | { status: 'filled'; text: TextFillRecord }
   | { status: 'filled'; search: FillRecord }
   | { status: 'filled'; body: BodyFillRecord; note?: string }
+  /** The body already read as this draft, so the fill changed nothing there is to undo. */
+  | { status: 'already' }
   | { status: 'skipped' | 'failed' | 'undone' }
   | { status: 'kept'; note: string };
 
@@ -345,8 +359,13 @@ function DraftsPanel({ pageUrl, drafts: firstDrafts, first, editorsReady, onClos
             const html = bodyToFill(draft, callout);
             if (writeValue(field, html)) {
               const filled = html === previous ? previous : await bodyMovedOff(form, previous);
-              if (filled !== previous || html === previous) {
+              if (filled !== previous) {
                 result = { status: 'filled', body: { previous, filled } };
+                markFilled('body');
+              } else if (bodyText(previous) === bodyText(html)) {
+                // Nothing moved because there was nothing to move: the body is this draft
+                // already (filled before a Preview reloaded the form, say). Filled, with no Undo.
+                result = { status: 'already' };
                 markFilled('body');
               } else {
                 // The editor never took it; the textarea alone would be overwritten on save.
@@ -474,6 +493,7 @@ function DraftsPanel({ pageUrl, drafts: firstDrafts, first, editorsReady, onClos
         case 'failed': return { outcome: { text: 'Not filled', undo: false }, note: FILL_FAILED_COPY };
         case 'undone': return { outcome: { text: 'Undone', undo: false }, note: null };
         case 'kept': return { outcome: { text: 'Filled', undo: false }, note: result.note };
+        case 'already': return { outcome: { text: 'Filled', undo: false }, note: ALREADY_HOLDS_COPY };
         case 'filled': {
           // Undo while the field still holds the fill. The body's editor cannot be read here,
           // so its Undo checks when pressed (canUndoBody), and says so if it is too late.
@@ -555,11 +575,17 @@ function DraftsPanel({ pageUrl, drafts: firstDrafts, first, editorsReady, onClos
 
 /**
  * Shows the person's Varys drafts on a new page's form, when this browser is connected, the
- * form's site is one Varys tracks, and Varys has at least one draft of theirs for it. A key
- * Varys refuses on the way shows the reconnect copy instead, and nothing else. Every other
- * answer (none, not tracked, unreachable, an error) mounts nothing, so a Varys that is down
- * does not put a panel on every new page this person opens. Not awaited by anything, and
- * never lets a fault of its own reach the person editing: the panel is an extra.
+ * form's site is one Varys tracks, and Varys has at least one draft of theirs for it. An
+ * expired key shows the reconnect copy instead, and nothing else, whether it had expired
+ * already or Varys refuses it now. Every other answer (none, not tracked, unreachable, an
+ * error) mounts nothing, so a Varys that is down does not put a panel on every new page this
+ * person opens. Not awaited by anything, and never lets a fault of its own reach the person
+ * editing: the panel is an extra.
+ *
+ * Whether the site is tracked is the worker's to say, inside `varysDrafts`, as it is for Part
+ * 1's suggestions: it checks connected, then expired, then the list of tracked sites, and
+ * sends nothing to Varys about a site it does not track, or at all for an expired key (an
+ * expired key on a site the last list does not track is "not tracked", so no panel).
  *
  * `editorsReady` is index.tsx's one shared wait for the page's rich editors, called only once
  * a draft is picked, so the body is filled and asked about with its editor in place.
@@ -570,8 +596,6 @@ export async function startVarysDraftPanel(editorsReady: () => Promise<unknown>)
     if (!(await varysIsConnected())) return;
     // The site's address, and nothing of the page: a new page has no address of its own yet.
     const pageUrl = `${window.location.origin}/`;
-    if (!(await siteIsTracked(pageUrl))) return;
-
     const reply = await askWorker<DraftsReply>({ type: 'varysDrafts', pageUrl });
     if (reply === null) return;
 

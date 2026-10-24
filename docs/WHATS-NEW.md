@@ -307,10 +307,13 @@ each. **Open Draft Assistant** takes you to Varys to make another.
 - **Fill** writes the ticked fields. If a field already had text, filling replaces it. That
   is all it does: it never saves, previews or publishes, and it leaves the page's web
   address to Drupal, so you still review and press Save. **Undo** beside each field puts back
-  what was there, as long as you have not changed the field since.
+  what was there, as long as you have not changed the field since. **Undo lasts until the
+  page reloads**: a Preview, or a save Drupal sends back with an error, ends it, as the panel
+  says after Fill.
 - **When you save, Varys is told which fields you filled from the draft** (title,
   description for Summary, search title, body, Related Profiles; not one you put back with
-  Undo).
+  Undo). Only the next save made without a reload in between reports them: after a Preview
+  or a rejected save, they are not reported.
 
 **What is sent for this.** When you open a new page's form, only the site's address goes to
 Varys, to list your drafts for it; picking one sends the same address and that draft's id.

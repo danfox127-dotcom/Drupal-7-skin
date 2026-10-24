@@ -6405,6 +6405,9 @@ test.describe('Varys drafts: panel', () => {
   const EXPIRED = 'Your Varys connection has expired. Reconnect from the extension menu.';
   const UNREACHABLE = "Varys couldn't be reached, so nothing changed. Try again in a moment.";
   const NOT_FOUND = 'That draft is no longer available in Varys.';
+  const UNDO_LASTS = 'Undo lasts until this page reloads (Preview or Save).';
+  const ALREADY_HOLDS = 'The body already holds this draft.';
+  const FILL_FAILED = "This field couldn't be filled, so nothing changed.";
   const BODY_LINE = 'Overview box (2 points), then the draft: 1,240 words · 4 headings · 2 lists · 3 Varys links';
   const DROPPED = "Tables (1) and images (2) aren't carried over; add them in Drupal.";
 
@@ -6601,6 +6604,34 @@ test.describe('Varys drafts: panel', () => {
     await expect(panel(page).getByText(NOTHING_SAVED)).toHaveCount(0);
   });
 
+  test('an already-expired key shows the reconnect copy, and asks Varys nothing', async ({ page, context, settings }) => {
+    await settings({ varysConnection: { ...connected, expired: true }, nodeEditor: false });
+    const calls = await stubVarys(context, varys());
+    await open(page);
+
+    await expect(panel(page).getByText(EXPIRED, { exact: true })).toBeVisible();
+    await expect(panel(page).getByRole('button', { name: /Heart failure/ })).toHaveCount(0);
+    await expect(panel(page).getByRole('link')).toHaveCount(0);
+    await expect(panel(page).getByText(NOTHING_SAVED)).toHaveCount(0);
+    expect(calls).toEqual([]);
+  });
+
+  test('an already-expired key on a site the last list does not track shows no panel, and asks nothing', async ({ page, context, settings }) => {
+    await settings({ varysConnection: { ...connected, expired: true }, nodeEditor: false });
+    const calls = await stubVarys(context, varys());
+    // The list of sites Varys last gave this person, two days old: a dead key never refreshes it.
+    await context.serviceWorkers()[0].evaluate(email => chrome.storage.session.set({
+      varysSites: { email, sites: ['nursing.columbia.edu'], fetchedAt: Date.now() - 2 * 86_400_000 },
+    }), EMAIL);
+    const seen = await listenInWorker(context);
+    await page.goto(FORM);
+
+    await expect.poll(async () => (await seen()).some(m => m.type === 'varysDrafts')).toBe(true);
+    await page.waitForTimeout(500);
+    await expect(panel(page)).toHaveCount(0);
+    expect(calls).toEqual([]);
+  });
+
   test('fill writes title, summary, search title, body with the callout box and one matched doctor', async ({ page, context, settings }) => {
     await settings({ varysConnection: connected, nodeEditor: false });
     const calls = await stubVarys(context, varys());
@@ -6623,8 +6654,11 @@ test.describe('Varys drafts: panel', () => {
     }
     await expect(row(page, 'Related Profiles').getByRole('checkbox', { name: 'Jane Q. Roe, MD', exact: true })).toBeChecked();
     await expect(panel(page).getByText(NOTHING_SAVED)).toBeVisible();
+    await expect(panel(page).getByText(UNDO_LASTS)).toHaveCount(0);
 
     await fill(page);
+    // Undo's records live in this page, so the panel says how long Undo lasts.
+    await expect(panel(page).getByText(UNDO_LASTS, { exact: true })).toBeVisible();
 
     expect(await page.inputValue(TITLE)).toBe('Heart failure: what to know');
     expect(await page.inputValue(SUMMARY)).toBe(READY.summary);
@@ -6743,6 +6777,58 @@ test.describe('Varys drafts: panel', () => {
     const message = await save(page, seen);
     expect(message.isNew).toBe(true);
     expect(message.varysFilled).toEqual(['body', 'meta_description', 'meta_title', 'related_profiles', 'title']);
+  });
+
+  test('re-filling a body that already holds this draft says so, and the save reports it', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys());
+    await directory(context, roeOnly);
+    const seen = await listenInWorker(context);
+    await open(page);
+    // The body as an earlier fill of this same draft left it (say, before a Preview reloaded the form).
+    const held = normalised(PLAIN_OVERVIEW + READY.body_html);
+    await page.evaluate(([id, html]) => { (window as any).CKEDITOR.instances[id]._data = html; }, [BODY_ID, held] as const);
+    await pick(page);
+    await fill(page);
+
+    const body = row(page, 'Body');
+    await expect(body).toContainText(ALREADY_HOLDS);
+    await expect(body).toContainText('Filled');
+    await expect(body.getByText(FILL_FAILED)).toHaveCount(0);
+    await expect(body.getByRole('button', { name: 'Undo' })).toHaveCount(0);
+    expect(await editorData(page)).toBe(held);
+
+    const message = await save(page, seen);
+    expect(message.varysFilled).toContain('body');
+  });
+
+  test('a body the editor never takes is said to be unfilled, put back, and not reported', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, varys());
+    await directory(context, roeOnly);
+    const seen = await listenInWorker(context);
+    await open(page);
+    await page.evaluate(id => {
+      const editor = (window as any).CKEDITOR.instances[id];
+      editor._data = '<p>Typed first.</p>';
+      // An editor that takes nothing it is given.
+      editor.setData = () => undefined;
+    }, BODY_ID);
+    await pick(page);
+    await fill(page);
+
+    const body = row(page, 'Body');
+    await expect(body).toContainText(FILL_FAILED);
+    await expect(body).toContainText('Not filled');
+    await expect(body.getByText(ALREADY_HOLDS)).toHaveCount(0);
+    await expect(body.getByRole('button', { name: 'Undo' })).toHaveCount(0);
+    expect(await editorData(page)).toBe('<p>Typed first.</p>');
+    // The textarea, which the editor writes over on Save, is put back too.
+    expect(await page.evaluate(id => (document.getElementById(id) as HTMLTextAreaElement).value, BODY_ID))
+      .toBe('<p>Typed first.</p>');
+
+    const message = await save(page, seen);
+    expect(message.varysFilled).not.toContain('body');
   });
 
   test('only an exact quoted match starts ticked, and a doctor not matched is never added', async ({ page, context, settings }) => {

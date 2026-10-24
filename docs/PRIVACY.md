@@ -322,28 +322,32 @@ else. When you pick one, it answers with that draft as Draft Assistant left it: 
 you confirmed (if you did), the body with Varys's links, the points for its Overview box, a
 Summary, a search title, the doctors the draft names (each with the name Varys matched in
 Columbia's physician directory, when it found one), and a count of the tables and images it
-could not carry over. The
-extension does not store any of it: it is held in the page only while the panel is open.
+could not carry over. The extension does not store any of it: it is held in the page only
+while the panel is open.
 
 - **It fills a form field only when you press Fill**, and only the fields you leave ticked:
   the title, the body, Summary, the search title and Related Profiles. It never presses
   Save, Preview or Publish: you press Save yourself, using Drupal's own button. It never
   touches the page's web address or "Generate automatic URL alias"; Drupal makes the address
   when you save. **Undo** beside each field puts back what was there before, for as long as
-  the field still holds the fill.
+  the field still holds the fill and the page has not reloaded: what Undo needs is held in
+  the page, so a Preview or any Save ends it.
 - **The body** is written into the body's editor in your browser. To choose how the Overview
   box looks, the extension first asks the editor whether its content filter keeps the
   site's blue Overview box; if it does not say yes, the box is a plain heading and list.
-  After the fill it reads the body back from the editor, so that Undo can tell whether you
-  have changed it since. None of this is sent anywhere.
+  Before the fill it reads the body the editor holds and keeps it in memory, in the page, so
+  that Undo can put it back; after the fill it reads the body back from the editor, so that
+  Undo can tell whether you have changed it since. None of this is stored or sent anywhere.
 - **Related Profiles.** For each doctor you leave ticked, the extension looks the name up in
   the Related Profiles field's own search on the Drupal site you are on, as typing the name
   would (a request to that site, with your Drupal login, and to no other), and adds the
   doctor only when exactly one profile has exactly that name. Otherwise it adds nobody and
   says so.
-- **The next save reports what Fill filled**, as listed above: the title, the description
-  (for Summary), the search title, the body and Related Profiles, leaving out any you put
-  back with Undo.
+- **The next save made without a reload in between reports what Fill filled**, as listed
+  above: the title, the description (for Summary), the search title, the body and Related
+  Profiles, leaving out any you put back with Undo. A Preview, or a save Drupal rejects,
+  reloads the form: that ends Undo for those fills, and the save after it does not report
+  them.
 
 ### What the extension keeps on your computer while you are connected
 
