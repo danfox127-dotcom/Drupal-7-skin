@@ -375,7 +375,8 @@ Worth knowing, so they don't look like faults:
 - **It never saves for you.** Every write goes into Drupal's own form fields, and Drupal's
   own Save button submits them.
 - **It never fills a Varys suggestion on its own.** A suggestion goes into the form only when
-  you press **Use** (or **Insert at cursor**, for a heading). **Undo** takes a Use back; a
+  you press **Use** (or **Insert at cursor**, for a heading, or **Add**, for a doctor the
+  article names who is missing from Related Profiles). **Undo** takes a Use or an Add back; a
   heading put in with Insert at cursor is reversed with the editor's own undo, since the
   panel has no Undo for it.
 - **It does not send anything to Varys until you connect it**, and even then never the full

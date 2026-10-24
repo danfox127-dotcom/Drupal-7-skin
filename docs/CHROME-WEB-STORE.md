@@ -103,9 +103,10 @@ URL, and it can be changed later.
       are logged there automatically, and so that, on a site Varys tracks, Varys's
       suggestions for the page you are editing (search title, description, title, section
       headings) appear in a panel on the edit form. A suggestion goes into the form only
-      when you press Use (or Insert at cursor, for a heading), and Undo takes a Use back; a
-      heading inserted into the body is reversed with the editor's own undo. On a new page's
-      form it lists your Varys drafts for the site instead, and Fill writes the fields you
+      when you press Use (or Insert at cursor, for a heading, or Add, for a doctor the
+      article names who is missing from Related Profiles), and Undo takes a Use or an Add
+      back; a heading inserted into the body is reversed with the editor's own undo. On a
+      new page's form it lists your Varys drafts for the site instead, and Fill writes the fields you
       leave ticked (title, body with its Overview box, Summary, search title, Related
       Profiles), each with its own Undo. It is off until you click Connect to Varys.
 
@@ -307,9 +308,9 @@ Answer the dashboard's questionnaire as follows. Each is accurate; do not soften
   user's key; and that the user opened a new page's form on a tracked site or picked one of
   their drafts there, which sends the site's address (and the draft's id) with the key. No
   keystrokes, mouse position or scrolling are recorded, and no clicks beyond those. Pressing
-  Use, Fill, or Insert at cursor on a heading, is reported only as entries in the list of
-  filled fields sent with the next save (Insert at cursor reports "headings"); pressing Copy
-  is not reported at all.
+  Use, Fill, Add beside a doctor, or Insert at cursor on a heading, is reported only as
+  entries in the list of filled fields sent with the next save (Add reports "Related
+  Profiles", Insert at cursor reports "headings"); pressing Copy is not reported at all.
 - **Website content:** **Yes.** The extension reads the content of the Drupal admin form
   on the page, and — only for an origin the user has explicitly approved — the content of
   a page they asked to import.
