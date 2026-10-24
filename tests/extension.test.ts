@@ -6774,7 +6774,12 @@ test.describe('Varys drafts: panel', () => {
   const FIRST_PROFILE = '[name="field_cola_cups_profiles[und][0][target_id]"]';
   /** The search title field's own pattern, as the fixture holds it. */
   const META_PATTERN = '[current-page:title] | [site:name]';
-  const CALLOUT_RULE = 'aside(ck-callout,ck-callout--background-sky,ck-callout--center)[aria-labelledby]';
+  /** The callout's three parts, as the editor's own rules spell them: the box, its title, its content. */
+  const CALLOUT_RULES = [
+    'aside(ck-callout,ck-callout--background-sky,ck-callout--center)[aria-labelledby]',
+    'h2(ck-callout__title)[id]',
+    'div(ck-callout__content)',
+  ];
 
   const NOTHING_SAVED = "Nothing is saved: review, then press Drupal's own Save.";
   const EXPIRED = 'Your Varys connection has expired. Reconnect from the extension menu.';
@@ -6882,7 +6887,8 @@ test.describe('Varys drafts: panel', () => {
   const editorData = (page: Page) =>
     page.evaluate(id => (window as any).CKEDITOR.instances[id].getData() as string, BODY_ID);
   /** Lets this page's editor keep the Overview callout, as a site whose filter allows it does. */
-  const allowCallout = (page: Page) => page.evaluate(rule => (window as any).__ckAllows.push(rule), CALLOUT_RULE);
+  const allowCallout = (page: Page, rules: string[] = CALLOUT_RULES) =>
+    page.evaluate(list => (window as any).__ckAllows.push(...list), rules);
 
   /** Presses Save as draft, waits for the post, and returns what the page told the worker. */
   const save = async (page: Page, seen: () => Promise<any[]>) => {
@@ -7073,6 +7079,29 @@ test.describe('Varys drafts: panel', () => {
 
       await expect.poll(() => editorData(page)).toBe(normalised(PLAIN_OVERVIEW + READY.body_html));
       expect(await editorData(page)).not.toContain('<aside');
+    });
+  }
+
+  for (const [label, missing] of [
+    ['the callout\'s title', CALLOUT_RULES[1]],
+    ['the callout\'s content', CALLOUT_RULES[2]],
+    ['the box itself', CALLOUT_RULES[0]],
+  ] as const) {
+    test(`fallback overview when the editor keeps all of the callout but ${label}`, async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      await stubVarys(context, varys());
+      await directory(context, roeOnly);
+      const seen = await listenInWorker(context);
+      await open(page);
+      await allowCallout(page, CALLOUT_RULES.filter(rule => rule !== missing));
+      await pick(page);
+      await fill(page);
+
+      await expect.poll(() => editorData(page)).toBe(normalised(PLAIN_OVERVIEW + READY.body_html));
+      expect(await editorData(page)).not.toContain('<aside');
+      // Every part was asked about, by the editor's own rule text.
+      const asked = (await seen()).filter(m => m.type === 'richEditorAllows').map(m => m.rule);
+      expect([...asked].sort()).toEqual([...CALLOUT_RULES].sort());
     });
   }
 

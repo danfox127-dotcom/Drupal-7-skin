@@ -43,10 +43,16 @@ import {
 const BODY_FIELD = `textarea[name=${JSON.stringify(DRAFT_FIELDS.body)}]`;
 
 /**
- * The Overview box is the site's callout: an aside with these classes, titled by an id. Only
- * an editor whose content filter says it KEEPS this gets it (see overviewBoxHtml).
+ * The Overview box is the site's callout: an aside with these classes, labelled by its title, and
+ * the title and content inside it (see overviewBoxHtml). Only an editor whose content filter says
+ * it KEEPS all three parts gets it: a filter that kept the aside and stripped its title's id or
+ * class would leave a broken box rather than the plain fallback.
  */
-const CALLOUT_RULE = 'aside(ck-callout,ck-callout--background-sky,ck-callout--center)[aria-labelledby]';
+const CALLOUT_RULES = [
+  'aside(ck-callout,ck-callout--background-sky,ck-callout--center)[aria-labelledby]',
+  'h2(ck-callout__title)[id]',
+  'div(ck-callout__content)',
+] as const;
 
 /** How long the body's editor is given to take a fill, and how often it is read meanwhile. */
 const BODY_SETTLE_MS = 3000;
@@ -84,14 +90,17 @@ async function askWorker<T extends { ok: boolean }>(message: VarysDraftsRequest 
   }
 }
 
-/** Whether the body's editor would keep the Overview callout. Anything but a plain yes is no. */
+/**
+ * Whether the body's editor would keep the whole Overview callout: the editor is asked about each
+ * of its three parts, and anything but a plain yes to all three is no.
+ */
 async function editorKeepsCallout(): Promise<boolean> {
   const elementId = document.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.id;
   if (!elementId) return false;
   try {
-    const reply: RichEditorAllowsResponse | undefined = await chrome.runtime.sendMessage(
-      { type: 'richEditorAllows', elementId, rule: CALLOUT_RULE } satisfies RichEditorAllowsRequest);
-    return reply?.allowed === true;
+    const replies: (RichEditorAllowsResponse | undefined)[] = await Promise.all(CALLOUT_RULES.map(rule =>
+      chrome.runtime.sendMessage({ type: 'richEditorAllows', elementId, rule } satisfies RichEditorAllowsRequest)));
+    return replies.every(reply => reply?.allowed === true);
   } catch {
     return false;
   }
