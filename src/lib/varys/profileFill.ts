@@ -17,7 +17,7 @@ import type { FieldDescriptor } from '../formSchema/types';
 import { writeValue } from '../fieldBinding';
 import { autocompletePathFor, probeReferenceExact } from '../clone/references';
 import { addAnotherRow, relativeName, widgetBaseName } from '../clone/paragraphs';
-import { labelKey, stripEntityId } from '../clone/values';
+import { drupalTitleOf, labelKey } from '../clone/values';
 
 /** The Drupal field every doctor goes into. */
 const PROFILES_FIELD = 'field_cola_cups_profiles';
@@ -77,9 +77,12 @@ export function profileStillAdded(outcome: ProfileOutcome, root: Document = docu
 
 const isEmpty = (input: HTMLInputElement): boolean => input.value.trim() === '';
 
-/** True when a row already holds this doctor, whatever id the site gave them. */
+/**
+ * True when a row already holds this doctor, whatever id the site gave them, and whether or not
+ * Drupal wrote the value quoted (it quotes every label with a comma: `"Jane Doe, MD (12)"`).
+ */
 const holds = (rows: { input: HTMLInputElement }[], key: string): boolean =>
-  rows.some(({ input }) => labelKey(stripEntityId(input.value)) === key);
+  rows.some(({ input }) => labelKey(drupalTitleOf(input.value)) === key);
 
 /**
  * Adds each name to Related Profiles when the site finds exactly one match for it.
@@ -193,7 +196,7 @@ export function undoProfiles(outcomes: ProfileOutcome[], root: Document = docume
     for (const input of Array.from(inputs)) {
       const unchanged = added.value !== undefined
         ? input.value === added.value
-        : labelKey(stripEntityId(input.value)) === labelKey(added.name);
+        : labelKey(drupalTitleOf(input.value)) === labelKey(added.name);
       if (unchanged) writeValue(asField(input), '');
     }
   }

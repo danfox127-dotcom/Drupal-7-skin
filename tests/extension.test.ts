@@ -6646,6 +6646,55 @@ test.describe('Varys suggestions: panel', () => {
     await expect(doctor(page, LEE)).toBeVisible();
   });
 
+  // Drupal 7's entityreference quotes a whole label holding a comma, id and all — every doctor's
+  // directory name holds one — both in what its autocomplete answers and in a value it renders.
+  const QUOTED_ROE = `"${ROE_IN_FORM}"`;
+  const QUOTED_STEELE_KEY = `"${STEELE_KEY}"`;
+
+  test('a doctor already in Related Profiles as Drupal quotes the value gets no row', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready({ named_doctors: [ROE, STEELE] })));
+    await serveNews(context, html => {
+      const quoted = html.replace(`value="${ROE_IN_FORM}"`, `value="&quot;${ROE_IN_FORM}&quot;"`);
+      expect(quoted).not.toBe(html);
+      return quoted;
+    });
+    await open(page, NEWS);
+
+    expect(await page.inputValue(profileRow(0))).toBe(QUOTED_ROE);
+    await expect(doctor(page, STEELE)).toBeVisible();
+    await expect(doctor(page, ROE)).toHaveCount(0);
+    await expect(panel(page).getByRole('group', { name: NAMED })).toHaveCount(1);
+  });
+
+  test('Add finds the site\'s quoted key, writes it exactly, and Undo clears it', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready({ named_doctors: [STEELE] })));
+    const asked = await directory(context, { [STEELE]: { [QUOTED_STEELE_KEY]: STEELE } });
+    await open(page, NEWS);
+
+    await addButton(page, STEELE).click();
+
+    await expect(doctor(page, STEELE)).toContainText('Added.');
+    expect(await page.inputValue(profileRow(1))).toBe(QUOTED_STEELE_KEY);
+    expect(asked).toEqual([STEELE]);
+    await undoButton(page, STEELE).click();
+    expect(await page.inputValue(profileRow(1))).toBe('');
+    await expect(addButton(page, STEELE)).toBeVisible();
+  });
+
+  test('a doctor the person puts in by hand, as Drupal quotes it, needs no row', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering(ready({ named_doctors: [STEELE, LEE] })));
+    await open(page, NEWS);
+    await expect(doctor(page, STEELE)).toBeVisible();
+
+    await typeInto(page, profileRow(1), QUOTED_STEELE_KEY);
+
+    await expect(doctor(page, STEELE)).toHaveCount(0);
+    await expect(doctor(page, LEE)).toBeVisible();
+  });
+
   test('a save after Add sends related_profiles as filled, and after Undo it does not', async ({ page, context, settings }) => {
     await settings({ varysConnection: connected, nodeEditor: false });
     const calls = await stubVarys(context, answering(ready({ named_doctors: [STEELE] })));

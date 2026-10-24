@@ -1,5 +1,5 @@
 import { FieldDescriptor } from '../formSchema';
-import { explodeTags, implodeTags, stripEntityId, labelKey } from './values';
+import { drupalTitleOf, explodeTags, implodeTags, stripEntityId, labelKey, unquoteDrupalLabel } from './values';
 
 /**
  * Asking the destination site whether it has the thing being referenced.
@@ -146,10 +146,13 @@ async function lookupKeys(
   }
 }
 
-/** The keys whose own title, entity id removed, is the one asked for. */
+/**
+ * The keys whose own title, unquoted and with the entity id removed, is the one asked for.
+ * Drupal 7 quotes a key holding a comma (`"Jane Doe, MD (12)"`), which every doctor's has.
+ */
 function keysTitled(keys: string[], title: string): string[] {
   const wanted = labelKey(title);
-  return keys.filter(key => labelKey(stripEntityId(key)) === wanted);
+  return keys.filter(key => labelKey(drupalTitleOf(key)) === wanted);
 }
 
 /**
@@ -270,7 +273,8 @@ export async function resolveReference(
       seen.set(key, result);
     }
 
-    if (result.status === 'match' && result.value) resolved.push(result.value);
+    // Unquoted before joining: implodeTags quotes it again, once, as Drupal reads it.
+    if (result.status === 'match' && result.value) resolved.push(unquoteDrupalLabel(result.value));
     else if (result.status === 'no-match') missing.push(title);
     else unavailable.push(title);
   }

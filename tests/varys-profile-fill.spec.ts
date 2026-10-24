@@ -232,6 +232,30 @@ test.describe('adding a quoted doctor', () => {
     expect(endpoint.asked()).toEqual([]);
   });
 
+  test('the site\'s quoted key (every name with a comma) is found and written exactly as given', async ({ page }) => {
+    // Drupal 7 quotes the whole key when the label holds a comma, as every doctor's does.
+    await openNewsForm(page, { 'Jacqueline L Steele, MD': NO_ID('"Jacqueline L Steele, MD (1234)"') });
+
+    const outcomes = await add(page, ['Jacqueline L Steele, MD']);
+
+    expect(outcomes).toMatchObject([
+      { name: 'Jacqueline L Steele, MD', result: 'added', delta: 0, value: '"Jacqueline L Steele, MD (1234)"' },
+    ]);
+    expect((await formState(page)).values).toEqual([[ROW(0), '"Jacqueline L Steele, MD (1234)"']]);
+  });
+
+  test('a doctor already in Related Profiles as Drupal quotes it is not added twice', async ({ page }) => {
+    const endpoint = await openNewsForm(page, {
+      'Jane Doe, MD': NO_ID('"Jane Doe, MD (1)"'),
+    }, { prefilled: ['"Jane  Doe, MD (1)"'] });
+
+    const outcomes = await add(page, ['Jane Doe, MD']);
+
+    expect(outcomes).toMatchObject([{ name: 'Jane Doe, MD', result: 'already', delta: null }]);
+    expect((await formState(page)).values).toEqual([[ROW(0), '"Jane  Doe, MD (1)"']]);
+    expect(endpoint.asked()).toEqual([]);
+  });
+
   test('a name repeated in one call is handled once', async ({ page }) => {
     const endpoint = await openNewsForm(page, { 'Jane Doe, MD': NO_ID('Jane Doe, MD (1)') });
 
@@ -323,6 +347,23 @@ test.describe('taking the added doctors back', () => {
     expect((await formState(page)).values).toEqual([
       [ROW(0), 'Someone Else, MD (5)'], [ROW(1), ''],
     ]);
+  });
+
+  test('undo clears a quoted value it wrote, and one it has no record of by its quoted name', async ({ page }) => {
+    await openNewsForm(page, { 'Jane Doe, MD': NO_ID('"Jane Doe, MD (1)"') });
+
+    const outcomes = await add(page, ['Jane Doe, MD']);
+    expect((await formState(page)).values).toEqual([[ROW(0), '"Jane Doe, MD (1)"']]);
+    await undo(page, outcomes);
+    expect((await formState(page)).values).toEqual([[ROW(0), '']]);
+
+    // An outcome from before `value` was recorded is compared by name: quoted, it still matches.
+    await page.evaluate(() => {
+      document.querySelector<HTMLInputElement>('[name="field_cola_cups_profiles[und][0][target_id]"]')!
+        .value = '"Jane Doe, MD (1)"';
+    });
+    await undo(page, [{ name: 'Jane Doe, MD', result: 'added', delta: 0 }]);
+    expect((await formState(page)).values).toEqual([[ROW(0), '']]);
   });
 
   test('undo of a call that added nothing changes nothing', async ({ page }) => {

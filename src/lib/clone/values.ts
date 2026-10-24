@@ -25,6 +25,27 @@ export function stripEntityId(raw: string): string {
   return raw.replace(ID_SUFFIX, '').trim();
 }
 
+/**
+ * Takes off the quotes Drupal 7 puts round a whole entity-reference label.
+ *
+ * Entityreference quotes a key that holds a comma or a double quote, id and all, and doubles
+ * any quote inside: `"Jacqueline L Steele, MD (123)"`. Every doctor's directory label holds a
+ * comma, so both the autocomplete's answer and a value already in the widget arrive quoted, and
+ * the `(123)` is no longer at the end for `stripEntityId` to find. Apply this first whenever a
+ * label or value from Drupal is COMPARED; what is WRITTEN stays exactly as Drupal gave it.
+ *
+ * A value not wrapped in quotes is returned unchanged.
+ */
+export function unquoteDrupalLabel(raw: string): string {
+  const quoted = /^"([\s\S]*)"$/.exec(raw.trim());
+  return quoted ? quoted[1].replace(/""/g, '"') : raw;
+}
+
+/** The title in a value or key from Drupal: unquoted, then without its entity id. */
+export function drupalTitleOf(raw: string): string {
+  return stripEntityId(unquoteDrupalLabel(raw));
+}
+
 /** The id Drupal had appended, when there was one. Recorded for provenance, never written. */
 export function entityIdOf(raw: string): string | null {
   return raw.match(ID_SUFFIX)?.[1] ?? null;

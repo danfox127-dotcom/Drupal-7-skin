@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
   explodeTags, implodeTags, stripEntityId, entityIdOf, labelKey,
-  optionLabelsFor, valueForLabels,
+  optionLabelsFor, valueForLabels, unquoteDrupalLabel, drupalTitleOf,
 } from '../src/lib/clone/values';
 import { FieldDescriptor, FieldOption } from '../src/lib/formSchema';
 
@@ -75,6 +75,28 @@ test.describe('entity id suffixes', () => {
 
   test('a title that is only an id is handled without throwing', () => {
     expect(stripEntityId('(12)')).toBe('');
+  });
+});
+
+test.describe('quoted entity-reference labels', () => {
+  /**
+   * Drupal 7's entityreference quotes a whole key that holds a comma or a double quote, id and
+   * all, and doubles an inner quote. Every doctor's directory label holds a comma, so the id is
+   * not at the end of the string until the quotes come off.
+   */
+  test('the quotes come off, an inner doubled quote becomes one, and the id is then found', () => {
+    expect(unquoteDrupalLabel('"Jacqueline L Steele, MD (123)"')).toBe('Jacqueline L Steele, MD (123)');
+    expect(unquoteDrupalLabel('"Joseph ""Joe"" Smith, MD (9)"')).toBe('Joseph "Joe" Smith, MD (9)');
+    expect(drupalTitleOf('"Jacqueline L Steele, MD (123)"')).toBe('Jacqueline L Steele, MD');
+    expect(drupalTitleOf('  "Jane Doe, MD (1)"  ')).toBe('Jane Doe, MD');
+  });
+
+  test('a value that is not wrapped in quotes is unchanged', () => {
+    expect(unquoteDrupalLabel('IgA Nephropathy (4417)')).toBe('IgA Nephropathy (4417)');
+    expect(unquoteDrupalLabel('"Smith, John" (12)')).toBe('"Smith, John" (12)');
+    expect(unquoteDrupalLabel('"')).toBe('"');
+    expect(drupalTitleOf('IgA Nephropathy (4417)')).toBe('IgA Nephropathy');
+    expect(drupalTitleOf('')).toBe('');
   });
 });
 

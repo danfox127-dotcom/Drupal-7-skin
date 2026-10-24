@@ -285,6 +285,40 @@ test.describe('one lookup that must be exact and single', () => {
     expect(result.matches).toEqual(['Jane Doe, MD (1)', 'Jane Doe, MD (2)']);
   });
 
+  test('a key Drupal quoted (every label with a comma) is a match, and the value is the key as given', async ({ page }) => {
+    // What Drupal 7's entityreference actually answers for "Jane Doe, MD": the whole key quoted.
+    await withEndpoint(page, { 'Jane Doe, MD': { '"Jane Doe, MD (1234)"': 'Jane Doe, MD' } });
+    const result = await page.evaluate(
+      ([p, here]) => (window as any).R.probeReferenceExact(p, 'Jane Doe, MD', here),
+      [PATH, HERE] as const);
+
+    expect(result).toEqual({
+      status: 'match', value: '"Jane Doe, MD (1234)"', matches: ['"Jane Doe, MD (1234)"'],
+    });
+  });
+
+  test('two quoted keys with the same name are ambiguous, and a quoted longer name is no match', async ({ page }) => {
+    await withEndpoint(page, {
+      'Jane Doe, MD': { '"Jane Doe, MD (1)"': 'Jane Doe, MD', '"Jane Doe, MD (2)"': 'Jane Doe, MD' },
+      'John Roe, DO': { '"John Roe, DO, PhD (3)"': 'John Roe, DO, PhD' },
+    });
+    const [two, longer] = await page.evaluate(([p, here]) => Promise.all([
+      (window as any).R.probeReferenceExact(p, 'Jane Doe, MD', here),
+      (window as any).R.probeReferenceExact(p, 'John Roe, DO', here),
+    ]), [PATH, HERE] as const);
+
+    expect(two).toEqual({ status: 'ambiguous', value: null, matches: ['"Jane Doe, MD (1)"', '"Jane Doe, MD (2)"'] });
+    expect(longer).toEqual({ status: 'no-match', value: null, matches: [] });
+  });
+
+  test('a quoted key with a doubled inner quote matches the name with one quote', async ({ page }) => {
+    await withEndpoint(page, { 'Joseph "Joe" Smith, MD': { '"Joseph ""Joe"" Smith, MD (8)"': 'x' } });
+    const result = await page.evaluate(
+      ([p, here]) => (window as any).R.probeReferenceExact(p, 'Joseph "Joe" Smith, MD', here),
+      [PATH, HERE] as const);
+    expect(result.value).toBe('"Joseph ""Joe"" Smith, MD (8)"');
+  });
+
   test('a longer name is not an exact match', async ({ page }) => {
     await withEndpoint(page, {
       'Jane Doe, MD': { 'Jane Doe, MD, PhD (1)': 'Jane Doe, MD, PhD' },
@@ -370,6 +404,21 @@ test.describe('resolving a whole field', () => {
       [PATH, HERE] as const);
     expect(result.value).toBe('"Smith, John (55)"');
     expect(result.missing).toEqual([]);
+  });
+
+  test('a key Drupal quoted is found, and quoted once in the value written', async ({ page }) => {
+    // As Drupal 7 answers: the key is quoted whole. Joined with another reference it must be
+    // quoted exactly once, or Drupal would read the quotes as part of the title.
+    await withEndpoint(page, {
+      'Smith, John': { '"Smith, John (55)"': 'Smith, John' },
+      Asthma: { 'Asthma (7)': 'Asthma' },
+    });
+    const result = await page.evaluate(
+      ([p, here]) => (window as any).R.resolveReference('"Smith, John (12)", Asthma (3)', p, false, here),
+      [PATH, HERE] as const);
+    expect(result.value).toBe('"Smith, John (55)", Asthma (7)');
+    expect(result.missing).toEqual([]);
+    expect(result.verified).toBe(true);
   });
 });
 

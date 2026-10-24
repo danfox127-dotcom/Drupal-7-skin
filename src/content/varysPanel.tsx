@@ -13,7 +13,7 @@ import { markFilled, unmarkFilled } from '../lib/varys/filled';
 import {
   addProfiles, profileInputs, profileStillAdded, undoProfiles, type ProfileOutcome, type ProfileResult,
 } from '../lib/varys/profileFill';
-import { labelKey, stripEntityId } from '../lib/clone/values';
+import { drupalTitleOf, labelKey } from '../lib/clone/values';
 import { fetchSitePage, isNodeAddress, resolvePublicAddress } from '../lib/varys/publicAddress';
 import {
   SUGGESTIONS_ERROR_COPY, SUGGESTIONS_NO_CURSOR_COPY,
@@ -316,13 +316,13 @@ function doctorRow(
 
 /**
  * The doctors the article names that Related Profiles lacks, each once (names are compared as
- * the site's own key is, without its id and by case and spacing). None when the form has no
- * Related Profiles field.
+ * the site's own key is: unquoted, without its id, and by case and spacing). None when the form
+ * has no Related Profiles field.
  */
 function doctorRows(named: string[], outcomes: Record<string, ProfileOutcome>, disabled: boolean): DoctorRow[] {
   const inputs = profileInputs();
   if (inputs.length === 0) return [];
-  const present = new Set(inputs.map(input => labelKey(stripEntityId(input.value))));
+  const present = new Set(inputs.map(input => labelKey(drupalTitleOf(input.value))));
 
   const seen = new Set<string>();
   const rows: DoctorRow[] = [];
