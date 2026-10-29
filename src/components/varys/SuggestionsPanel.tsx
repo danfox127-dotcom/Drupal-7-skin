@@ -62,7 +62,11 @@ export type PanelBody =
     /** What the last Copy or Insert did, in words, or null. */
     headingMessage: string | null;
   }
-  | { state: 'none' }
+  | {
+    state: 'none';
+    /** As on `ready`: the article names them whether or not Varys has written suggestions. */
+    doctors: DoctorRow[];
+  }
   | { state: 'generating' }
   | { state: 'still_writing' }
   | { state: 'not_crawled' }
@@ -317,6 +321,14 @@ export function SuggestionsPanel(props: SuggestionsPanelProps) {
               <button type="button" className={PRIMARY} disabled={body.state === 'generating'} onClick={onAsk}>
                 Ask Varys
               </button>
+            </div>
+          )}
+
+          {body.state === 'none' && body.doctors.length > 0 && (
+            <div className="mt-3">
+              {body.doctors.map(doctor => (
+                <Doctor key={doctor.fullName} doctor={doctor} onAdd={props.onAddDoctor} onUndo={props.onUndoDoctor} />
+              ))}
             </div>
           )}
 

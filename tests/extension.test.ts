@@ -4892,7 +4892,8 @@ test.describe('Varys suggestions: worker', () => {
 
     const reply = await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE });
 
-    expect(reply).toEqual({ ok: true, answer: { status: 'none' } });
+    // An answer with no named_doctors (an older Varys) reaches the panel with none named.
+    expect(reply).toEqual({ ok: true, answer: { status: 'none', named_doctors: [] } });
     const [call] = suggestionsIn(calls);
     expect(suggestionsIn(calls)).toHaveLength(1);
     expect(call.method).toBe('GET');
@@ -6461,6 +6462,39 @@ test.describe('Varys suggestions: panel', () => {
     await stubVarys(context, answering(ready({ named_doctors: [ROE] })));
     await open(page, NEWS);
     await expect(row(page, 'Search result title')).toBeVisible();
+    await expect(panel(page).getByRole('group', { name: NAMED })).toHaveCount(0);
+  });
+
+  test('a page Varys has not written suggestions for still offers a doctor the article names', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    // Jane is already in Related Profiles, so only Steele is offered.
+    await stubVarys(context, answering({ status: 'none', named_doctors: [ROE, STEELE] }));
+    const asked = await directory(context, everyone);
+    await open(page, NEWS);
+
+    await expect(panel(page).getByText(NONE)).toBeVisible();
+    await expect(panel(page).getByRole('button', { name: 'Ask Varys' })).toBeEnabled();
+    await expect(panel(page).getByRole('group', { name: NAMED })).toHaveCount(1);
+
+    await addButton(page, STEELE).click();
+
+    await expect(doctor(page, STEELE)).toContainText('Added.');
+    expect(await page.inputValue(profileRow(1))).toBe(STEELE_KEY);
+    expect(await page.inputValue(profileRow(0))).toBe(ROE_IN_FORM);
+    expect(asked).toEqual([STEELE]);
+
+    await undoButton(page, STEELE).click();
+
+    expect(await page.inputValue(profileRow(1))).toBe('');
+    await expect(addButton(page, STEELE)).toBeVisible();
+  });
+
+  test('a page with no suggestions from an older Varys, with no named_doctors, offers no doctor', async ({ page, context, settings }) => {
+    await settings({ varysConnection: connected, nodeEditor: false });
+    await stubVarys(context, answering({ status: 'none' }));
+    await open(page, NEWS);
+
+    await expect(panel(page).getByText(NONE)).toBeVisible();
     await expect(panel(page).getByRole('group', { name: NAMED })).toHaveCount(0);
   });
 

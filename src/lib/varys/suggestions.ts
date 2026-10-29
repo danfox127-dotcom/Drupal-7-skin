@@ -24,7 +24,9 @@ export type ScaffoldSide = {
  * making them now (only the generate request answers that).
  */
 export type SuggestionsAnswer =
-  | { status: 'not_tracked' | 'not_crawled' | 'none' | 'generating' }
+  | { status: 'not_tracked' | 'not_crawled' | 'generating' }
+  /** The doctors the article names, as on `ready`: the reminder needs no suggestions. */
+  | { status: 'none'; named_doctors: string[] }
   | {
       status: 'ready';
       /** ISO time Varys made them; null when Varys has no time for them. */
@@ -96,6 +98,9 @@ export const SUGGESTIONS_ERROR_COPY = "Varys couldn't answer for this page right
 const isText = (v: unknown): v is string => typeof v === 'string';
 const isTextOrNull = (v: unknown): v is string | null => v === null || typeof v === 'string';
 
+/** Optional: an older Varys omits it. Not text all through means none, never a rejected answer. */
+const namedDoctors = (v: unknown): string[] => (Array.isArray(v) && v.every(isText) ? v : []);
+
 function isScaffoldSide(v: unknown): v is ScaffoldSide {
   if (typeof v !== 'object' || v === null) return false;
   const side = v as Record<string, unknown>;
@@ -113,9 +118,10 @@ export function parseSuggestionsAnswer(json: unknown): SuggestionsAnswer | null 
   switch (a.status) {
     case 'not_tracked':
     case 'not_crawled':
-    case 'none':
     case 'generating':
       return { status: a.status };
+    case 'none':
+      return { status: 'none', named_doctors: namedDoctors(a.named_doctors) };
     case 'ready':
       return isTextOrNull(a.made_at) && isTextOrNull(a.clinical_review_note)
         && isScaffoldSide(a.current) && isScaffoldSide(a.suggested)
@@ -125,8 +131,7 @@ export function parseSuggestionsAnswer(json: unknown): SuggestionsAnswer | null 
           clinical_review_note: a.clinical_review_note,
           current: a.current,
           suggested: a.suggested,
-          // Optional: an older Varys omits it. Not text all through means none, never a rejected answer.
-          named_doctors: Array.isArray(a.named_doctors) && a.named_doctors.every(isText) ? a.named_doctors : [],
+          named_doctors: namedDoctors(a.named_doctors),
         }
         : null;
     default:

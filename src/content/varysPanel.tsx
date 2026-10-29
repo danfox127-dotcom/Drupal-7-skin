@@ -84,9 +84,10 @@ const ROWS: { kind: FillKind; label: string; pick: (s: Ready['suggested']) => st
 ];
 
 type Ready = Extract<SuggestionsAnswer, { status: 'ready' }>;
+type None = Extract<SuggestionsAnswer, { status: 'none' }>;
 
 /** An answer the panel shows as it is. */
-type Shown = Ready | { status: 'none' | 'not_crawled' };
+type Shown = Ready | None | { status: 'not_crawled' };
 
 /** What the panel is showing, before the live form is read into it. */
 type Phase =
@@ -186,7 +187,7 @@ function initialPhase(reply: SuggestionsReply, pageUrl: string): Phase | null {
       return { kind: 'generating', since };
     }
     case 'none':
-      return pending !== null ? { kind: 'generating', since: pending } : { kind: 'answer', answer: { status: 'none' } };
+      return pending !== null ? { kind: 'generating', since: pending } : { kind: 'answer', answer };
     case 'ready':
     case 'not_crawled':
       clearPending(pageUrl);
@@ -205,8 +206,9 @@ function initialPhase(reply: SuggestionsReply, pageUrl: string): Phase | null {
  */
 function shown(answer: SuggestionsAnswer): Shown | null {
   switch (answer.status) {
-    case 'ready': return answer;
-    case 'none': return { status: 'none' };
+    case 'ready':
+    case 'none':
+      return answer;
     case 'not_crawled': return { status: 'not_crawled' };
     case 'not_tracked':
     case 'generating':
@@ -722,7 +724,8 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
       case 'message': return { state: 'message', message: phase.message };
     }
     const { answer } = phase;
-    if (answer.status !== 'ready') return { state: answer.status };
+    if (answer.status === 'not_crawled') return { state: 'not_crawled' };
+    if (answer.status === 'none') return { state: 'none', doctors: doctorRows(answer.named_doctors, outcomes, adding) };
 
     const all = fields();
     const rows = ROWS.map(({ kind, label, pick }): SuggestionRow => {

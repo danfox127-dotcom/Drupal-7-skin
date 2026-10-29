@@ -13,9 +13,24 @@ const ready = {
 };
 
 test.describe('parsing a suggestions answer', () => {
-  test('the four answers with nothing to show pass through', () => {
-    for (const status of ['not_tracked', 'not_crawled', 'none', 'generating'] as const) {
+  test('the three answers with nothing to show pass through', () => {
+    for (const status of ['not_tracked', 'not_crawled', 'generating'] as const) {
       expect(parseSuggestionsAnswer({ status })).toEqual({ status });
+    }
+  });
+
+  test('a page with no suggestions yet keeps the doctors Varys found named in the article', () => {
+    expect(parseSuggestionsAnswer({ status: 'none', named_doctors: ['Jacqueline L Steele, MD'], extra: 1 }))
+      .toEqual({ status: 'none', named_doctors: ['Jacqueline L Steele, MD'] });
+  });
+
+  test('a page with no suggestions from an older Varys has none named', () => {
+    expect(parseSuggestionsAnswer({ status: 'none' })).toEqual({ status: 'none', named_doctors: [] });
+  });
+
+  test('on a page with no suggestions, named_doctors that is not a list of text is dropped to none', () => {
+    for (const bad of ['Jane Q. Roe, MD', 7, null, ['Jane Q. Roe, MD', 3], [null]]) {
+      expect(parseSuggestionsAnswer({ status: 'none', named_doctors: bad })).toEqual({ status: 'none', named_doctors: [] });
     }
   });
 

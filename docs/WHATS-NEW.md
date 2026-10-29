@@ -270,7 +270,8 @@ right now. Click its title bar to fold it away.
   you can compare.
 - **Doctors the article names.** If Varys found a doctor named in the page's article who is
   not in Related Profiles, the panel lists them (*Named in this article but not in Related
-  Profiles: …*) with **Add**. The extension looks the doctor up in Related Profiles' own
+  Profiles: …*) with **Add**, whether or not Varys has written suggestions for the page yet.
+  The extension looks the doctor up in Related Profiles' own
   search on the site and adds them only when exactly one profile has exactly that name;
   otherwise it adds nobody and says why. **Undo** empties the row it filled, as long as you
   have not changed it. It never saves. Unlike the other fills, an Add is not kept across a
