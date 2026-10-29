@@ -1,5 +1,5 @@
 {
-  "version": "0.6.0",
-  "notes": "Page Health suggestions in the edit form: Varys's recommended title, description and headings beside each field, with Use, Undo, Copy and Insert. Also logs Summary edits. Only on sites Varys tracks.",
-  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.6.0/d7-studio-extension-0.6.0.zip"
+  "version": "0.7.0",
+  "notes": "Varys drafts on a new page's form: pick one, and Fill writes the title, body (with its Overview box), Summary, search title and the quoted doctors into Related Profiles, each with its own Undo. On an existing page, the Varys panel offers Add for a doctor the article names who is missing from Related Profiles. Only on sites Varys tracks.",
+  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.7.0/d7-studio-extension-0.7.0.zip"
 }
