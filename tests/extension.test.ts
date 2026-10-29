@@ -3783,6 +3783,27 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
     expect(await storedConnection(context, extensionId)).toBeNull();
   });
 
+  test('a hand-off for a different account does not replace a connection; the same account may refresh its key', async ({ page, context, extensionId }) => {
+    /**
+     * Anything able to send the hand-off (a script injected into the Varys app, say) could
+     * otherwise repoint a person's extension at another account's key, and that account's
+     * drafts would then fill their pages. A different person disconnects first.
+     */
+    await serveVarysApp(context);
+    await page.goto(`${VARYS_APP}/connect-extension?ext=${extensionId}`);
+    const OTHER_KEY = 'vxk_' + 'B'.repeat(43);
+    const NEW_KEY = 'vxk_' + 'C'.repeat(43);
+
+    expect(await handOff(page, extensionId, { type: 'varysConnect', key: KEY, email: EMAIL })).toEqual({ ok: true });
+    expect(await handOff(page, extensionId, { type: 'varysConnect', key: OTHER_KEY, email: 'someone.else@example.org' }))
+      .toEqual({ ok: false, error: 'connected-elsewhere' });
+    expect(await storedConnection(context, extensionId)).toMatchObject({ key: KEY, email: EMAIL });
+
+    expect(await handOff(page, extensionId, { type: 'varysConnect', key: NEW_KEY, email: EMAIL.toUpperCase() }))
+      .toEqual({ ok: true });
+    expect(await storedConnection(context, extensionId)).toMatchObject({ key: NEW_KEY });
+  });
+
   test('a page that is not the Varys app cannot reach the extension at all', async ({ page, context, extensionId }) => {
     /**
      * The manifest's externally_connectable is the first lock: Chrome does not even give

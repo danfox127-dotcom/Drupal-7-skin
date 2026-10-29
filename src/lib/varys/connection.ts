@@ -99,6 +99,17 @@ export function acceptConnectMessage(
   return { ok: true, key, email };
 }
 
+/**
+ * Whether a hand-off may replace what is stored. A connection to a DIFFERENT account is never
+ * replaced silently, expired or not: anything able to send the hand-off (a script injected into
+ * the Varys app, say) could otherwise repoint a person's extension at someone else's key, and
+ * that account's drafts would then fill their pages. The person disconnects first. The same
+ * account may always refresh its key.
+ */
+export function mayReplaceConnection(existing: VarysConnection | null, email: string): boolean {
+  return !existing || existing.email.trim().toLowerCase() === email.trim().toLowerCase();
+}
+
 /** Strips the key. The popup is built from this and cannot show what it was not given. */
 export function toStatus(c: VarysConnection | null): VarysStatus | null {
   return c ? { email: c.email, connectedAt: c.connectedAt, expired: c.expired === true } : null;

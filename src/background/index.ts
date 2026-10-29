@@ -21,7 +21,7 @@ import {
 } from '../lib/updateCheck';
 import { VARYS_API, VARYS_APP_ORIGINS } from '../lib/varys/config';
 import {
-  acceptConnectMessage, getConnection, setConnection, toStatus,
+  acceptConnectMessage, getConnection, mayReplaceConnection, setConnection, toStatus,
   type VarysConnection, type VarysDisconnectRequest, type VarysDisconnectResponse, type VarysRevocation,
   type VarysStatusRequest,
 } from '../lib/varys/connection';
@@ -1196,16 +1196,21 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
     return false;
   }
 
-  void setConnection({ key: verdict.key, email: verdict.email, connectedAt: new Date().toISOString() })
-    .then(
-      () => {
-        sendResponse({ ok: true });
-        // A new key may be a different person's, with a different list of sites. Then send
-        // what was queued while the old one was expired or Varys was away.
-        void chrome.storage.session.remove(SITES_KEY).then(flushQueue);
-      },
-      () => sendResponse({ ok: false, error: 'storage' }),
-    );
+  void getConnection()
+    .then(existing => {
+      if (!mayReplaceConnection(existing, verdict.email)) {
+        sendResponse({ ok: false, error: 'connected-elsewhere' });
+        return;
+      }
+      return setConnection({ key: verdict.key, email: verdict.email, connectedAt: new Date().toISOString() })
+        .then(() => {
+          sendResponse({ ok: true });
+          // A new key may come with a different list of sites. Then send what was queued
+          // while the old one was expired or Varys was away.
+          void chrome.storage.session.remove(SITES_KEY).then(flushQueue);
+        });
+    })
+    .catch(() => sendResponse({ ok: false, error: 'storage' }));
   return true;
 });
 

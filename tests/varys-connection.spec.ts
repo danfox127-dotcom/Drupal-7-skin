@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 import {
-  CONNECTION_KEY, acceptConnectMessage, getConnection, isValidKey, setConnection, toStatus,
+  CONNECTION_KEY, acceptConnectMessage, getConnection, isValidKey, mayReplaceConnection, setConnection, toStatus,
 } from '../src/lib/varys/connection';
 import { VARYS_API, VARYS_APP_ORIGINS } from '../src/lib/varys/config';
 import { assertProductionVarys, resolveVarys } from '../src/lib/varys/resolve';
@@ -278,5 +278,21 @@ test.describe('the build-time guard on a production build', () => {
       VITE_VARYS_API: 'http://localhost:8000', VITE_VARYS_APP_ORIGINS: 'http://localhost:3000',
     });
     expect(() => assertProductionVarys(leaked)).toThrow();
+  });
+});
+
+test.describe('mayReplaceConnection', () => {
+  const existing = { key: 'vxk_' + 'A'.repeat(43), email: 'me@columbia.edu', connectedAt: 'then' };
+
+  test('a first connection, or the same account again, may be stored', () => {
+    expect(mayReplaceConnection(null, 'me@columbia.edu')).toBe(true);
+    expect(mayReplaceConnection(existing, 'me@columbia.edu')).toBe(true);
+    expect(mayReplaceConnection(existing, ' ME@Columbia.edu ')).toBe(true);
+    expect(mayReplaceConnection({ ...existing, expired: true }, 'me@columbia.edu')).toBe(true);
+  });
+
+  test('a different account never replaces it silently, expired or not', () => {
+    expect(mayReplaceConnection(existing, 'someone.else@example.org')).toBe(false);
+    expect(mayReplaceConnection({ ...existing, expired: true }, 'someone.else@example.org')).toBe(false);
   });
 });

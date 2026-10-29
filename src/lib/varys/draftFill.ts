@@ -18,6 +18,7 @@ import type { FieldDescriptor } from '../formSchema/types';
 import { readValue, writeValue } from '../fieldBinding';
 import type { DraftAnswer } from './drafts';
 import { fieldFor, findField, titleField, valueToFill } from './suggestionFill';
+import { safeBodyHtml } from './safeBody';
 
 /** A draft that is ready to fill in. */
 export type ReadyDraft = Extract<DraftAnswer, { status: 'ready' }>;
@@ -171,9 +172,13 @@ export function overviewBoxHtml(bullets: string[], existingBodyHtml: string, cal
     + `<div class="ck-callout__content"><ul>${items}</ul></div></aside>`;
 }
 
-/** What goes in the body: the Overview box, if the draft has bullets, then the draft itself. */
+/**
+ * What goes in the body: the Overview box, if the draft has bullets, then the draft itself.
+ * The box is built here from escaped bullets; the draft is filtered (safeBodyHtml) because it
+ * is HTML from Varys going into a page that will be published.
+ */
 export function bodyToFill(draft: ReadyDraft, callout: boolean): string {
-  return overviewBoxHtml(draft.overview_bullets, draft.body_html, callout) + draft.body_html;
+  return overviewBoxHtml(draft.overview_bullets, draft.body_html, callout) + safeBodyHtml(draft.body_html);
 }
 
 // ------------------------------------------------------------------ title and Summary

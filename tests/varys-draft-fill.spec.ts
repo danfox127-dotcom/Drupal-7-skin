@@ -208,7 +208,10 @@ test.describe('bodyToFill', () => {
       body_html: '<aside aria-labelledby="ck-callout--1000"></aside>',
     }), true));
     expect(out.startsWith('<aside aria-labelledby="ck-callout--1001"')).toBe(true);
-    expect(out.endsWith('<aside aria-labelledby="ck-callout--1000"></aside>')).toBe(true);
+    // The body's own aside does not survive the body filter (safeBodyHtml, the same allow-list
+    // Varys applies before a draft leaves it, so a real draft never carries one): only the box
+    // built here is an aside.
+    expect(out.match(/<aside/g)?.length).toBe(1);
   });
 
   test('the fallback is the plain heading and list, then the draft', async ({ page }) => {
