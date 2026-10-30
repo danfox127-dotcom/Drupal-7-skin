@@ -1,5 +1,5 @@
 {
-  "version": "0.7.0",
-  "notes": "Varys drafts on a new page's form: pick one, and Fill writes the title, body (with its Overview box), Summary, search title and the quoted doctors into Related Profiles, each with its own Undo. On an existing page, the Varys panel offers Add for a doctor the article names who is missing from Related Profiles. Only on sites Varys tracks.",
-  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.7.0/d7-studio-extension-0.7.0.zip"
+  "version": "0.7.1",
+  "notes": "Security update. Your Varys connection, and any saves waiting to be sent to Varys, now live where web pages cannot reach them; updating moves them across, so you stay connected. The extension now runs only on secure (https) Columbia pages, and answers Varys requests only about the page you are on. Pasting a page from one site into another no longer carries the source page's text format inside content items. Varys draft bodies are filtered again before they reach the editor, and the extension never switches to a different Varys account without you disconnecting first. If you installed it by hand: after replacing the folder, press the reload arrow on the extension's card in chrome://extensions, or the update does not take effect.",
+  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.7.1/d7-studio-extension-0.7.1.zip"
 }
