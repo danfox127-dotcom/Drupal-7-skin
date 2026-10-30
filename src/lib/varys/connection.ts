@@ -134,13 +134,15 @@ type LegacyArea = Pick<chrome.storage.StorageArea, 'get' | 'remove'>;
 /** What chrome.runtime.onInstalled says. */
 type InstalledDetails = Pick<chrome.runtime.InstalledDetails, 'reason' | 'previousVersion'>;
 
-/** The move in progress, if any: a read waits for it rather than racing it. */
+/** The moves so far, one after another: a read waits for all of them rather than racing one. */
 let moving: Promise<void> = Promise.resolve();
 
 /**
  * Called from chrome.runtime.onInstalled. On the update from a version that kept the key in
- * chrome.storage.local, copies it into the trusted store; in every case, removes any key found
- * there.
+ * chrome.storage.local, copies it into the trusted store; on any install or update, removes any
+ * key found there. A Chrome or shared-module update says nothing about this extension's storage
+ * and touches nothing: Chrome can report one in the same start as the extension's own update,
+ * and clearing the old key first would lose it. Moves run one after another, never at once.
  *
  * Whether chrome.storage.local may be read is decided by Chrome's install event, which no page
  * can raise, and never by what that area holds: content scripts can WRITE it, and adopting a
@@ -156,7 +158,8 @@ export function moveLegacyConnection(
   store: TrustedStore = trustedStore,
   local: LegacyArea = chrome.storage.local,
 ): Promise<void> {
-  moving = (async () => {
+  if (details.reason !== 'install' && details.reason !== 'update') return moving;
+  const run = async () => {
     try {
       const fromLocalEra = details.reason === 'update' && typeof details.previousVersion === 'string'
         && isNewer(KEY_LEFT_LOCAL_BEFORE, details.previousVersion);
@@ -175,7 +178,8 @@ export function moveLegacyConnection(
         console.warn('[D7 Studio] Varys: could not remove the key 0.7.x stored', err);
       }
     }
-  })();
+  };
+  moving = moving.then(run);
   return moving;
 }
 
@@ -206,8 +210,24 @@ export async function getConnection(store: TrustedStore = trustedStore): Promise
   return asConnection(await store.get(CONNECTION_KEY));
 }
 
-/** Stores a connection, or with null forgets it, key and all. */
-export async function setConnection(c: VarysConnection | null, store: TrustedStore = trustedStore): Promise<void> {
+/**
+ * Stores a connection, or with null forgets it, key and all.
+ *
+ * Either way it also removes, without reading, any key left in chrome.storage.local. The move
+ * from 0.7.x runs only on an install event, and there may not be one: a hand-loaded copy updated
+ * by restarting Chrome rather than reloading, or a worker stopped between the copy and the
+ * remove. That person reads as not connected, and connecting (or disconnecting) clears it.
+ */
+export async function setConnection(
+  c: VarysConnection | null,
+  store: TrustedStore = trustedStore,
+  local: Pick<chrome.storage.StorageArea, 'remove'> = chrome.storage.local,
+): Promise<void> {
   if (c === null) await store.remove(CONNECTION_KEY);
   else await store.set(CONNECTION_KEY, c);
+  try {
+    await local.remove(CONNECTION_KEY);
+  } catch (err) {
+    console.warn('[D7 Studio] Varys: could not remove the key 0.7.x stored', err);
+  }
 }

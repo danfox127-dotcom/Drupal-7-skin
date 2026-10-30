@@ -371,7 +371,8 @@ In the extension's own database (IndexedDB), which survives closing the browser:
   scripts the extension runs inside Drupal pages cannot open it, and neither can the pages.
   Only the extension's background script reads the key; the popup is told your email and
   whether the connection has expired, never the key. (Versions before 0.7.2 kept the key in
-  `chrome.storage.local`; updating moves it here once and deletes it from there.)
+  `chrome.storage.local`; updating moves it here once and deletes it from there, and
+  connecting or disconnecting deletes any copy still left there.)
 
 In `chrome.storage.local`, which also survives closing the browser:
 - **A queue of saves Varys could not take** (Varys unreachable, or your key expired), so

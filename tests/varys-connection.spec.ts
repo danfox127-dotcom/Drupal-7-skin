@@ -148,13 +148,17 @@ test.describe('the stored connection', () => {
   });
   test.afterEach(() => { delete (globalThis as unknown as { chrome?: unknown }).chrome; });
 
-  /** An in-memory TrustedStore; `failFirstSet` makes its first write throw. */
-  const fakeStore = (data = new Map<string, unknown>(), failFirstSet = false) => {
+  /**
+   * An in-memory TrustedStore; `failFirstSet` makes its first write throw, and `setDelayMs`
+   * makes every write take that long, as a real IndexedDB commit does.
+   */
+  const fakeStore = (data = new Map<string, unknown>(), failFirstSet = false, setDelayMs = 0) => {
     let fail = failFirstSet;
     const store: TrustedStore = {
       get: async key => data.get(key),
       set: async (key, value) => {
         if (fail) { fail = false; throw new Error('disk full'); }
+        if (setDelayMs) await new Promise(resolve => setTimeout(resolve, setDelayMs));
         data.set(key, structuredClone(value));
       },
       remove: async key => { data.delete(key); },
@@ -289,6 +293,43 @@ test.describe('the stored connection', () => {
     const moving = moveLegacyConnection(fromLocalEra, s.store);
     expect(await getConnection(s.store)).toEqual(connection);
     await moving;
+  });
+
+  test('connecting or disconnecting also clears a key left in chrome.storage.local, unread', async () => {
+    /**
+     * Final review: when no install event fires (a hand-loaded copy updated by restarting Chrome
+     * rather than pressing reload, or a worker stopped between the copy and the remove), the
+     * old key would sit where content scripts can read it, with nothing ever removing it. The
+     * person reads as not connected and reconnects, or disconnects: either one clears it.
+     */
+    const s = fakeStore();
+    local[CONNECTION_KEY] = connection;
+    await setConnection(connection, s.store);
+    expect(Object.keys(local)).toEqual([]);
+
+    local[CONNECTION_KEY] = connection;
+    await setConnection(null, s.store);
+    expect(Object.keys(local)).toEqual([]);
+    expect(localReads).toBe(0);
+  });
+
+  test('a browser update in the same start does not undo the move', async () => {
+    // Final review: Chrome can report its own update and the extension's at one start. The
+    // browser's says nothing about this extension's storage and must not clear the old key first.
+    local[CONNECTION_KEY] = connection;
+    const s = fakeStore();
+    void moveLegacyConnection({ reason: 'chrome_update' }, s.store);
+    void moveLegacyConnection(fromLocalEra, s.store);
+    expect(await getConnection(s.store)).toEqual(connection);
+  });
+
+  test('a read during two moves waits for both', async () => {
+    // A slow write, so a read that waited only for the later (trivial) move would come too early.
+    local[CONNECTION_KEY] = connection;
+    const s = fakeStore(new Map(), false, 30);
+    void moveLegacyConnection(fromLocalEra, s.store);
+    void moveLegacyConnection({ reason: 'chrome_update' }, s.store);
+    expect(await getConnection(s.store)).toEqual(connection);
   });
 });
 
