@@ -222,8 +222,19 @@ export async function captureNode(
   for (const widget of widgets) {
     if (widget.deltas.length === 0) continue;
 
-    const items = captureParagraphItems(schema, widget,
-      (field, relative) => captureField(field, relative));
+    /**
+     * The same deny list as the top-level fields, judged on the name the paste will write.
+     * Without it an item carried its source `[format]` across sites (security scan
+     * 2026-10-30, F1).
+     */
+    const items = captureParagraphItems(schema, widget, (field, relative) => {
+      const denied = denyReason(relative);
+      if (denied) {
+        note(denied.label, denied.reason);
+        return null;
+      }
+      return captureField(field, relative);
+    });
 
     paragraphs.push({ baseName: widget.baseName, label: widget.label, items });
 

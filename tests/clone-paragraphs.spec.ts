@@ -54,9 +54,9 @@ const BUNDLES = ['cta', 'faq', 'image', 'text', 'timeline'];
  */
 async function openForm(
   page: import('@playwright/test').Page,
-  options: { delayMs?: number | null; existing?: string; richEditor?: boolean } = {}
+  options: { delayMs?: number | null; existing?: string; richEditor?: boolean; formatSelect?: boolean } = {}
 ) {
-  const { delayMs = 30, existing = '', richEditor = false } = options;
+  const { delayMs = 30, existing = '', richEditor = false, formatSelect = false } = options;
 
   await page.goto('data:text/html,<body></body>');
   await page.setContent(`
@@ -81,7 +81,7 @@ async function openForm(
       </form>
     </body>`);
 
-  await page.evaluate(([delay, rich]) => {
+  await page.evaluate(([delay, rich, format]) => {
     (window as any).__sent = [];
     (window as any).chrome = {
       runtime: {
@@ -119,6 +119,15 @@ async function openForm(
               name="field_page_paragraphs[und][${delta}][field_body][und][0][value]"></textarea>
             ${rich ? `<div class="cke" id="cke_${id}"></div>` : ''}
           </div>
+          ${format ? `
+          <div class="form-item">
+            <label for="${id}-format">Text format</label>
+            <select id="${id}-format"
+              name="field_page_paragraphs[und][${delta}][field_body][und][0][format]">
+              <option value="filtered_html" selected>Filtered HTML</option>
+              <option value="full_html">Full HTML</option>
+            </select>
+          </div>` : ''}
           <div class="form-item">
             <label for="edit-pp-${delta}-heading">Heading</label>
             <input type="text" id="edit-pp-${delta}-heading"
@@ -127,7 +136,7 @@ async function openForm(
         host.appendChild(wrapper);
       }, delay as number);
     });
-  }, [delayMs, richEditor] as const);
+  }, [delayMs, richEditor, formatSelect] as const);
 
   await page.addScriptTag({ content: bundle });
 }
@@ -444,6 +453,34 @@ test.describe('rebuilding a whole widget', () => {
       document.querySelectorAll<HTMLTextAreaElement>('textarea[name*="[field_body]"]')
     ).map(el => el.value));
     expect(bodies).toEqual(['before', 'after']);
+  });
+
+  test("an item's text format is never written, even from a snapshot that carries one", async ({ page }) => {
+    /**
+     * Security scan 2026-10-30 (F1). Capture now leaves the format out, but a snapshot
+     * copied by 0.7.0 or earlier can still be sitting in chrome.storage.local with one in
+     * it, so the paste refuses it too. The destination's own default format stays.
+     */
+    await openForm(page, { formatSelect: true });
+    const result = await page.evaluate(async (payload) => {
+      const outcome = await (window as any).P.rebuildParagraphs(payload, document);
+      return {
+        outcome,
+        format: document.querySelector<HTMLSelectElement>(
+          'select[name="field_page_paragraphs[und][0][field_body][und][0][format]"]')?.value,
+      };
+    }, captured([item('text', '<p>Prose.</p>', '', {
+      fields: [
+        ...item('text', '<p>Prose.</p>').fields,
+        { machineName: 'field_body[und][0][format]', baseName: 'field_body', label: 'Text format',
+          kind: 'select', section: 'typeFields', required: false, multiValue: false,
+          value: 'full_html', optionLabels: ['Full HTML'] },
+      ],
+    })]));
+
+    expect(result.format, "the source's format was written onto the new item").toBe('filtered_html');
+    expect(result.outcome.items[0].ok).toBe(true);
+    expect(result.outcome.items[0].written).not.toContain('field_body[und][0][format]');
   });
 
   test('a field the new item does not have is named, not swallowed', async ({ page }) => {

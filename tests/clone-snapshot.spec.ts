@@ -348,6 +348,47 @@ test.describe('finding the Paragraphs widgets', () => {
     expect(names).toEqual(['field_body[und][0][value]']);
   });
 
+  test("an item's text format is never captured, and the review says why", async ({ page }) => {
+    /**
+     * Security scan 2026-10-30 (F1). The deny list was applied to top-level fields only, so
+     * a content item carried the SOURCE page's format — `full_html`, say — and the paste
+     * wrote it with the pasting editor's own permissions. Markup an author on site A was
+     * allowed to save under Full HTML then rendered unfiltered on site B.
+     */
+    await load(page, 'captured/page.html');
+    const snap = await page.evaluate(async () => {
+      const api = (window as any).S;
+      const form = document.querySelector('form.node-form, form[id$="-node-form"]') as HTMLFormElement;
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'paragraphs-subform paragraph-type-text';
+      wrapper.innerHTML = `
+        <div class="form-item">
+          <label for="pp-0-body">Body</label>
+          <textarea id="pp-0-body"
+            name="field_page_paragraphs[und][0][field_body][und][0][value]">&lt;img src=x onerror=alert(1)&gt;</textarea>
+        </div>
+        <div class="form-item">
+          <label for="pp-0-format">Text format</label>
+          <select id="pp-0-format" name="field_page_paragraphs[und][0][field_body][und][0][format]">
+            <option value="filtered_html">Filtered HTML</option>
+            <option value="full_html" selected>Full HTML</option>
+          </select>
+        </div>`;
+      form.appendChild(wrapper);
+
+      const schema = api.discoverSchema(document, { pathname: '/node/add/page' });
+      return api.captureNode(schema, {
+        href: 'https://source.example.edu/node/add/page', origin: 'https://source.example.edu',
+      });
+    });
+
+    const names = snap.paragraphs[0].items[0].fields.map((f: any) => f.machineName);
+    expect(names, "the item's text format was captured and would be written on paste")
+      .toEqual(['field_body[und][0][value]']);
+    expect(snap.omitted.map((o: any) => o.label)).toContain('Text format');
+  });
+
   test('paragraph controls do not leak into the flat field list', async ({ page }) => {
     // They belong to their item, and a paste that wrote them by absolute name would fill
     // whichever item happened to sit at that delta on the destination.

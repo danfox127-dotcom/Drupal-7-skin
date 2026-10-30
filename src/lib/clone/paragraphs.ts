@@ -3,6 +3,7 @@ import { writeValue } from '../fieldBinding';
 import { hasRichEditorOn } from '../richEditorPresence';
 import { CapturedField, CapturedParagraph } from './types';
 import { autocompletePathFor, resolveReference } from './references';
+import { denyReason } from './denyList';
 import { ParagraphWidget, findParagraphWidgets } from './snapshot';
 
 /**
@@ -195,7 +196,7 @@ function captureLevel(
   fields: FieldDescriptor[],
   absBase: string,
   bundles: { value: string; label: string }[],
-  capture: (field: FieldDescriptor, relative: string) => CapturedField
+  capture: (field: FieldDescriptor, relative: string) => CapturedField | null
 ): CapturedParagraph[] {
   const deltas = new Set<number>();
   for (const field of fields) {
@@ -213,7 +214,8 @@ function captureLevel(
       if (!field.machineName.startsWith(`${prefix}[`) || insideNested(field.machineName)) continue;
       if (BOOKKEEPING.test(field.machineName) || isMediaControl(field)) continue;
       const parsed = relativeName(absBase, field.machineName);
-      if (parsed) own.push(capture(field, parsed.relative));
+      const captured = parsed ? capture(field, parsed.relative) : null;
+      if (captured) own.push(captured);
     }
 
     const offered = bundles.map(b => b.value);
@@ -248,7 +250,7 @@ function captureLevel(
 export function captureParagraphItems(
   schema: FormSchema,
   widget: ParagraphWidget,
-  capture: (field: FieldDescriptor, relative: string) => CapturedField
+  capture: (field: FieldDescriptor, relative: string) => CapturedField | null
 ): CapturedParagraph[] {
   return captureLevel(schema.form, schema.fields, widget.baseName, widget.bundles, capture);
 }
@@ -565,6 +567,14 @@ async function fillItem(
   let slots = liveSlots(root, absBase, delta);
 
   for (const source of item.fields) {
+    /**
+     * The deny list holds inside an item too. Capture already leaves these out, but a
+     * snapshot copied by 0.7.0 or earlier may still carry one — an item's `[format]` above
+     * all, which would put the SOURCE site's text format (Full HTML, say) on this site
+     * under the pasting editor's permissions.
+     */
+    if (denyReason(source.machineName)) continue;
+
     let target = slots.get(source.machineName);
 
     /**
