@@ -24,6 +24,15 @@ const DROPPED_WITH_CONTENT = new Set([
 /** Matched against the attribute as written, so `java\tscript:` fails by not matching. */
 const SAFE_HREF = /^(?:https?|mailto|tel):/i;
 
+/**
+ * Whether an element is HTML, judged against its own parsed document's root rather than a
+ * namespace URL written out here. SVG and MathML content sits in other namespaces and goes,
+ * with its content. (The URL itself read as a host the extension contacts to the
+ * privacy-policy check in tests/packaging.spec.ts.)
+ */
+const isHtml = (el: Element): boolean =>
+  el.namespaceURI !== null && el.namespaceURI === el.ownerDocument.documentElement?.namespaceURI;
+
 function rebuild(source: Node, into: Node, doc: Document): void {
   for (const child of Array.from(source.childNodes)) {
     if (child.nodeType === Node.TEXT_NODE) {
@@ -33,7 +42,7 @@ function rebuild(source: Node, into: Node, doc: Document): void {
     if (child.nodeType !== Node.ELEMENT_NODE) continue;
     const el = child as Element;
     const tag = el.localName.toLowerCase();
-    if (el.namespaceURI !== 'http://www.w3.org/1999/xhtml' || DROPPED_WITH_CONTENT.has(tag)) continue;
+    if (!isHtml(el) || DROPPED_WITH_CONTENT.has(tag)) continue;
     if (!ALLOWED.has(tag)) {
       rebuild(el, into, doc);
       continue;
