@@ -12,6 +12,33 @@
 
 ## Design
 
+> **Amendment (2026-10-30, during execution; supersedes "The move" below and the parts of
+> Tasks 2–3 that implement it).**
+>
+> **Finding:** an automated security review of the Task 2 commit flagged that the move decided
+> whether to read `chrome.storage.local` from state content scripts can WRITE. The marker made
+> that a narrow window, but a failed move retried from the same writable state. A new Task 3
+> test then proved it: a planted record was adopted, and the popup read "Connected" as someone
+> else.
+>
+> **Ruling:** the move is keyed on `chrome.runtime.onInstalled` instead, an event no page can
+> raise. `moveLegacyConnection(details, store?, local?)` behaves as follows:
+> - It reads the old record ONLY when `reason === 'update'` and `previousVersion` is older than
+>   `KEY_LEFT_LOCAL_BEFORE = '0.7.2'` (compared with `updateCheck.isNewer`).
+> - It copies a valid record there, never over one already in the trusted store.
+> - In every case it removes `varysConnection` from `chrome.storage.local`.
+> - A failed copy is not retried, because no later event permits another read. The person
+>   reconnects.
+> - `getConnection` reads only the trusted store, waiting for a move already in progress.
+> - There is no marker key (`legacyConnectionMigrated` is gone).
+>
+> **Cost if wrong:** one reconnect for anyone whose copy failed.
+>
+> **Release check:** `KEY_LEFT_LOCAL_BEFORE` must equal the version this ships in.
+> - Set too high, a later update would read `chrome.storage.local` again.
+> - Set too low, people updating from the versions in between reconnect, which is the safe
+>   direction.
+
 - **Why:** `chrome.storage.local` is exposed to content scripts by default. Chrome's storage reference says so, and `setAccessLevel` can only restrict the WHOLE area. Our content scripts legitimately read settings, the pending notice and the menu cache from that area, so restricting it is not an option. A renderer exploit on a Columbia admin tab can therefore read the key today. Page JavaScript cannot, because content scripts run in an isolated world.
 - **Where the key goes:** IndexedDB in the extension's own origin. A content script's `indexedDB` is the PAGE's origin, so it cannot open this database, and site isolation keeps it out of the page's renderer process.
 - **Alternatives rejected:**
@@ -201,6 +228,7 @@
 ### Task 5: Release 0.7.2 (after 0.7.1 is live)
 
 - [ ] **Step 1: Bring the branch onto the released 0.7.1 line.** Merge or rebase onto `main` after 0.7.1 is merged, then rerun the chromium project, `tsc` and the extension project.
+- [ ] **Step 1b: Check `KEY_LEFT_LOCAL_BEFORE`** in `src/lib/varys/connection.ts` equals the version being released (see the amendment under Design).
 - [ ] **Step 2: Do the manual upgrade check.** This is the only test of a real in-place update. It signs into the real Varys, so the owner does it, or the controller with the owner's OK.
   1. Build 0.7.1's `dist/`, load it unpacked, and connect to Varys.
   2. Replace `dist/` with this branch's build, then press Reload on the card in `chrome://extensions`. The extension ID and storage are kept.

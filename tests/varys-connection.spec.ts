@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import {
-  CONNECTION_KEY, MIGRATED_KEY, acceptConnectMessage, getConnection, isValidKey, mayReplaceConnection, setConnection,
-  toStatus,
+  CONNECTION_KEY, KEY_LEFT_LOCAL_BEFORE, acceptConnectMessage, getConnection, isValidKey, mayReplaceConnection,
+  moveLegacyConnection, setConnection, toStatus,
 } from '../src/lib/varys/connection';
 import type { TrustedStore } from '../src/lib/varys/trustedStore';
 import { VARYS_API, VARYS_APP_ORIGINS } from '../src/lib/varys/config';
@@ -125,15 +125,18 @@ test.describe('the stored connection', () => {
   /**
    * The key lives in the trusted store (src/lib/varys/trustedStore.ts), which content scripts
    * cannot open. chrome.storage.local is where 0.7.x kept it, and is faked here only so the
-   * one-time move out of it can be tested; nothing may be read from it as a credential.
+   * one move out of it, on the update from 0.7.x, can be tested. Nothing else reads it.
    */
   const local: Record<string, unknown> = {};
+  let localReads = 0;
   test.beforeEach(() => {
     for (const k of Object.keys(local)) delete local[k];
+    localReads = 0;
     (globalThis as unknown as { chrome: unknown }).chrome = {
       storage: {
         local: {
           get: async (keys: string | Record<string, unknown>) => {
+            localReads++;
             const names = typeof keys === 'string' ? [keys] : Object.keys(keys);
             return Object.fromEntries(names.filter(k => k in local).map(k => [k, local[k]]));
           },
@@ -145,10 +148,7 @@ test.describe('the stored connection', () => {
   });
   test.afterEach(() => { delete (globalThis as unknown as { chrome?: unknown }).chrome; });
 
-  /**
-   * An in-memory TrustedStore. Passing the same `data` to a second call is a new worker start:
-   * a different store object over the same database.
-   */
+  /** An in-memory TrustedStore; `failFirstSet` makes its first write throw. */
   const fakeStore = (data = new Map<string, unknown>(), failFirstSet = false) => {
     let fail = failFirstSet;
     const store: TrustedStore = {
@@ -204,61 +204,91 @@ test.describe('the stored connection', () => {
     expect(await getConnection(s.store)).toEqual({ ...connection, expired: true });
   });
 
-  test('a 0.7 connection in chrome.storage.local is moved once, then removed', async () => {
+  const fromLocalEra = { reason: 'update', previousVersion: '0.7.1' } as const;
+
+  test('an update from 0.7.x moves the connection across, then removes it', async () => {
     // Someone connected under 0.7.x updates: they stay connected, and the key leaves the area
     // content scripts can read.
     local[CONNECTION_KEY] = connection;
     const s = fakeStore();
-    expect(await getConnection(s.store)).toEqual(connection);
+    await moveLegacyConnection(fromLocalEra, s.store);
+    expect(s.data.get(CONNECTION_KEY)).toEqual(connection);
     expect(Object.keys(local)).toEqual([]);
-    expect(s.data.get(MIGRATED_KEY)).toBe(true);
+    expect(await getConnection(s.store)).toEqual(connection);
   });
 
-  test('a record written to chrome.storage.local after the move is never read', async () => {
+  test('a fresh install never reads chrome.storage.local, and clears it', async () => {
     /**
-     * Content scripts can WRITE chrome.storage.local too. Trusting a record found there after
-     * the move would let a compromised page point this person's extension at another account,
-     * the attack mayReplaceConnection exists to stop.
+     * Content scripts can WRITE chrome.storage.local. Whether to read it is decided by Chrome's
+     * install event, which no page can raise, and never by what that area holds.
      */
+    local[CONNECTION_KEY] = { ...connection, email: 'someone-else@example.com' };
     const s = fakeStore();
-    expect(await getConnection(s.store)).toBeNull();
-    local[CONNECTION_KEY] = { ...connection, key: 'vxk_' + 'b'.repeat(43), email: 'attacker@example.com' };
-    expect(await getConnection(s.store)).toBeNull();
-
-    // The next worker start finds it, still does not use it, and removes it.
-    const restarted = fakeStore(s.data);
-    expect(await getConnection(restarted.store)).toBeNull();
+    await moveLegacyConnection({ reason: 'install' }, s.store);
+    expect(localReads).toBe(0);
+    expect(s.data.has(CONNECTION_KEY)).toBe(false);
     expect(Object.keys(local)).toEqual([]);
+  });
+
+  test('an update from a version that already used the trusted store never reads chrome.storage.local', async () => {
+    for (const previousVersion of [KEY_LEFT_LOCAL_BEFORE, '0.8.0', '0.10.0', 'not a version']) {
+      local[CONNECTION_KEY] = { ...connection, email: 'someone-else@example.com' };
+      const s = fakeStore();
+      await moveLegacyConnection({ reason: 'update', previousVersion }, s.store);
+      expect(localReads, previousVersion).toBe(0);
+      expect(s.data.has(CONNECTION_KEY), previousVersion).toBe(false);
+      expect(Object.keys(local), previousVersion).toEqual([]);
+    }
+  });
+
+  test('a browser update is not an extension update', async () => {
+    local[CONNECTION_KEY] = connection;
+    const s = fakeStore();
+    await moveLegacyConnection({ reason: 'chrome_update' }, s.store);
+    expect(localReads).toBe(0);
+    expect(s.data.has(CONNECTION_KEY)).toBe(false);
   });
 
   test('a connection already in the trusted store is not replaced', async () => {
-    // The copy went through but the marker did not: the trusted record wins over the leftover.
     const s = fakeStore();
     s.data.set(CONNECTION_KEY, connection);
     local[CONNECTION_KEY] = { ...connection, email: 'older@cumc.columbia.edu' };
+    await moveLegacyConnection(fromLocalEra, s.store);
     expect(await getConnection(s.store)).toEqual(connection);
     expect(Object.keys(local)).toEqual([]);
-    expect(s.data.get(MIGRATED_KEY)).toBe(true);
   });
 
   test('a damaged 0.7 record is dropped, not moved', async () => {
     local[CONNECTION_KEY] = { ...connection, key: 'abc' };
     const s = fakeStore();
-    expect(await getConnection(s.store)).toBeNull();
-    expect(Object.keys(local)).toEqual([]);
+    await moveLegacyConnection(fromLocalEra, s.store);
     expect(s.data.has(CONNECTION_KEY)).toBe(false);
-    expect(s.data.get(MIGRATED_KEY)).toBe(true);
+    expect(Object.keys(local)).toEqual([]);
   });
 
-  test('a failed move keeps the old record for the next try, and reads as not connected meanwhile', async () => {
+  test('a failed move reads as not connected, and still removes the old record', async () => {
+    // There is no second chance: a later start has no install event to say the old area may be
+    // read. The person reconnects; the key does not stay where content scripts can read it.
     local[CONNECTION_KEY] = connection;
     const s = fakeStore(new Map(), true);
+    await moveLegacyConnection(fromLocalEra, s.store);
     expect(await getConnection(s.store)).toBeNull();
-    expect(local[CONNECTION_KEY]).toEqual(connection);
-    expect(s.data.has(MIGRATED_KEY)).toBe(false);
-
-    expect(await getConnection(s.store)).toEqual(connection);
     expect(Object.keys(local)).toEqual([]);
+  });
+
+  test('a record in chrome.storage.local is never read as a connection', async () => {
+    local[CONNECTION_KEY] = connection;
+    expect(await getConnection(fakeStore().store)).toBeNull();
+    expect(localReads).toBe(0);
+  });
+
+  test('a read waits for a move in progress', async () => {
+    // The first message after an update can arrive while the move is still running.
+    local[CONNECTION_KEY] = connection;
+    const s = fakeStore();
+    const moving = moveLegacyConnection(fromLocalEra, s.store);
+    expect(await getConnection(s.store)).toEqual(connection);
+    await moving;
   });
 });
 

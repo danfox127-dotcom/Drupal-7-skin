@@ -9,11 +9,12 @@
  * The key is a bearer credential for this person's Varys account. It lives in the trusted
  * store (./trustedStore.ts), IndexedDB in the extension's own origin, which the scripts the
  * extension runs inside Drupal pages cannot open. 0.7.x kept it in chrome.storage.local, which
- * those scripts CAN read (and write); migrateLegacyConnection moves it across once. Nothing
+ * those scripts CAN read (and write); moveLegacyConnection moves it across once, on that update. Nothing
  * outside the service worker is shown it: the popup asks for a status, which is built by
  * toStatus() and has no key in it.
  */
 
+import { isNewer } from '../updateCheck';
 import { trustedStore, type TrustedStore } from './trustedStore';
 
 export interface VarysConnection {
@@ -119,50 +120,63 @@ export function toStatus(c: VarysConnection | null): VarysStatus | null {
   return c ? { email: c.email, connectedAt: c.connectedAt, expired: c.expired === true } : null;
 }
 
-/** Set in the trusted store once 0.7.x's chrome.storage.local record has been dealt with. */
-export const MIGRATED_KEY = 'legacyConnectionMigrated';
+/**
+ * Every version before this kept the key in chrome.storage.local; this one and later keep it in
+ * the trusted store. It must be the version this change ships in: set too HIGH, a later update
+ * would read chrome.storage.local again, which is the hole this closes; too low, people updating
+ * from the versions in between would have to reconnect, which is the safe direction.
+ */
+export const KEY_LEFT_LOCAL_BEFORE = '0.7.2';
 
 /** The part of chrome.storage.local the move needs. */
 type LegacyArea = Pick<chrome.storage.StorageArea, 'get' | 'remove'>;
 
-/** One move per store object, i.e. per worker lifetime; a failed one is forgotten and retried. */
-const moves = new WeakMap<TrustedStore, Promise<void>>();
+/** What chrome.runtime.onInstalled says. */
+type InstalledDetails = Pick<chrome.runtime.InstalledDetails, 'reason' | 'previousVersion'>;
+
+/** The move in progress, if any: a read waits for it rather than racing it. */
+let moving: Promise<void> = Promise.resolve();
 
 /**
- * Moves a connection 0.7.x kept in chrome.storage.local into the trusted store, once per
- * profile, and from then on deletes anything found there unread.
+ * Called from chrome.runtime.onInstalled. On the update from a version that kept the key in
+ * chrome.storage.local, copies it into the trusted store; in every case, removes any key found
+ * there.
  *
- * Content scripts can write chrome.storage.local, so after the move a record there is never a
- * credential: trusting one would let a compromised page point this person's extension at
- * another account. Before the move, the record there is the one 0.7.x's worker wrote.
+ * Whether chrome.storage.local may be read is decided by Chrome's install event, which no page
+ * can raise, and never by what that area holds: content scripts can WRITE it, and adopting a
+ * record from it would let a compromised page point this person's extension at another account.
+ * So it is read once, on that update, when what it holds is what 0.7.x's own worker wrote.
  *
- * Order matters: copy, then the marker, then the delete. A failure leaves the old record and no
- * marker, so the next attempt starts again; a record already in the trusted store is never
- * replaced by the old one.
+ * A record already in the trusted store is never replaced. A failed copy is not retried (a later
+ * start has no install event to permit another read): the person reads as not connected and
+ * reconnects, and the old key is removed regardless.
  */
-export function migrateLegacyConnection(
+export function moveLegacyConnection(
+  details: InstalledDetails,
   store: TrustedStore = trustedStore,
   local: LegacyArea = chrome.storage.local,
 ): Promise<void> {
-  let move = moves.get(store);
-  if (!move) {
-    move = (async () => {
-      if ((await store.get(MIGRATED_KEY)) === true) {
-        await local.remove(CONNECTION_KEY);
-        return;
-      }
+  moving = (async () => {
+    try {
+      const fromLocalEra = details.reason === 'update' && typeof details.previousVersion === 'string'
+        && isNewer(KEY_LEFT_LOCAL_BEFORE, details.previousVersion);
+      if (!fromLocalEra) return;
       // Validated on the way across, so only what setConnection writes ever reaches the store.
       const legacy = asConnection((await local.get(CONNECTION_KEY))[CONNECTION_KEY]);
       if (legacy && asConnection(await store.get(CONNECTION_KEY)) === null) {
         await store.set(CONNECTION_KEY, legacy);
       }
-      await store.set(MIGRATED_KEY, true);
-      await local.remove(CONNECTION_KEY);
-    })();
-    moves.set(store, move);
-    move.catch(() => moves.delete(store));
-  }
-  return move;
+    } catch (err) {
+      console.warn('[D7 Studio] Varys: the key 0.7.x stored could not be moved, so this browser must reconnect', err);
+    } finally {
+      try {
+        await local.remove(CONNECTION_KEY);
+      } catch (err) {
+        console.warn('[D7 Studio] Varys: could not remove the key 0.7.x stored', err);
+      }
+    }
+  })();
+  return moving;
 }
 
 /**
@@ -183,16 +197,12 @@ function asConnection(stored: unknown): VarysConnection | null {
 }
 
 /**
- * Reads the stored connection, or null. A move that could not finish reads as not connected,
- * never as whatever chrome.storage.local holds.
+ * Reads the stored connection from the trusted store, or null. Never from chrome.storage.local.
+ * Waits for a move from 0.7.x that is still running, so the first message after an update does
+ * not read as "not connected".
  */
 export async function getConnection(store: TrustedStore = trustedStore): Promise<VarysConnection | null> {
-  try {
-    await migrateLegacyConnection(store);
-  } catch (err) {
-    console.warn('[D7 Studio] Varys: the stored key could not be moved yet; reading as not connected', err);
-    return null;
-  }
+  await moving;
   return asConnection(await store.get(CONNECTION_KEY));
 }
 
