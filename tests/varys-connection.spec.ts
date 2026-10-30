@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
 import {
-  CONNECTION_KEY, acceptConnectMessage, getConnection, isValidKey, mayReplaceConnection, setConnection, toStatus,
+  CONNECTION_KEY, MIGRATED_KEY, acceptConnectMessage, getConnection, isValidKey, mayReplaceConnection, setConnection,
+  toStatus,
 } from '../src/lib/varys/connection';
+import type { TrustedStore } from '../src/lib/varys/trustedStore';
 import { VARYS_API, VARYS_APP_ORIGINS } from '../src/lib/varys/config';
 import { assertProductionVarys, resolveVarys } from '../src/lib/varys/resolve';
 
@@ -120,43 +122,67 @@ test.describe('what the popup may see', () => {
 });
 
 test.describe('the stored connection', () => {
-  /** An in-memory chrome.storage.local, promise style as in a service worker. */
-  const store: Record<string, unknown> = {};
+  /**
+   * The key lives in the trusted store (src/lib/varys/trustedStore.ts), which content scripts
+   * cannot open. chrome.storage.local is where 0.7.x kept it, and is faked here only so the
+   * one-time move out of it can be tested; nothing may be read from it as a credential.
+   */
+  const local: Record<string, unknown> = {};
   test.beforeEach(() => {
-    for (const k of Object.keys(store)) delete store[k];
+    for (const k of Object.keys(local)) delete local[k];
     (globalThis as unknown as { chrome: unknown }).chrome = {
       storage: {
         local: {
           get: async (keys: string | Record<string, unknown>) => {
             const names = typeof keys === 'string' ? [keys] : Object.keys(keys);
-            return Object.fromEntries(names.filter(k => k in store).map(k => [k, store[k]]));
+            return Object.fromEntries(names.filter(k => k in local).map(k => [k, local[k]]));
           },
-          set: async (items: Record<string, unknown>) => { Object.assign(store, items); },
-          remove: async (key: string) => { delete store[key]; },
+          set: async (items: Record<string, unknown>) => { Object.assign(local, items); },
+          remove: async (key: string) => { delete local[key]; },
         },
       },
     };
   });
   test.afterEach(() => { delete (globalThis as unknown as { chrome?: unknown }).chrome; });
 
+  /**
+   * An in-memory TrustedStore. Passing the same `data` to a second call is a new worker start:
+   * a different store object over the same database.
+   */
+  const fakeStore = (data = new Map<string, unknown>(), failFirstSet = false) => {
+    let fail = failFirstSet;
+    const store: TrustedStore = {
+      get: async key => data.get(key),
+      set: async (key, value) => {
+        if (fail) { fail = false; throw new Error('disk full'); }
+        data.set(key, structuredClone(value));
+      },
+      remove: async key => { data.delete(key); },
+    };
+    return { store, data };
+  };
+
   const connection = { key: KEY, email: 'x@cumc.columbia.edu', connectedAt: '2026-10-21T12:00:00.000Z' };
 
-  test('is stored under its own key, apart from the settings', async () => {
-    await setConnection(connection);
-    expect(Object.keys(store)).toEqual([CONNECTION_KEY]);
+  test('is kept in the trusted store, never in chrome.storage.local', async () => {
+    const s = fakeStore();
+    await setConnection(connection, s.store);
+    expect(s.data.get(CONNECTION_KEY)).toEqual(connection);
     expect(CONNECTION_KEY).toBe('varysConnection');
-    expect(await getConnection()).toEqual(connection);
+    expect(Object.keys(local)).toEqual([]);
+    expect(await getConnection(s.store)).toEqual(connection);
   });
 
   test('setting null forgets it, key and all', async () => {
-    await setConnection(connection);
-    await setConnection(null);
-    expect(await getConnection()).toBeNull();
-    expect(Object.keys(store)).toEqual([]);
+    const s = fakeStore();
+    await setConnection(connection, s.store);
+    await setConnection(null, s.store);
+    expect(await getConnection(s.store)).toBeNull();
+    expect(s.data.has(CONNECTION_KEY)).toBe(false);
   });
 
   test('nothing stored reads as not connected', async () => {
-    expect(await getConnection()).toBeNull();
+    expect(await getConnection(fakeStore().store)).toBeNull();
   });
 
   test('a damaged record reads as not connected rather than as a connection', async () => {
@@ -166,14 +192,73 @@ test.describe('the stored connection', () => {
       'vxk_nope', 42, [], { ...connection, key: 'abc' }, { ...connection, email: undefined },
       { ...connection, connectedAt: 7 },
     ]) {
-      store[CONNECTION_KEY] = bad;
-      expect(await getConnection(), JSON.stringify(bad)).toBeNull();
+      const s = fakeStore();
+      s.data.set(CONNECTION_KEY, bad);
+      expect(await getConnection(s.store), JSON.stringify(bad)).toBeNull();
     }
   });
 
   test('keeps the expired flag, and drops anything it does not know', async () => {
-    store[CONNECTION_KEY] = { ...connection, expired: true, surprise: 'x' };
-    expect(await getConnection()).toEqual({ ...connection, expired: true });
+    const s = fakeStore();
+    s.data.set(CONNECTION_KEY, { ...connection, expired: true, surprise: 'x' });
+    expect(await getConnection(s.store)).toEqual({ ...connection, expired: true });
+  });
+
+  test('a 0.7 connection in chrome.storage.local is moved once, then removed', async () => {
+    // Someone connected under 0.7.x updates: they stay connected, and the key leaves the area
+    // content scripts can read.
+    local[CONNECTION_KEY] = connection;
+    const s = fakeStore();
+    expect(await getConnection(s.store)).toEqual(connection);
+    expect(Object.keys(local)).toEqual([]);
+    expect(s.data.get(MIGRATED_KEY)).toBe(true);
+  });
+
+  test('a record written to chrome.storage.local after the move is never read', async () => {
+    /**
+     * Content scripts can WRITE chrome.storage.local too. Trusting a record found there after
+     * the move would let a compromised page point this person's extension at another account,
+     * the attack mayReplaceConnection exists to stop.
+     */
+    const s = fakeStore();
+    expect(await getConnection(s.store)).toBeNull();
+    local[CONNECTION_KEY] = { ...connection, key: 'vxk_' + 'b'.repeat(43), email: 'attacker@example.com' };
+    expect(await getConnection(s.store)).toBeNull();
+
+    // The next worker start finds it, still does not use it, and removes it.
+    const restarted = fakeStore(s.data);
+    expect(await getConnection(restarted.store)).toBeNull();
+    expect(Object.keys(local)).toEqual([]);
+  });
+
+  test('a connection already in the trusted store is not replaced', async () => {
+    // The copy went through but the marker did not: the trusted record wins over the leftover.
+    const s = fakeStore();
+    s.data.set(CONNECTION_KEY, connection);
+    local[CONNECTION_KEY] = { ...connection, email: 'older@cumc.columbia.edu' };
+    expect(await getConnection(s.store)).toEqual(connection);
+    expect(Object.keys(local)).toEqual([]);
+    expect(s.data.get(MIGRATED_KEY)).toBe(true);
+  });
+
+  test('a damaged 0.7 record is dropped, not moved', async () => {
+    local[CONNECTION_KEY] = { ...connection, key: 'abc' };
+    const s = fakeStore();
+    expect(await getConnection(s.store)).toBeNull();
+    expect(Object.keys(local)).toEqual([]);
+    expect(s.data.has(CONNECTION_KEY)).toBe(false);
+    expect(s.data.get(MIGRATED_KEY)).toBe(true);
+  });
+
+  test('a failed move keeps the old record for the next try, and reads as not connected meanwhile', async () => {
+    local[CONNECTION_KEY] = connection;
+    const s = fakeStore(new Map(), true);
+    expect(await getConnection(s.store)).toBeNull();
+    expect(local[CONNECTION_KEY]).toEqual(connection);
+    expect(s.data.has(MIGRATED_KEY)).toBe(false);
+
+    expect(await getConnection(s.store)).toEqual(connection);
+    expect(Object.keys(local)).toEqual([]);
   });
 });
 
