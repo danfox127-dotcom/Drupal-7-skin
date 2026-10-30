@@ -4187,6 +4187,8 @@ type VarysAnswer = { status: number; body?: unknown } | 'abort';
  * every request the worker makes.
  */
 const WORKER_TAB = `${HOST}/admin/d7-test/news-ckeditor`;
+/** The same tab on another Columbia host, one the stubbed Varys does not track. */
+const VAGELOS_WORKER_TAB = 'https://vagelos.columbia.edu/admin/d7-test/news-ckeditor';
 
 /**
  * Stands in for Varys, and records every request the worker makes to it.
@@ -4948,6 +4950,8 @@ test.describe('Varys suggestions: worker', () => {
 
     expect(await asContentScript(page, context, extensionId, { type: 'varysSiteTracked', pageUrl: `${HOST}/node/23110` }))
       .toEqual({ tracked: true });
+    // Asked from a tab on that site: the worker answers only about the asking tab's own site.
+    await page.goto(VAGELOS_WORKER_TAB);
     expect(await asContentScript(page, context, extensionId, { type: 'varysSiteTracked', pageUrl: 'https://vagelos.columbia.edu/node/5' }))
       .toEqual({ tracked: false });
     // The list, fetched once and then cached; it carries no page address.
@@ -5069,7 +5073,9 @@ test.describe('Varys suggestions: worker', () => {
   test('an untracked host sends nothing', async ({ page, context, extensionId, settings }) => {
     await settings({ varysConnection: connected, nodeEditor: false });
     const calls = await stubVarys(context, varysUp());
-    await openEditor(page);
+    // A tab on the untracked host itself: the worker answers only about the asking tab's site.
+    await page.goto(VAGELOS_WORKER_TAB);
+    await expect(page.locator(`#${BODY}`)).toHaveCount(1);
 
     for (const type of ['varysSuggestions', 'varysGenerateSuggestions']) {
       expect(await asContentScript(page, context, extensionId, { type, pageUrl: 'https://vagelos.columbia.edu/heart-failure' }))
@@ -5263,6 +5269,61 @@ test.describe('Varys suggestions: worker', () => {
   });
 });
 
+test.describe('Varys page requests: only about the asking tab\'s own site', () => {
+  const KEY = 'vxk_' + 'a'.repeat(43);
+  const EMAIL = 'x@cumc.columbia.edu';
+  const connected = { key: KEY, email: EMAIL, connectedAt: '2026-10-30T12:00:00.000Z' };
+  const SITES = { email: EMAIL, user_id: '00000000-0000-0000-0000-000000000001', sites: ['cuimc.columbia.edu'] };
+  /** A page on the tracked site, asked about from wherever the test puts the tab. */
+  const TRACKED_PAGE = `${HOST}/heart-failure`;
+
+  const varysUp = (call: VarysCall): VarysAnswer => {
+    if (call.path === '/api/extension/connection') return { status: 200, body: SITES };
+    if (call.path.startsWith('/api/extension/suggestions')) return { status: 200, body: { status: 'none' } };
+    if (call.path === '/api/extension/drafts') return { status: 200, body: { status: 'ok', drafts: [] } };
+    return { status: 404, body: { detail: 'Not Found' } };
+  };
+  const pageRequestsIn = (calls: VarysCall[]) => calls.filter(c =>
+    c.path.startsWith('/api/extension/suggestions') || c.path.startsWith('/api/extension/drafts'));
+
+  const ask = (page: Page, context: BrowserContext, extensionId: string) => Promise.all([
+    asContentScript(page, context, extensionId, { type: 'varysSiteTracked', pageUrl: TRACKED_PAGE }),
+    asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: TRACKED_PAGE }),
+    asContentScript(page, context, extensionId, { type: 'varysGenerateSuggestions', pageUrl: TRACKED_PAGE }),
+    asContentScript(page, context, extensionId, { type: 'varysDrafts', pageUrl: `${HOST}/` }),
+    asContentScript(page, context, extensionId, { type: 'varysDraft', pageUrl: `${HOST}/`, id: 'job-1' }),
+  ]);
+
+  test('a page request about another site than the tab\'s is refused, and nothing reaches Varys', async ({ page, context, extensionId, settings }) => {
+    /**
+     * A content script taken over in one tab must not be able to ask Varys about another site's
+     * pages, or be handed that site's drafts. The worker judges the request against the tab that
+     * sent it, not against the address the message names.
+     */
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp);
+    await page.goto(VAGELOS_WORKER_TAB);
+    await expect(page.locator('#edit-body-value')).toHaveCount(1);
+
+    const notTracked = { ok: true, answer: { status: 'not_tracked' } };
+    expect(await ask(page, context, extensionId))
+      .toEqual([{ tracked: false }, notTracked, notTracked, notTracked, notTracked]);
+    expect(pageRequestsIn(calls)).toEqual([]);
+  });
+
+  test('the same requests from a tab on that site are answered', async ({ page, context, extensionId, settings }) => {
+    // The control for the test above: the refusal is about the tab, not about the requests.
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const calls = await stubVarys(context, varysUp);
+    await page.goto(WORKER_TAB);
+    await expect(page.locator('#edit-body-value')).toHaveCount(1);
+
+    const [tracked] = await ask(page, context, extensionId);
+    expect(tracked).toEqual({ tracked: true });
+    expect(pageRequestsIn(calls).length).toBeGreaterThan(0);
+  });
+});
+
 test.describe('Varys drafts: worker', () => {
   const KEY = 'vxk_' + 'a'.repeat(43);
   const EMAIL = 'x@cumc.columbia.edu';
@@ -5380,7 +5441,9 @@ test.describe('Varys drafts: worker', () => {
   test('an untracked host sends nothing about its drafts', async ({ page, context, extensionId, settings }) => {
     await settings({ varysConnection: connected, nodeEditor: false });
     const calls = await stubVarys(context, varysUp());
-    await openEditor(page);
+    // A tab on the untracked host itself: the worker answers only about the asking tab's site.
+    await page.goto(VAGELOS_WORKER_TAB);
+    await expect(page.locator(`#${BODY}`)).toHaveCount(1);
 
     for (const type of TYPES) {
       expect(await asContentScript(page, context, extensionId, request(type, 'https://vagelos.columbia.edu/')))

@@ -3,8 +3,8 @@ import type { PageState } from '../src/lib/varys/pageState';
 import {
   EXPIRED_COPY, QUEUE_MAX_ENTRIES, UNREACHABLE_COPY, UNTRACKED_COPY,
   carriedFillsFor, failureOf, isTrackedSite, knownUntracked, mergeCarriedBefore, nextOpenedForm, noteLoading,
-  noticeForResult, outcomeOfNavigation, outcomeOfTimeout, outcomeWhenLoaded, pruneQueue, queueVerdict, storedNoticeFor,
-  toSaveRequest,
+  noticeForResult, outcomeOfNavigation, outcomeOfTimeout, outcomeWhenLoaded, pageIsSenders, pruneQueue, queueVerdict,
+  storedNoticeFor, toSaveRequest,
   type OpenedForm, type PendingSubmit, type QueuedSave,
 } from '../src/lib/varys/submissions';
 
@@ -371,6 +371,31 @@ test.describe('what a failed request means', () => {
     expect(isTrackedSite('http://www.cuimc.columbia.edu/node/add/page', sites)).toBe(false);
     expect(isTrackedSite('http://cuimc.columbia.edu/news/foo', sites)).toBe(false);
     expect(isTrackedSite('https://www.cuimc.columbia.edu/node/add/page', sites)).toBe(true);
+  });
+
+  test('a page request names the page its sender is on', () => {
+    /**
+     * The worker answers drafts and suggestions about a page only for the tab that is on it: a
+     * content script taken over in one tab must not ask Varys about another site. Same site
+     * means the same bare host, not the same origin, because a panel on cuimc.columbia.edu asks
+     * about its public page on www.cuimc.columbia.edu.
+     */
+    const tab = { id: 7 };
+    const from = (url: string, over: Record<string, unknown> = {}) => ({ url, frameId: 0, tab, ...over });
+    const EDIT = 'https://www.cuimc.columbia.edu/node/5/edit';
+
+    expect(pageIsSenders('https://www.cuimc.columbia.edu/node/5/edit', from(EDIT))).toBe(true);
+    expect(pageIsSenders('https://www.cuimc.columbia.edu/news/foo',
+      from('https://cuimc.columbia.edu/node/5/edit'))).toBe(true);
+    expect(pageIsSenders('https://vagelos.columbia.edu/news/foo', from(EDIT))).toBe(false);
+    expect(pageIsSenders('http://www.cuimc.columbia.edu/news/foo', from(EDIT))).toBe(false);
+    expect(pageIsSenders('https://www.cuimc.columbia.edu/news/foo',
+      from('http://www.cuimc.columbia.edu/node/5/edit'))).toBe(false);
+    expect(pageIsSenders('https://www.cuimc.columbia.edu/news/foo', from(EDIT, { frameId: 3 }))).toBe(false);
+    expect(pageIsSenders('https://www.cuimc.columbia.edu/news/foo', { url: EDIT, frameId: 0 })).toBe(false);
+    expect(pageIsSenders(42, from(EDIT))).toBe(false);
+    expect(pageIsSenders('not a url', from(EDIT))).toBe(false);
+    expect(pageIsSenders('https://www.cuimc.columbia.edu/news/foo', from('not a url'))).toBe(false);
   });
 });
 

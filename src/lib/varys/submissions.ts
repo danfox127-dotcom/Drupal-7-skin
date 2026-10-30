@@ -329,6 +329,25 @@ export function queueVerdict(status: number | null): QueueVerdict {
 }
 
 /**
+ * Whether a page request names the page its sender is on: the top frame of a tab, over https,
+ * on the same site as the page it asks about.
+ *
+ * The worker answers drafts and suggestions only for the tab that is on that site, so a content
+ * script taken over in one tab cannot ask Varys about another site's pages. Same site means the
+ * same BARE host rather than the same origin: a panel on cuimc.columbia.edu asks about its public
+ * page on www.cuimc.columbia.edu (see publicAddress.ts).
+ */
+export function pageIsSenders(
+  pageUrl: unknown, sender: { url?: string; frameId?: number; tab?: { id?: number } },
+): boolean {
+  if (typeof pageUrl !== 'string' || sender.tab?.id === undefined || sender.frameId !== 0) return false;
+  const page = parse(pageUrl);
+  const from = parse(sender.url ?? '');
+  return page !== null && from !== null && page.protocol === 'https:' && from.protocol === 'https:'
+    && bareHost(page.host) === bareHost(from.host);
+}
+
+/**
  * Whether Varys keeps a workspace for the page's site. `sites` are bare, lowercased hosts.
  *
  * Over https only. A page at http://<tracked host> is whatever someone on the network chose to

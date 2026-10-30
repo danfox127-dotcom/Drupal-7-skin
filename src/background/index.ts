@@ -44,6 +44,7 @@ import {
   ACTION_EXPIRED_COPY, ACTION_NOT_CONNECTED_COPY, ACTION_UNREACHABLE_COPY, EXPIRED_COPY,
   PENDING_NOTICE_KEY, PENDING_TIMEOUT_MS, QUEUE_KEY, SITES_TTL_MS, UNREACHABLE_COPY, UNTRACKED_COPY,
   cachedSitesFor, carriedFillsFor, failureOf, isTrackedSite, knownUntracked, mergeCarriedBefore, nextOpenedForm, noteLoading,
+  pageIsSenders,
   noticeForResult, outcomeOfTimeout, outcomeWhenLoaded, pruneQueue, queueVerdict, toSaveRequest,
   type FormEvent, type NavigationOutcome, type OpenedForm, type PendingSubmit, type QueuedSave,
   type SaveRequest, type SitesCache, type StoredNotice, type VarysActionRequest, type VarysActionResponse,
@@ -1288,6 +1289,22 @@ chrome.runtime.onMessage.addListener((
   if (message?.type === 'varysUndo' || message?.type === 'varysLogAnyway') {
     void actOnSave(message).then(sendResponse);
     return true;
+  }
+
+  /**
+   * A request about a page is answered only for the tab that is on that page's site (see
+   * pageIsSenders). Anything else is answered as not tracked and nothing goes to Varys: our own
+   * panels never send one, so it means a content script that is not behaving as ours does.
+   */
+  const pageRequest = message?.type === 'varysSiteTracked' || message?.type === 'varysSuggestions'
+    || message?.type === 'varysGenerateSuggestions' || message?.type === 'varysDrafts'
+    || message?.type === 'varysDraft';
+  if (pageRequest && !pageIsSenders(message.pageUrl, sender)) {
+    console.warn('[D7 Studio] Varys: a page request named a page other than its own, so nothing was sent.');
+    sendResponse(message.type === 'varysSiteTracked'
+      ? { tracked: false } satisfies VarysSiteTrackedResponse
+      : { ok: true, answer: { status: 'not_tracked' } });
+    return false;
   }
 
   if (message?.type === 'varysSiteTracked') {
