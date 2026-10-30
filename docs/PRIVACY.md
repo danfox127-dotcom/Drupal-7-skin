@@ -364,11 +364,16 @@ while the panel is open.
 
 ### What the extension keeps on your computer while you are connected
 
-In `chrome.storage.local`, which survives closing the browser:
+In the extension's own database (IndexedDB), which survives closing the browser:
 
 - **Your Varys key, the email of your Varys account, and when you connected.** The key
-  is a credential for your Varys account. Only the extension's background script reads it;
-  the popup is told your email and whether the connection has expired, never the key.
+  is a credential for your Varys account. This database belongs to the extension itself: the
+  scripts the extension runs inside Drupal pages cannot open it, and neither can the pages.
+  Only the extension's background script reads the key; the popup is told your email and
+  whether the connection has expired, never the key. (Versions before 0.7.2 kept the key in
+  `chrome.storage.local`; updating moves it here once and deletes it from there.)
+
+In `chrome.storage.local`, which also survives closing the browser:
 - **A queue of saves Varys could not take** (Varys unreachable, or your key expired), so
   they can be sent later: at most 50 saves, each kept for at most 7 days. Each is held
   as it would have been sent, with the email it was made under, and is only ever sent under

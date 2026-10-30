@@ -2,8 +2,45 @@ import { test as base, expect, chromium, type BrowserContext, type Page } from '
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
+import { TRUSTED_DB, TRUSTED_DB_VERSION, TRUSTED_STORE } from '../src/lib/varys/trustedStore';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Reads, writes or deletes one record in the extension's trusted store (where the Varys key
+ * lives, src/lib/varys/trustedStore.ts), from an extension page: that page shares the
+ * worker's origin, so it opens the same database. The object store is created the way the
+ * extension creates it, in case this runs before the worker has opened the database.
+ */
+async function trustedStoreOp(
+  context: BrowserContext, extensionId: string, op: 'get' | 'put' | 'delete', key: string, value?: unknown,
+): Promise<unknown> {
+  const page = await context.newPage();
+  try {
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    return await page.evaluate(([db, version, storeName, operation, k, v]) => new Promise((resolve, reject) => {
+      const open = indexedDB.open(db as string, version as number);
+      open.onupgradeneeded = () => {
+        if (!open.result.objectStoreNames.contains(storeName as string)) open.result.createObjectStore(storeName as string);
+      };
+      open.onerror = () => reject(open.error);
+      open.onsuccess = () => {
+        const tx = open.result.transaction(storeName as string, operation === 'get' ? 'readonly' : 'readwrite');
+        const store = tx.objectStore(storeName as string);
+        const request = operation === 'get' ? store.get(k as string)
+          : operation === 'put' ? store.put(v, k as string) : store.delete(k as string);
+        tx.oncomplete = () => { open.result.close(); resolve(operation === 'get' ? request.result ?? null : null); };
+        tx.onerror = () => reject(tx.error);
+      };
+    }), [TRUSTED_DB, TRUSTED_DB_VERSION, TRUSTED_STORE, op, key, value] as const);
+  } finally {
+    await page.close();
+  }
+}
+
+/** The stored Varys connection as the worker keeps it, or null when there is none. */
+const trustedConnection = (context: BrowserContext, extensionId: string) =>
+  trustedStoreOp(context, extensionId, 'get', 'varysConnection');
 
 /**
  * End-to-end tests against the built extension.
@@ -171,13 +208,24 @@ export const test = base.extend<{
     await use(worker.url().split('/')[2]);
   },
 
+  /**
+   * Seeds what the extension keeps. `varysConnection` goes to the trusted store, where the worker
+   * reads it (null deletes it); everything else to chrome.storage.local, as before.
+   */
   settings: async ({ context, extensionId }, use) => {
     await use(async (values: Record<string, unknown>) => {
+      const { varysConnection, ...rest } = values;
+      if ('varysConnection' in values) {
+        await (varysConnection === null || varysConnection === undefined
+          ? trustedStoreOp(context, extensionId, 'delete', 'varysConnection')
+          : trustedStoreOp(context, extensionId, 'put', 'varysConnection', varysConnection));
+      }
+      if (Object.keys(rest).length === 0) return;
       const page = await context.newPage();
       await page.goto(`chrome-extension://${extensionId}/index.html`);
       await page.evaluate(
         v => new Promise<void>(resolve => chrome.storage.local.set(v, () => resolve())),
-        values
+        rest
       );
       await page.close();
     });
@@ -3702,16 +3750,6 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
       [extensionId, message] as const,
     );
 
-  /** Reads the stored record the way the worker would, from an extension page. */
-  const storedConnection = async (context: BrowserContext, extensionId: string) => {
-    const page = await context.newPage();
-    await page.goto(`chrome-extension://${extensionId}/index.html`);
-    const value = await page.evaluate(
-      () => new Promise<unknown>(resolve =>
-        chrome.storage.local.get({ varysConnection: null }, r => resolve(r.varysConnection))));
-    await page.close();
-    return value;
-  };
 
   const connected = { key: KEY, email: EMAIL, connectedAt: '2026-10-21T12:00:00.000Z' };
 
@@ -3730,7 +3768,7 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
     await page.goto(`${HOST}/node/add/page`);
     await expect(page.locator('#edit-title')).toBeVisible();
 
-    expect(await storedConnection(context, extensionId)).toBeNull();
+    expect(await trustedConnection(context, extensionId)).toBeNull();
     expect(toVarys).toEqual([]);
   });
 
@@ -3759,7 +3797,7 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
     expect(await handOff(page, extensionId, { type: 'varysConnect', key: KEY, email: EMAIL }))
       .toEqual({ ok: true });
 
-    const stored = await storedConnection(context, extensionId) as Record<string, unknown>;
+    const stored = await trustedConnection(context, extensionId) as Record<string, unknown>;
     expect(stored).toMatchObject({ key: KEY, email: EMAIL });
     expect(Number.isNaN(Date.parse(stored.connectedAt as string))).toBe(false);
 
@@ -3772,6 +3810,44 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
     expect(await popup.content()).not.toContain('vxk_');
   });
 
+  test('the key is out of reach of the scripts the extension runs in Drupal pages', async ({ page, context, extensionId }) => {
+    /**
+     * chrome.storage.local is exposed to content scripts, so a key kept there could be read by
+     * anything that took over a Columbia admin tab's renderer. It lives in the extension's own
+     * IndexedDB instead, which a content script cannot open: its `indexedDB` is the page's.
+     */
+    await serveVarysApp(context);
+    await page.goto(`${VARYS_APP}/connect-extension?ext=${extensionId}`);
+    expect(await handOff(page, extensionId, { type: 'varysConnect', key: KEY, email: EMAIL }))
+      .toEqual({ ok: true });
+
+    await page.goto(`${HOST}/node/add/page`);
+    await expect(page.locator('#edit-title')).toBeVisible();
+    const local = await inContentScript(page, context, extensionId,
+      'chrome.storage.local.get(null).then(all => JSON.stringify(all))') as string;
+    expect(local, 'the key is readable from a content script').not.toContain(KEY);
+    const databases = await inContentScript(page, context, extensionId,
+      'indexedDB.databases().then(all => all.map(d => d.name))') as string[];
+    expect(databases).not.toContain(TRUSTED_DB);
+
+    expect(await trustedConnection(context, extensionId)).toMatchObject({ key: KEY, email: EMAIL });
+  });
+
+  test('a key left in chrome.storage.local is never used', async ({ page, extensionId }) => {
+    /**
+     * Content scripts can WRITE chrome.storage.local too. A record found there on a fresh
+     * install, or after the one move from 0.7.x, is not a credential: trusting it would let a
+     * compromised page point the extension at another account.
+     */
+    await page.goto(`chrome-extension://${extensionId}/index.html`);
+    await page.evaluate(v => chrome.storage.local.set({ varysConnection: v }),
+      { key: KEY, email: 'someone-else@example.com', connectedAt: '2026-10-21T12:00:00.000Z' });
+    await page.reload();
+
+    await expect(page.getByText(OFF_COPY)).toBeVisible();
+    await expect(page.getByText('Connected to Varys as')).toHaveCount(0);
+  });
+
   test('a malformed hand-off is refused, says why, and stores nothing', async ({ page, context, extensionId }) => {
     await serveVarysApp(context);
     await page.goto(`${VARYS_APP}/connect-extension?ext=${extensionId}`);
@@ -3780,7 +3856,7 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
       .toEqual({ ok: false, error: 'key' });
     expect(await handOff(page, extensionId, { type: 'somethingElse', key: KEY, email: EMAIL }))
       .toEqual({ ok: false, error: 'type' });
-    expect(await storedConnection(context, extensionId)).toBeNull();
+    expect(await trustedConnection(context, extensionId)).toBeNull();
   });
 
   test('a hand-off for a different account does not replace a connection; the same account may refresh its key', async ({ page, context, extensionId }) => {
@@ -3797,11 +3873,11 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
     expect(await handOff(page, extensionId, { type: 'varysConnect', key: KEY, email: EMAIL })).toEqual({ ok: true });
     expect(await handOff(page, extensionId, { type: 'varysConnect', key: OTHER_KEY, email: 'someone.else@example.org' }))
       .toEqual({ ok: false, error: 'connected-elsewhere' });
-    expect(await storedConnection(context, extensionId)).toMatchObject({ key: KEY, email: EMAIL });
+    expect(await trustedConnection(context, extensionId)).toMatchObject({ key: KEY, email: EMAIL });
 
     expect(await handOff(page, extensionId, { type: 'varysConnect', key: NEW_KEY, email: EMAIL.toUpperCase() }))
       .toEqual({ ok: true });
-    expect(await storedConnection(context, extensionId)).toMatchObject({ key: NEW_KEY });
+    expect(await trustedConnection(context, extensionId)).toMatchObject({ key: NEW_KEY });
   });
 
   test('a page that is not the Varys app cannot reach the extension at all', async ({ page, context, extensionId }) => {
@@ -3904,7 +3980,7 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
     await expect(page.getByText(OFF_COPY)).toBeVisible();
     await expect(page.getByRole('button', { name: 'Connect to Varys' })).toBeVisible();
     await expect(page.locator('[data-varys-note]')).toHaveCount(0);
-    expect(await storedConnection(context, extensionId)).toBeNull();
+    expect(await trustedConnection(context, extensionId)).toBeNull();
     expect(await page.evaluate(() => chrome.storage.local.get(['varysQueue', 'varysPendingNotice']))).toEqual({});
     expect(seen).toEqual([{
       method: 'DELETE',
@@ -3923,7 +3999,7 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
 
     await expect(page.getByText(OFF_COPY)).toBeVisible();
     await expect(page.locator('[data-varys-note]')).toContainText('could not be reached');
-    expect(await storedConnection(context, extensionId)).toBeNull();
+    expect(await trustedConnection(context, extensionId)).toBeNull();
   });
 
   for (const status of [404, 500, 503]) {
@@ -3947,7 +4023,7 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
       await expect(note).toContainText("couldn't cancel the key");
       await expect(note).toContainText('90 days');
       await expect(note).not.toContainText('could not be reached');
-      expect(await storedConnection(context, extensionId)).toBeNull();
+      expect(await trustedConnection(context, extensionId)).toBeNull();
     });
   }
 
@@ -3964,7 +4040,7 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
 
     await expect(page.getByText(OFF_COPY)).toBeVisible();
     await expect(page.locator('[data-varys-note]')).toHaveCount(0);
-    expect(await storedConnection(context, extensionId)).toBeNull();
+    expect(await trustedConnection(context, extensionId)).toBeNull();
   });
 });
 
@@ -4148,13 +4224,11 @@ const stubVarys = async (context: BrowserContext, answer: (call: VarysCall) => V
 };
 
 /**
- * Sends the worker a message the way the panel will, from a content script in the tab.
- *
- * A message from an extension page would reach the worker too, but with that page as its
- * sender, and the insert acts on the SENDER's tab. So this evaluates in the content script's
- * own isolated world, over CDP, and the worker sees the fixture tab.
+ * Evaluates `expression` in the extension's content script in the tab: its own isolated world,
+ * over CDP. What the scripts the extension runs inside a page can see and do is exactly what
+ * this sees and does.
  */
-const asContentScript = async (page: Page, context: BrowserContext, extensionId: string, message: unknown) => {
+const inContentScript = async (page: Page, context: BrowserContext, extensionId: string, expression: string) => {
   const cdp = await context.newCDPSession(page);
   try {
     const worlds: { id: number; origin: string; auxData?: { frameId?: string } }[] = [];
@@ -4169,11 +4243,7 @@ const asContentScript = async (page: Page, context: BrowserContext, extensionId:
     if (!world) throw new Error('The extension has no content script in this tab.');
 
     const { result, exceptionDetails } = await cdp.send('Runtime.evaluate', {
-      contextId: world.id,
-      awaitPromise: true,
-      returnByValue: true,
-      expression: `new Promise(resolve => chrome.runtime.sendMessage(${JSON.stringify(message)}, response =>
-        resolve(response === undefined ? { noAnswer: chrome.runtime.lastError?.message } : response)))`,
+      contextId: world.id, awaitPromise: true, returnByValue: true, expression,
     });
     if (exceptionDetails) throw new Error(exceptionDetails.text);
     return result.value;
@@ -4181,6 +4251,18 @@ const asContentScript = async (page: Page, context: BrowserContext, extensionId:
     await cdp.detach();
   }
 };
+
+/**
+ * Sends the worker a message the way the panel will, from a content script in the tab.
+ *
+ * A message from an extension page would reach the worker too, but with that page as its
+ * sender, and the insert acts on the SENDER's tab. So this sends from the content script's
+ * own isolated world, and the worker sees the fixture tab.
+ */
+const asContentScript = (page: Page, context: BrowserContext, extensionId: string, message: unknown) =>
+  inContentScript(page, context, extensionId,
+    `new Promise(resolve => chrome.runtime.sendMessage(${JSON.stringify(message)}, response =>
+      resolve(response === undefined ? { noAnswer: chrome.runtime.lastError?.message } : response)))`);
 
 test.describe('Sending a save to Varys, and telling the editor what happened', () => {
   const KEY = 'vxk_' + 'a'.repeat(43);
@@ -4424,7 +4506,7 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     expect(save.body.after.title).toBe('Attempt two');
   });
 
-  test('unreachable varys queues', async ({ page, context, settings }) => {
+  test('unreachable varys queues', async ({ page, context, settings, extensionId }) => {
     await settings({ varysConnection: connected, nodeEditor: false });
     const calls = await stubVarys(context, () => 'abort');
     await saveGoesThrough(context);
@@ -4438,10 +4520,10 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     expect(queue).toHaveLength(1);
     expect(queue[0]).toMatchObject({ email: EMAIL, request: { page_url: PUBLIC, node_id: '23110' } });
     // Varys was never reached, so the key is not in doubt.
-    expect((await stored(context, 'varysConnection') as any).expired).toBeUndefined();
+    expect((await trustedConnection(context, extensionId) as any).expired).toBeUndefined();
   });
 
-  test('expired key queues and flags', async ({ page, context, settings }) => {
+  test('expired key queues and flags', async ({ page, context, settings, extensionId }) => {
     await settings({ varysConnection: connected, nodeEditor: false });
     await stubVarys(context, () => ({ status: 401, body: { detail: 'This key has expired.' } }));
     await saveGoesThrough(context);
@@ -4450,11 +4532,11 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     await saveAndPublish(page);
 
     await expect(page.getByText(EXPIRED)).toBeVisible();
-    expect((await stored(context, 'varysConnection') as any).expired).toBe(true);
+    expect((await trustedConnection(context, extensionId) as any).expired).toBe(true);
     expect(await stored(context, 'varysQueue')).toHaveLength(1);
   });
 
-  test('nothing is sent when not connected', async ({ page, context, settings }) => {
+  test('nothing is sent when not connected', async ({ page, context, settings, extensionId }) => {
     /**
      * Connected when the form opened, so the page records the save, and disconnected by the
      * time it is pressed. The worker checks the stored connection again for every save,
@@ -4466,7 +4548,7 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
 
     await openForm(page);
     const opened = await panelHasAsked(context, calls);
-    await worker(context).evaluate(() => chrome.storage.local.remove('varysConnection'));
+    await trustedStoreOp(context, extensionId, 'delete', 'varysConnection');
     await saveAndPublish(page);
     expect(page.url()).toBe(PUBLIC);
 
@@ -4651,7 +4733,7 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     expect(calls).toEqual([]);
   });
 
-  test('a save Varys refuses with a 401 after the site check is queued, and the key flagged', async ({ page, context, settings }) => {
+  test('a save Varys refuses with a 401 after the site check is queued, and the key flagged', async ({ page, context, settings, extensionId }) => {
     await settings({ varysConnection: connected, nodeEditor: false });
     const calls = await stubVarys(context, varysUp({ status: 401, body: { detail: 'This key has expired.' } }));
     await saveGoesThrough(context);
@@ -4663,11 +4745,11 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     await expect(page.getByText(EXPIRED)).toBeVisible();
     expect(sentSince(calls, 0).map(c => `${c.method} ${c.path}`))
       .toEqual(['GET /api/extension/connection', 'POST /api/extension/saves']);
-    expect((await stored(context, 'varysConnection') as any).expired).toBe(true);
+    expect((await trustedConnection(context, extensionId) as any).expired).toBe(true);
     expect(await stored(context, 'varysQueue')).toHaveLength(1);
   });
 
-  test('a save Varys answers with a 503 is queued, and the editor told it will be sent', async ({ page, context, settings }) => {
+  test('a save Varys answers with a 503 is queued, and the editor told it will be sent', async ({ page, context, settings, extensionId }) => {
     // A 5xx is Varys's deliberate answer when its database fails: worth trying again.
     await settings({ varysConnection: connected, nodeEditor: false });
     const calls = await stubVarys(context, varysUp({ status: 503, body: { detail: 'Database unavailable.' } }));
@@ -4679,7 +4761,7 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     await expect(page.getByText(UNREACHABLE)).toBeVisible();
     expect(savesIn(calls)).toHaveLength(1);
     expect(await stored(context, 'varysQueue')).toHaveLength(1);
-    expect((await stored(context, 'varysConnection') as any).expired).toBeUndefined();
+    expect((await trustedConnection(context, extensionId) as any).expired).toBeUndefined();
   });
 
   test('the site list is asked for once a day, not once a save', async ({ page, context, settings }) => {
@@ -5011,7 +5093,7 @@ test.describe('Varys suggestions: worker', () => {
     }
     expect(suggestionsIn(calls)).toEqual([]);
     // Varys was not refused, so the key is not in doubt.
-    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    const stored = { varysConnection: await trustedConnection(context, extensionId) as any };
     expect(stored.varysConnection.expired).toBeUndefined();
   });
 
@@ -5023,7 +5105,7 @@ test.describe('Varys suggestions: worker', () => {
     const reply = await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE });
 
     expect(reply).toEqual({ ok: false, reason: 'expired', message: EXPIRED });
-    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    const stored = { varysConnection: await trustedConnection(context, extensionId) as any };
     expect(stored.varysConnection.expired).toBe(true);
   });
 
@@ -5036,7 +5118,7 @@ test.describe('Varys suggestions: worker', () => {
 
     expect(reply).toEqual({ ok: false, reason: 'expired', message: EXPIRED });
     expect(suggestionsIn(calls)).toEqual([]);
-    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    const stored = { varysConnection: await trustedConnection(context, extensionId) as any };
     expect(stored.varysConnection.expired).toBe(true);
   });
 
@@ -5090,7 +5172,7 @@ test.describe('Varys suggestions: worker', () => {
     expect(await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE }))
       .toEqual({ ok: true, answer: { status: 'not_tracked' } });
     expect(suggestionsIn(calls)).toEqual([]);
-    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    const stored = { varysConnection: await trustedConnection(context, extensionId) as any };
     expect(stored.varysConnection.expired).toBe(true);
   });
 
@@ -5126,7 +5208,7 @@ test.describe('Varys suggestions: worker', () => {
 
     expect(await asContentScript(page, context, extensionId, { type: 'varysSuggestions', pageUrl: PAGE }))
       .toEqual({ ok: false, reason: 'unreachable', message: UNREACHABLE });
-    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    const stored = { varysConnection: await trustedConnection(context, extensionId) as any };
     expect(stored.varysConnection.expired).toBeUndefined();
   });
 
@@ -5332,7 +5414,7 @@ test.describe('Varys drafts: worker', () => {
     }
     expect(draftsIn(calls)).toEqual([]);
     // Varys was not refused, so the key is not in doubt.
-    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    const stored = { varysConnection: await trustedConnection(context, extensionId) as any };
     expect(stored.varysConnection.expired).toBeUndefined();
   });
 
@@ -5382,7 +5464,7 @@ test.describe('Varys drafts: worker', () => {
 
       expect(await asContentScript(page, context, extensionId, request(type)))
         .toEqual({ ok: false, reason: 'expired', message: EXPIRED });
-      const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+      const stored = { varysConnection: await trustedConnection(context, extensionId) as any };
       expect(stored.varysConnection.expired).toBe(true);
     });
   }
@@ -5397,7 +5479,7 @@ test.describe('Varys drafts: worker', () => {
         .toEqual({ ok: false, reason: 'expired', message: EXPIRED });
     }
     expect(draftsIn(calls)).toEqual([]);
-    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    const stored = { varysConnection: await trustedConnection(context, extensionId) as any };
     expect(stored.varysConnection.expired).toBe(true);
   });
 
@@ -5408,7 +5490,7 @@ test.describe('Varys drafts: worker', () => {
 
     expect(await asContentScript(page, context, extensionId, request('varysDraft')))
       .toEqual({ ok: false, reason: 'not_found', message: "Varys can't find that draft." });
-    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    const stored = { varysConnection: await trustedConnection(context, extensionId) as any };
     expect(stored.varysConnection.expired).toBeUndefined();
   });
 
@@ -5451,7 +5533,7 @@ test.describe('Varys drafts: worker', () => {
     expect(await asContentScript(page, context, extensionId, request('varysDraft')))
       .toEqual({ ok: false, reason: 'error', message: 'page_url is not a page address.' });
     // Neither refused the key.
-    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    const stored = { varysConnection: await trustedConnection(context, extensionId) as any };
     expect(stored.varysConnection.expired).toBeUndefined();
   });
 
@@ -5477,7 +5559,7 @@ test.describe('Varys drafts: worker', () => {
       expect(await asContentScript(page, context, extensionId, request(type)))
         .toEqual({ ok: false, reason: 'unreachable', message: UNREACHABLE });
     }
-    const stored = await worker(context).evaluate(() => chrome.storage.local.get('varysConnection'));
+    const stored = { varysConnection: await trustedConnection(context, extensionId) as any };
     expect(stored.varysConnection.expired).toBeUndefined();
   });
 

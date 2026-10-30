@@ -21,7 +21,7 @@ import {
 } from '../lib/updateCheck';
 import { VARYS_API, VARYS_APP_ORIGINS } from '../lib/varys/config';
 import {
-  acceptConnectMessage, getConnection, mayReplaceConnection, setConnection, toStatus,
+  acceptConnectMessage, getConnection, mayReplaceConnection, moveLegacyConnection, setConnection, toStatus,
   type VarysConnection, type VarysDisconnectRequest, type VarysDisconnectResponse, type VarysRevocation,
   type VarysStatusRequest,
 } from '../lib/varys/connection';
@@ -1453,3 +1453,9 @@ chrome.runtime.onStartup.addListener(() => {
   void flushQueue();
 });
 chrome.runtime.onInstalled.addListener(() => { void checkForUpdate(); });
+/**
+ * The Varys key moves out of chrome.storage.local on the update from 0.7.x, and only then: the
+ * install event is the one signal no page can raise (see moveLegacyConnection). Registered at
+ * the top level, as a worker's listeners must be, so the event is not missed on that first start.
+ */
+chrome.runtime.onInstalled.addListener(details => { void moveLegacyConnection(details); });
