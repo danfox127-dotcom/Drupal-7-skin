@@ -1,8 +1,9 @@
 import { test, expect } from '@playwright/test';
 import {
   CONNECTION_KEY, KEY_LEFT_LOCAL_BEFORE, acceptConnectMessage, getConnection, isValidKey, mayReplaceConnection,
-  moveLegacyConnection, setConnection, toStatus,
+  moveLegacyStorage, setConnection, toStatus,
 } from '../src/lib/varys/connection';
+import { QUEUE_KEY } from '../src/lib/varys/submissions';
 import type { TrustedStore } from '../src/lib/varys/trustedStore';
 import { VARYS_API, VARYS_APP_ORIGINS } from '../src/lib/varys/config';
 import { assertProductionVarys, resolveVarys } from '../src/lib/varys/resolve';
@@ -135,13 +136,13 @@ test.describe('the stored connection', () => {
     (globalThis as unknown as { chrome: unknown }).chrome = {
       storage: {
         local: {
-          get: async (keys: string | Record<string, unknown>) => {
+          get: async (keys: string | string[] | Record<string, unknown>) => {
             localReads++;
-            const names = typeof keys === 'string' ? [keys] : Object.keys(keys);
+            const names = typeof keys === 'string' ? [keys] : Array.isArray(keys) ? keys : Object.keys(keys);
             return Object.fromEntries(names.filter(k => k in local).map(k => [k, local[k]]));
           },
           set: async (items: Record<string, unknown>) => { Object.assign(local, items); },
-          remove: async (key: string) => { delete local[key]; },
+          remove: async (keys: string | string[]) => { for (const k of [keys].flat()) delete local[k]; },
         },
       },
     };
@@ -209,13 +210,15 @@ test.describe('the stored connection', () => {
   });
 
   const fromLocalEra = { reason: 'update', previousVersion: '0.7.0' } as const;
+  /** A save waiting to go, as the worker queues one. */
+  const queued = (page_url: string) => ({ request: { page_url }, queuedAt: Date.now(), email: connection.email });
 
   test('an update from 0.7.x moves the connection across, then removes it', async () => {
     // Someone connected under 0.7.x updates: they stay connected, and the key leaves the area
     // content scripts can read.
     local[CONNECTION_KEY] = connection;
     const s = fakeStore();
-    await moveLegacyConnection(fromLocalEra, s.store);
+    await moveLegacyStorage(fromLocalEra, s.store);
     expect(s.data.get(CONNECTION_KEY)).toEqual(connection);
     expect(Object.keys(local)).toEqual([]);
     expect(await getConnection(s.store)).toEqual(connection);
@@ -227,10 +230,37 @@ test.describe('the stored connection', () => {
      * install event, which no page can raise, and never by what that area holds.
      */
     local[CONNECTION_KEY] = { ...connection, email: 'someone-else@example.com' };
+    local[QUEUE_KEY] = [queued('https://www.cuimc.columbia.edu/news/planted')];
     const s = fakeStore();
-    await moveLegacyConnection({ reason: 'install' }, s.store);
+    await moveLegacyStorage({ reason: 'install' }, s.store);
     expect(localReads).toBe(0);
     expect(s.data.has(CONNECTION_KEY)).toBe(false);
+    expect(s.data.has(QUEUE_KEY)).toBe(false);
+    expect(Object.keys(local)).toEqual([]);
+  });
+
+  test('an update from 0.7.0 moves the queued saves across, checked, then removes them', async () => {
+    /**
+     * Saves Varys could not take (it was away, or the key had expired) wait in a queue, and a
+     * queue content scripts can write is a way to have forged saves sent under this person's
+     * key. It moves with the key, on the same update, and malformed or stale entries are dropped
+     * on the way (pruneQueue).
+     */
+    const kept = queued('https://www.cuimc.columbia.edu/news/kept');
+    local[QUEUE_KEY] = [kept, { nonsense: true }, { ...queued('https://www.cuimc.columbia.edu/news/old'), queuedAt: 1 }];
+    const s = fakeStore();
+    await moveLegacyStorage(fromLocalEra, s.store);
+    expect(s.data.get(QUEUE_KEY)).toEqual([kept]);
+    expect(Object.keys(local)).toEqual([]);
+  });
+
+  test('queued saves already in the trusted store are not replaced', async () => {
+    const ours = queued('https://www.cuimc.columbia.edu/news/ours');
+    const s = fakeStore();
+    s.data.set(QUEUE_KEY, [ours]);
+    local[QUEUE_KEY] = [queued('https://www.cuimc.columbia.edu/news/older')];
+    await moveLegacyStorage(fromLocalEra, s.store);
+    expect(s.data.get(QUEUE_KEY)).toEqual([ours]);
     expect(Object.keys(local)).toEqual([]);
   });
 
@@ -243,7 +273,7 @@ test.describe('the stored connection', () => {
     for (const previousVersion of ['0.7.1', KEY_LEFT_LOCAL_BEFORE, '0.7.2', '0.8.0', '0.10.0', 'not a version']) {
       local[CONNECTION_KEY] = { ...connection, email: 'someone-else@example.com' };
       const s = fakeStore();
-      await moveLegacyConnection({ reason: 'update', previousVersion }, s.store);
+      await moveLegacyStorage({ reason: 'update', previousVersion }, s.store);
       expect(localReads, previousVersion).toBe(0);
       expect(s.data.has(CONNECTION_KEY), previousVersion).toBe(false);
       expect(Object.keys(local), previousVersion).toEqual([]);
@@ -253,7 +283,7 @@ test.describe('the stored connection', () => {
   test('a browser update is not an extension update', async () => {
     local[CONNECTION_KEY] = connection;
     const s = fakeStore();
-    await moveLegacyConnection({ reason: 'chrome_update' }, s.store);
+    await moveLegacyStorage({ reason: 'chrome_update' }, s.store);
     expect(localReads).toBe(0);
     expect(s.data.has(CONNECTION_KEY)).toBe(false);
   });
@@ -262,7 +292,7 @@ test.describe('the stored connection', () => {
     const s = fakeStore();
     s.data.set(CONNECTION_KEY, connection);
     local[CONNECTION_KEY] = { ...connection, email: 'older@cumc.columbia.edu' };
-    await moveLegacyConnection(fromLocalEra, s.store);
+    await moveLegacyStorage(fromLocalEra, s.store);
     expect(await getConnection(s.store)).toEqual(connection);
     expect(Object.keys(local)).toEqual([]);
   });
@@ -270,7 +300,7 @@ test.describe('the stored connection', () => {
   test('a damaged 0.7 record is dropped, not moved', async () => {
     local[CONNECTION_KEY] = { ...connection, key: 'abc' };
     const s = fakeStore();
-    await moveLegacyConnection(fromLocalEra, s.store);
+    await moveLegacyStorage(fromLocalEra, s.store);
     expect(s.data.has(CONNECTION_KEY)).toBe(false);
     expect(Object.keys(local)).toEqual([]);
   });
@@ -280,7 +310,7 @@ test.describe('the stored connection', () => {
     // read. The person reconnects; the key does not stay where content scripts can read it.
     local[CONNECTION_KEY] = connection;
     const s = fakeStore(new Map(), true);
-    await moveLegacyConnection(fromLocalEra, s.store);
+    await moveLegacyStorage(fromLocalEra, s.store);
     expect(await getConnection(s.store)).toBeNull();
     expect(Object.keys(local)).toEqual([]);
   });
@@ -295,7 +325,7 @@ test.describe('the stored connection', () => {
     // The first message after an update can arrive while the move is still running.
     local[CONNECTION_KEY] = connection;
     const s = fakeStore();
-    const moving = moveLegacyConnection(fromLocalEra, s.store);
+    const moving = moveLegacyStorage(fromLocalEra, s.store);
     expect(await getConnection(s.store)).toEqual(connection);
     await moving;
   });
@@ -323,8 +353,8 @@ test.describe('the stored connection', () => {
     // browser's says nothing about this extension's storage and must not clear the old key first.
     local[CONNECTION_KEY] = connection;
     const s = fakeStore();
-    void moveLegacyConnection({ reason: 'chrome_update' }, s.store);
-    void moveLegacyConnection(fromLocalEra, s.store);
+    void moveLegacyStorage({ reason: 'chrome_update' }, s.store);
+    void moveLegacyStorage(fromLocalEra, s.store);
     expect(await getConnection(s.store)).toEqual(connection);
   });
 
@@ -332,8 +362,8 @@ test.describe('the stored connection', () => {
     // A slow write, so a read that waited only for the later (trivial) move would come too early.
     local[CONNECTION_KEY] = connection;
     const s = fakeStore(new Map(), false, 30);
-    void moveLegacyConnection(fromLocalEra, s.store);
-    void moveLegacyConnection({ reason: 'chrome_update' }, s.store);
+    void moveLegacyStorage(fromLocalEra, s.store);
+    void moveLegacyStorage({ reason: 'chrome_update' }, s.store);
     expect(await getConnection(s.store)).toEqual(connection);
   });
 });

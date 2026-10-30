@@ -373,12 +373,14 @@ In the extension's own database (IndexedDB), which survives closing the browser:
   whether the connection has expired, never the key. (Versions before 0.7.1 kept the key in
   `chrome.storage.local`; updating moves it here once and deletes it from there, and
   connecting or disconnecting deletes any copy still left there.)
-
-In `chrome.storage.local`, which also survives closing the browser:
 - **A queue of saves Varys could not take** (Varys unreachable, or your key expired), so
   they can be sent later: at most 50 saves, each kept for at most 7 days. Each is held
   as it would have been sent, with the email it was made under, and is only ever sent under
-  that same person's key.
+  that same person's key. It is kept beside the key so that nothing running in a page can add
+  a save to it. (Versions before 0.7.1 kept it in `chrome.storage.local`; updating moves it here
+  once.)
+
+In `chrome.storage.local`, which also survives closing the browser:
 - **A notice**, when the result could not be shown on the page you landed on: its text, the
   site it is for, and when it was stored. It is shown once on the next admin page of that
   site, then deleted. After an hour it is no longer shown; it stays stored until a newer

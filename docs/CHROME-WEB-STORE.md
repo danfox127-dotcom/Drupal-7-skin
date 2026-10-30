@@ -154,9 +154,9 @@ common cause of a slow review. These are accurate as of the current manifest.
     Stores the user's feature toggles, their queue of URLs to import, their local drafts
     and copied pages, a cached menu index and the last update-check result, using
     chrome.storage.local. Never chrome.storage.sync. These stay in the browser. If the user
-    clicks Connect to Varys, it also stores the Varys key and email in the extension's own
-    IndexedDB database, which content scripts cannot open, and a queue of at most
-    50 saves waiting to be sent (each kept at most 7 days) in chrome.storage.local, and a
+    clicks Connect to Varys, it also stores the Varys key and email, and a queue of at most
+    50 saves waiting to be sent (each kept at most 7 days), in the extension's own IndexedDB
+    database, which content scripts cannot open, and a
     few short-lived items in chrome.storage.session, which Chrome clears when the browser
     closes: the form as it first opened (including raw field values, which are never sent)
     with what the user filled from Varys's suggestions on it (so Undo survives a Preview),

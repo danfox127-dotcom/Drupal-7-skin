@@ -22,7 +22,7 @@
 > else.
 >
 > **Ruling:** the move is keyed on `chrome.runtime.onInstalled` instead, an event no page can
-> raise. `moveLegacyConnection(details, store?, local?)` behaves as follows:
+> raise. `moveLegacyStorage(details, store?, local?)` behaves as follows:
 > - It reads the old record ONLY when `reason === 'update'` and `previousVersion` is older than
 >   `KEY_LEFT_LOCAL_BEFORE = '0.7.2'` (compared with `updateCheck.isNewer`).
 > - It copies a valid record there, never over one already in the trusted store.

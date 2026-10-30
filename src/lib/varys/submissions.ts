@@ -457,7 +457,7 @@ export function storedNoticeFor(stored: unknown, host: string, now: number): Var
 
 // --------------------------------------------------------------------------------- the queue
 
-/** A save Varys could not take, kept in chrome.storage.local under varysQueue until it can. */
+/** A save Varys could not take, kept in the trusted store under varysQueue until it can (0.7.0 used chrome.storage.local). */
 export interface QueuedSave {
   request: SaveRequest;
   queuedAt: number;

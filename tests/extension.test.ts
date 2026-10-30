@@ -209,16 +209,17 @@ export const test = base.extend<{
   },
 
   /**
-   * Seeds what the extension keeps. `varysConnection` goes to the trusted store, where the worker
-   * reads it (null deletes it); everything else to chrome.storage.local, as before.
+   * Seeds what the extension keeps. `varysConnection` and `varysQueue` go to the trusted store,
+   * where the worker reads them (null deletes one); everything else to chrome.storage.local.
    */
   settings: async ({ context, extensionId }, use) => {
     await use(async (values: Record<string, unknown>) => {
-      const { varysConnection, ...rest } = values;
-      if ('varysConnection' in values) {
-        await (varysConnection === null || varysConnection === undefined
-          ? trustedStoreOp(context, extensionId, 'delete', 'varysConnection')
-          : trustedStoreOp(context, extensionId, 'put', 'varysConnection', varysConnection));
+      const { varysConnection, varysQueue, ...rest } = values;
+      for (const [key, value] of [['varysConnection', varysConnection], ['varysQueue', varysQueue]] as const) {
+        if (!(key in values)) continue;
+        await (value === null || value === undefined
+          ? trustedStoreOp(context, extensionId, 'delete', key)
+          : trustedStoreOp(context, extensionId, 'put', key, value));
       }
       if (Object.keys(rest).length === 0) return;
       const page = await context.newPage();
@@ -3982,6 +3983,7 @@ test.describe('Connecting to Varys is optional, and nothing is sent until you do
     await expect(page.locator('[data-varys-note]')).toHaveCount(0);
     expect(await trustedConnection(context, extensionId)).toBeNull();
     expect(await page.evaluate(() => chrome.storage.local.get(['varysQueue', 'varysPendingNotice']))).toEqual({});
+    expect(await trustedStoreOp(context, extensionId, 'get', 'varysQueue')).toBeNull();
     expect(seen).toEqual([{
       method: 'DELETE',
       authorization: `Bearer ${KEY}`,
@@ -4332,8 +4334,10 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
   };
 
   const worker = (context: BrowserContext) => context.serviceWorkers()[0];
-  const stored = (context: BrowserContext, key: string) =>
-    worker(context).evaluate(k => chrome.storage.local.get(k).then(r => r[k]), key);
+  /** What the worker keeps under `key`: the queue from the trusted store, anything else from chrome.storage.local. */
+  const stored = async (context: BrowserContext, key: string) => key === 'varysQueue'
+    ? (await trustedStoreOp(context, worker(context).url().split('/')[2], 'get', key)) ?? undefined
+    : worker(context).evaluate(k => chrome.storage.local.get(k).then(r => r[k]), key);
   const sessionKeys = (context: BrowserContext) =>
     worker(context).evaluate(() => chrome.storage.session.get(null).then(r => Object.keys(r)));
 
@@ -4590,6 +4594,32 @@ test.describe('Sending a save to Varys, and telling the editor what happened', (
     await expect(page.getByText('Removed from Varys.')).toBeVisible();
     const undo = calls.find(c => c.path === '/api/extension/saves/41/undo');
     expect(undo).toMatchObject({ method: 'POST', authorization: `Bearer ${KEY}` });
+  });
+
+  test('a save planted in chrome.storage.local is never sent', async ({ page, context, extensionId, settings }) => {
+    /**
+     * Content scripts can write chrome.storage.local, so a queue kept there was a way to have a
+     * forged save sent to Varys under this person's key. The queue lives in the trusted store;
+     * anything found in the old place after install is never read.
+     */
+    await settings({ varysConnection: connected, nodeEditor: false });
+    const planted = {
+      page_url: `${HOST}/news/planted`, node_id: '1', content_type: 'news', button: 'publish',
+      body_change_ratio: 0, before: null, after: { title: 'Planted' },
+    };
+    const extensionPage = await context.newPage();
+    await extensionPage.goto(`chrome-extension://${extensionId}/index.html`);
+    await extensionPage.evaluate(entry => chrome.storage.local.set({ varysQueue: [entry] }),
+      { request: planted, queuedAt: Date.now() - 60_000, email: EMAIL });
+    await extensionPage.close();
+    const calls = await stubVarys(context, varysUp());
+    await saveGoesThrough(context);
+
+    await openForm(page);
+    await saveAndPublish(page);
+
+    await expect(page.getByText(LOGGED.message)).toBeVisible();
+    expect(savesIn(calls).map(c => c.body.page_url)).toEqual([PUBLIC]);
   });
 
   test('saves queued while Varys was away go first, the next time one is sent', async ({ page, context, settings }) => {

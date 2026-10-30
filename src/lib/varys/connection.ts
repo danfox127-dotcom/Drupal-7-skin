@@ -9,12 +9,13 @@
  * The key is a bearer credential for this person's Varys account. It lives in the trusted
  * store (./trustedStore.ts), IndexedDB in the extension's own origin, which the scripts the
  * extension runs inside Drupal pages cannot open. 0.7.x kept it in chrome.storage.local, which
- * those scripts CAN read (and write); moveLegacyConnection moves it across once, on that update. Nothing
+ * those scripts CAN read (and write); moveLegacyStorage moves it across once, on that update. Nothing
  * outside the service worker is shown it: the popup asks for a status, which is built by
  * toStatus() and has no key in it.
  */
 
 import { isNewer } from '../updateCheck';
+import { QUEUE_KEY, pruneQueue } from './submissions';
 import { trustedStore, type TrustedStore } from './trustedStore';
 
 export interface VarysConnection {
@@ -138,9 +139,10 @@ type InstalledDetails = Pick<chrome.runtime.InstalledDetails, 'reason' | 'previo
 let moving: Promise<void> = Promise.resolve();
 
 /**
- * Called from chrome.runtime.onInstalled. On the update from a version that kept the key in
- * chrome.storage.local, copies it into the trusted store; on any install or update, removes any
- * key found there. A Chrome or shared-module update says nothing about this extension's storage
+ * Called from chrome.runtime.onInstalled. On the update from a version that kept the key and the
+ * queue of saves waiting for Varys in chrome.storage.local, copies both into the trusted store; on
+ * any install or update, removes both from there. (A queue content scripts can write is a way to
+ * have forged saves sent under this person's key, so it moves with the key.) A Chrome or shared-module update says nothing about this extension's storage
  * and touches nothing: Chrome can report one in the same start as the extension's own update,
  * and clearing the old key first would lose it. Moves run one after another, never at once.
  *
@@ -153,7 +155,7 @@ let moving: Promise<void> = Promise.resolve();
  * start has no install event to permit another read): the person reads as not connected and
  * reconnects, and the old key is removed regardless.
  */
-export function moveLegacyConnection(
+export function moveLegacyStorage(
   details: InstalledDetails,
   store: TrustedStore = trustedStore,
   local: LegacyArea = chrome.storage.local,
@@ -165,21 +167,32 @@ export function moveLegacyConnection(
         && isNewer(KEY_LEFT_LOCAL_BEFORE, details.previousVersion);
       if (!fromLocalEra) return;
       // Validated on the way across, so only what setConnection writes ever reaches the store.
-      const legacy = asConnection((await local.get(CONNECTION_KEY))[CONNECTION_KEY]);
+      const old = await local.get([CONNECTION_KEY, QUEUE_KEY]);
+      const legacy = asConnection(old[CONNECTION_KEY]);
       if (legacy && asConnection(await store.get(CONNECTION_KEY)) === null) {
         await store.set(CONNECTION_KEY, legacy);
       }
+      // Pruned on the way across: malformed and stale entries go (see pruneQueue).
+      const queue = pruneQueue(old[QUEUE_KEY], Date.now());
+      if (queue.length > 0 && (await store.get(QUEUE_KEY)) === undefined) {
+        await store.set(QUEUE_KEY, queue);
+      }
     } catch (err) {
-      console.warn('[D7 Studio] Varys: the key 0.7.x stored could not be moved, so this browser must reconnect', err);
+      console.warn('[D7 Studio] Varys: what 0.7.x stored could not be moved, so this browser must reconnect', err);
     } finally {
       try {
-        await local.remove(CONNECTION_KEY);
+        await local.remove([CONNECTION_KEY, QUEUE_KEY]);
       } catch (err) {
-        console.warn('[D7 Studio] Varys: could not remove the key 0.7.x stored', err);
+        console.warn('[D7 Studio] Varys: could not remove what 0.7.x stored', err);
       }
     }
   };
   moving = moving.then(run);
+  return moving;
+}
+
+/** Resolves once every move from 0.7.x's storage so far has finished; the queue's reader waits on it. */
+export function legacyStorageMoved(): Promise<void> {
   return moving;
 }
 

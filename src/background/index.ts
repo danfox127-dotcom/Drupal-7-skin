@@ -20,8 +20,10 @@ import {
   LATEST_URL, UPDATE_STATE_KEY, evaluateUpdate, shouldCheckForUpdates,
 } from '../lib/updateCheck';
 import { VARYS_API, VARYS_APP_ORIGINS } from '../lib/varys/config';
+import { trustedStore } from '../lib/varys/trustedStore';
 import {
-  acceptConnectMessage, getConnection, mayReplaceConnection, moveLegacyConnection, setConnection, toStatus,
+  acceptConnectMessage, getConnection, legacyStorageMoved, mayReplaceConnection, moveLegacyStorage, setConnection,
+  toStatus,
   type VarysConnection, type VarysDisconnectRequest, type VarysDisconnectResponse, type VarysRevocation,
   type VarysStatusRequest,
 } from '../lib/varys/connection';
@@ -526,7 +528,12 @@ async function varysDisconnect(): Promise<VarysDisconnectResponse> {
   // shown. A later connection, possibly someone else's, starts clean. (A pending save also
   // names its owner and is never sent under anyone else's key, which covers one written while
   // this ran.)
-  await withQueue(() => chrome.storage.local.remove([QUEUE_KEY, PENDING_NOTICE_KEY]));
+  await withQueue(async () => {
+    await trustedStore.remove(QUEUE_KEY);
+    // The notice stays in chrome.storage.local (the content script shows it); a queue left there
+    // by 0.7.0 goes too, unread.
+    await chrome.storage.local.remove([QUEUE_KEY, PENDING_NOTICE_KEY]);
+  });
   const followed = Object.keys(await chrome.storage.session.get(null))
     .filter(k => k.startsWith('varysPending:') || k.startsWith('varysForm:'));
   await chrome.storage.session.remove([SITES_KEY, ...followed]);
@@ -796,13 +803,20 @@ function withQueue<T>(work: () => Promise<T>): Promise<T> {
   return run;
 }
 
-const readQueue = async (): Promise<QueuedSave[]> =>
-  pruneQueue((await chrome.storage.local.get(QUEUE_KEY))[QUEUE_KEY], Date.now());
+/**
+ * The queue lives in the trusted store, beside the key: content scripts can write
+ * chrome.storage.local, and a queue there was a way to have forged saves sent under this person's
+ * key. A read waits for the one move from 0.7.0's storage, if it is still running.
+ */
+const readQueue = async (): Promise<QueuedSave[]> => {
+  await legacyStorageMoved();
+  return pruneQueue(await trustedStore.get(QUEUE_KEY), Date.now());
+};
 
 /** An empty queue is no queue: nothing is kept for someone with nothing waiting. */
 const writeQueue = (queue: QueuedSave[]): Promise<void> => queue.length === 0
-  ? chrome.storage.local.remove(QUEUE_KEY)
-  : chrome.storage.local.set({ [QUEUE_KEY]: queue });
+  ? trustedStore.remove(QUEUE_KEY)
+  : trustedStore.set(QUEUE_KEY, queue);
 
 function enqueue(request: SaveRequest, email: string): Promise<void> {
   return withQueue(async () => {
@@ -1472,7 +1486,7 @@ chrome.runtime.onStartup.addListener(() => {
 chrome.runtime.onInstalled.addListener(() => { void checkForUpdate(); });
 /**
  * The Varys key moves out of chrome.storage.local on the update from 0.7.x, and only then: the
- * install event is the one signal no page can raise (see moveLegacyConnection). Registered at
+ * install event is the one signal no page can raise (see moveLegacyStorage). Registered at
  * the top level, as a worker's listeners must be, so the event is not missed on that first start.
  */
-chrome.runtime.onInstalled.addListener(details => { void moveLegacyConnection(details); });
+chrome.runtime.onInstalled.addListener(details => { void moveLegacyStorage(details); });
