@@ -169,7 +169,9 @@ test.describe('Chrome Web Store readiness', () => {
 
     expect(matches).not.toContain('file://*/*');
     for (const pattern of matches) {
-      expect(pattern, `${pattern} is not an http(s) pattern`).toMatch(/^\*:\/\//);
+      // https only (security scan 2026-10-30, F2/F3): an http page on a Columbia host is
+      // whatever someone on the network chose to serve.
+      expect(pattern, `${pattern} is not an https pattern`).toMatch(/^https:\/\//);
       expect(pattern, `${pattern} does not restrict the path`)
         .toMatch(/\/(admin|node)\/\*$/);
     }
