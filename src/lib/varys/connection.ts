@@ -126,7 +126,7 @@ export function toStatus(c: VarysConnection | null): VarysStatus | null {
  * would read chrome.storage.local again, which is the hole this closes; too low, people updating
  * from the versions in between would have to reconnect, which is the safe direction.
  */
-export const KEY_LEFT_LOCAL_BEFORE = '0.7.2';
+export const KEY_LEFT_LOCAL_BEFORE = '0.7.1';
 
 /** The part of chrome.storage.local the move needs. */
 type LegacyArea = Pick<chrome.storage.StorageArea, 'get' | 'remove'>;

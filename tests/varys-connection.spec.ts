@@ -208,7 +208,7 @@ test.describe('the stored connection', () => {
     expect(await getConnection(s.store)).toEqual({ ...connection, expired: true });
   });
 
-  const fromLocalEra = { reason: 'update', previousVersion: '0.7.1' } as const;
+  const fromLocalEra = { reason: 'update', previousVersion: '0.7.0' } as const;
 
   test('an update from 0.7.x moves the connection across, then removes it', async () => {
     // Someone connected under 0.7.x updates: they stay connected, and the key leaves the area
@@ -235,7 +235,12 @@ test.describe('the stored connection', () => {
   });
 
   test('an update from a version that already used the trusted store never reads chrome.storage.local', async () => {
-    for (const previousVersion of [KEY_LEFT_LOCAL_BEFORE, '0.8.0', '0.10.0', 'not a version']) {
+    /**
+     * The trusted store ships in 0.7.1, so an update FROM 0.7.1 must never read the old area: what
+     * it holds by then was not written by our worker. (Planned for 0.7.2, then folded into 0.7.1
+     * on 2026-10-30; a cut-off of 0.7.2 would have reopened the hole on the 0.7.1 -> 0.7.2 update.)
+     */
+    for (const previousVersion of ['0.7.1', KEY_LEFT_LOCAL_BEFORE, '0.7.2', '0.8.0', '0.10.0', 'not a version']) {
       local[CONNECTION_KEY] = { ...connection, email: 'someone-else@example.com' };
       const s = fakeStore();
       await moveLegacyConnection({ reason: 'update', previousVersion }, s.store);

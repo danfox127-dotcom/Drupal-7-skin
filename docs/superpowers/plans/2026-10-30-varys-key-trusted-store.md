@@ -34,6 +34,10 @@
 >
 > **Cost if wrong:** one reconnect for anyone whose copy failed.
 >
+> **Folded into 0.7.1 (2026-10-30):** the owner chose to merge this into `fix/sec-deps`, so it
+> ships in 0.7.1 and `KEY_LEFT_LOCAL_BEFORE` is `'0.7.1'`. Task 5 is now the 0.7.1 release, and
+> its upgrade check runs from 0.7.0.
+>
 > **Release check:** `KEY_LEFT_LOCAL_BEFORE` must equal the version this ships in.
 > - Set too high, a later update would read `chrome.storage.local` again.
 > - Set too low, people updating from the versions in between reconnect, which is the safe
