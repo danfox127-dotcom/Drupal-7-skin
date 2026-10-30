@@ -149,7 +149,8 @@ function parse(url: string): URL | null {
 export function outcomeOfNavigation(p: PendingSubmit, finalUrl: string): NavigationOutcome {
   const form = parse(p.formUrl);
   const final = parse(finalUrl);
-  if (form === null || final === null || bareHost(final.host) !== bareHost(form.host)) {
+  if (form === null || final === null || final.protocol !== form.protocol
+    || bareHost(final.host) !== bareHost(form.host)) {
     return { kind: 'interrupted' };
   }
   if (final.pathname === p.formPath) return { kind: 'failed' };
@@ -327,10 +328,16 @@ export function queueVerdict(status: number | null): QueueVerdict {
   return 'kept';
 }
 
-/** Whether Varys keeps a workspace for the page's site. `sites` are bare, lowercased hosts. */
+/**
+ * Whether Varys keeps a workspace for the page's site. `sites` are bare, lowercased hosts.
+ *
+ * Over https only. A page at http://<tracked host> is whatever someone on the network chose to
+ * serve, and every gate that hands a page's drafts or suggestions to the panel asks this first
+ * (security scan 2026-10-30, F2).
+ */
 export function isTrackedSite(pageUrl: string, sites: readonly string[]): boolean {
   const url = parse(pageUrl);
-  return url !== null && sites.includes(bareHost(url.host));
+  return url !== null && url.protocol === 'https:' && sites.includes(bareHost(url.host));
 }
 
 /** The answer to GET /api/extension/connection, cached in chrome.storage.session. */

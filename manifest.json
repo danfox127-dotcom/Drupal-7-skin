@@ -16,10 +16,10 @@
     "scripting"
   ],
   "host_permissions": [
-    "*://*.columbiadoctors.org/admin/*",
-    "*://*.columbiadoctors.org/node/*",
-    "*://*.columbia.edu/admin/*",
-    "*://*.columbia.edu/node/*"
+    "https://*.columbiadoctors.org/admin/*",
+    "https://*.columbiadoctors.org/node/*",
+    "https://*.columbia.edu/admin/*",
+    "https://*.columbia.edu/node/*"
   ],
   "optional_host_permissions": [
     "*://*/*"
@@ -43,10 +43,10 @@
         "src/content/index.tsx"
       ],
       "matches": [
-        "*://*.columbiadoctors.org/admin/*",
-        "*://*.columbiadoctors.org/node/*",
-        "*://*.columbia.edu/admin/*",
-        "*://*.columbia.edu/node/*"
+        "https://*.columbiadoctors.org/admin/*",
+        "https://*.columbiadoctors.org/node/*",
+        "https://*.columbia.edu/admin/*",
+        "https://*.columbia.edu/node/*"
       ]
     }
   ]

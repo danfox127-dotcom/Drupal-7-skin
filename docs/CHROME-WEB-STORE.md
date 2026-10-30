@@ -227,10 +227,10 @@ common cause of a slow review. These are accurate as of the current manifest.
 
 **Host permissions — all four, listed exactly as the manifest declares them:**
 
-    *://*.columbia.edu/admin/*
-    *://*.columbia.edu/node/*
-    *://*.columbiadoctors.org/admin/*
-    *://*.columbiadoctors.org/node/*
+    https://*.columbia.edu/admin/*
+    https://*.columbia.edu/node/*
+    https://*.columbiadoctors.org/admin/*
+    https://*.columbiadoctors.org/node/*
 
 
     The Drupal 7 sites the extension exists to improve. The content scripts that read and

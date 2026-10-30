@@ -30,8 +30,9 @@ and can be read at <https://github.com/danfox127-dotcom/Drupal-7-skin>.
 ## What it reads
 
 **The Drupal administrative page you have open.** The extension only runs its interface
-and reads forms on addresses matching `*://*.columbia.edu/admin/*`,
-`*://*.columbia.edu/node/*`, and the same two paths on `*://*.columbiadoctors.org`. On
+and reads forms on addresses matching `https://*.columbia.edu/admin/*`,
+`https://*.columbia.edu/node/*`, and the same two paths on `https://*.columbiadoctors.org`
+(secure pages only; it does not run on a plain `http://` address). On
 every other page — including the public side of those same sites — it does not run its
 interface and does not read the page. On the pages where it does run, it reads the form
 and page content in order to redraw the interface. That reading happens in your browser and

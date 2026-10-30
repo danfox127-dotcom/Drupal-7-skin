@@ -106,6 +106,12 @@ test.describe('outcomeOfNavigation', () => {
     expect(outcomeOfNavigation(pendingNew(), `${HOST}/admin/content`)).toEqual({ kind: 'noAddress' });
   });
 
+  test('landing on the same host over plain http is not landing on the site', () => {
+    // Security scan 2026-10-30 (F2): the site comparison ignored the scheme.
+    expect(outcomeOfNavigation(pending(), 'http://www.cuimc.columbia.edu/news/foo'))
+      .toEqual({ kind: 'interrupted' });
+  });
+
   test('landing on the login page, or on another site, means the save did not happen', () => {
     // An expired Drupal session sends Save to /user/login; a single sign-on sends it off the
     // site. Neither is a page that was saved, and neither is the form failing validation.
@@ -352,6 +358,19 @@ test.describe('what a failed request means', () => {
     expect(isTrackedSite('https://CUIMC.columbia.edu/x', sites)).toBe(true);
     expect(isTrackedSite('https://www.nursing.columbia.edu/x', sites)).toBe(false);
     expect(isTrackedSite('not a url', sites)).toBe(false);
+  });
+
+  test('a page over plain http is never a tracked site', () => {
+    /**
+     * Security scan 2026-10-30 (F2). The check compared the bare host only, so a page someone
+     * on the same network served at http://<tracked host>/node/add/... was asked about, and
+     * shown, the person's drafts and suggestions. Every gate that sends a page to Varys goes
+     * through this check.
+     */
+    const sites = ['cuimc.columbia.edu'];
+    expect(isTrackedSite('http://www.cuimc.columbia.edu/node/add/page', sites)).toBe(false);
+    expect(isTrackedSite('http://cuimc.columbia.edu/news/foo', sites)).toBe(false);
+    expect(isTrackedSite('https://www.cuimc.columbia.edu/node/add/page', sites)).toBe(true);
   });
 });
 

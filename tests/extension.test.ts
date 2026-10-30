@@ -60,7 +60,7 @@ const HOST = 'https://www.cuimc.columbia.edu';
 /**
  * A columbia.edu subdomain the manifest never names.
  *
- * The `*://*.columbia.edu/...` wildcard exists so a new Columbia D7 site works with no
+ * The `https://*.columbia.edu/...` wildcard exists so a new Columbia D7 site works with no
  * manifest edit, rebuild, or reload. This host proves that, and would fail against the
  * previous per-site pattern list.
  */

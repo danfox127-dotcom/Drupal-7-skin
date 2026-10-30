@@ -47,6 +47,21 @@ test.describe('the source manifest', () => {
     expect(manifest.background.service_worker).toMatch(/\.ts$/);
     expect(manifest.content_scripts[0].js[0]).toMatch(/\.tsx?$/);
   });
+
+  test('runs on, and reaches, Columbia pages over https only', () => {
+    /**
+     * Security scan 2026-10-30 (F2, F3). `*://` also matched plain http, so a page someone on
+     * the same network served at http://<a Columbia host>/node/add/... got the panel, and the
+     * panel was given that person's Varys drafts. Every Columbia site redirects to https, so
+     * http has no legitimate use here.
+     */
+    const manifest = readJson(path.join(ROOT, 'manifest.json'));
+    const patterns = [
+      ...manifest.host_permissions,
+      ...manifest.content_scripts.flatMap((cs: { matches: string[] }) => cs.matches),
+    ];
+    for (const pattern of patterns) expect(pattern, pattern).toMatch(/^https:\/\//);
+  });
 });
 
 test.describe('the built extension', () => {
