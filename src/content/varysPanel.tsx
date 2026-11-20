@@ -760,9 +760,35 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
   const noteLink = (url: string, message: string | null) => setLinkNotes(prev => ({ ...prev, [url]: message }));
   const bodyEditorId = () => document.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.id ?? null;
 
+  // Marked while any link removed here is still out of the body, and only then: the save reports it.
+  useEffect(() => {
+    if (removed.length > 0) markFilled('broken_link');
+    else unmarkFilled('broken_link');
+  }, [removed]);
+
+  /** Its Undo goes; the removal stays, now the person's own (they have typed since). */
+  const withdrawUndo = useCallback((url: string) => setUndoable(prev => {
+    if (!(url in prev)) return prev;
+    const next = { ...prev };
+    delete next[url];
+    return next;
+  }), []);
+
+  /** The link is back in the body (Undo here, or the editor's own): the row is as it was. */
+  const forgetRemoval = useCallback((url: string) => {
+    withdrawUndo(url);
+    setRemoved(prev => prev.filter(other => other !== url));
+    noteLink(url, null);
+  }, [withdrawUndo]);
+
+  const undoableNow = useRef(undoable);
+  undoableNow.current = undoable;
+
   // A removal the body no longer matches is the person's own: its Undo goes, as a fill's does
-  // once its field is edited. CKEditor's typing happens in its frame and tells the page nothing,
-  // so the body is read every second while an Undo is on offer, and after any other edit.
+  // once its field is edited. A body back to exactly what it was before the removal is the
+  // editor's own Undo (Ctrl+Z restores that snapshot): the link is back, so is the row.
+  // CKEditor's typing happens in its frame and tells the page nothing, so the body is read
+  // every second while an Undo is on offer, and after any other edit.
   const undoableKeys = Object.keys(undoable).join('\n');
   useEffect(() => {
     if (undoableKeys === '') return;
@@ -778,13 +804,10 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
       }
       const now = read?.ok ? read.value : undefined;
       if (cancelled || now === undefined) return;
-      setUndoable(prev => {
-        const stale = Object.keys(prev).filter(url => prev[url].after !== now);
-        if (stale.length === 0) return prev;
-        const next = { ...prev };
-        for (const url of stale) delete next[url];
-        return next;
-      });
+      for (const [url, record] of Object.entries(undoableNow.current)) {
+        if (now === record.before) forgetRemoval(url);
+        else if (now !== record.after) withdrawUndo(url);
+      }
     };
     void check();
     const timer = setInterval(() => { void check(); }, BODY_CHECK_MS);
@@ -792,7 +815,7 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
       cancelled = true;
       clearInterval(timer);
     };
-  }, [undoableKeys, edits]);
+  }, [undoableKeys, edits, forgetRemoval, withdrawUndo]);
 
   const showLink = useCallback(async (url: string) => {
     const elementId = bodyEditorId();
@@ -835,7 +858,6 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
         const { before, after } = reply;
         if (before !== null && after !== null) setUndoable(prev => ({ ...prev, [url]: { before, after } }));
         setRemoved(prev => (prev.includes(url) ? prev : [...prev, url]));
-        markFilled('broken_link');
         noteLink(url, REMOVED_COPY);
         return;
       }
@@ -857,28 +879,16 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
     } catch {
       reply = undefined;
     }
-    if (reply?.result === 'restored' || reply?.result === 'changed') {
-      setUndoable(prev => {
-        const next = { ...prev };
-        delete next[url];
-        return next;
-      });
-    }
-    if (reply?.result === 'restored') {
-      const rest = removed.filter(other => other !== url);
-      setRemoved(rest);
-      // Marked while any link removed here is still out of the body.
-      if (rest.length === 0) unmarkFilled('broken_link');
-      noteLink(url, null);
-    } else if (reply?.result !== 'changed') {
-      // Typed since ('changed'): the removal is theirs now and the row already says it is removed.
-      noteLink(url, UNDO_FAILED_COPY);
-    }
-  }, [undoable, removed]);
+    if (reply?.result === 'restored') forgetRemoval(url);
+    // Typed since: the removal is theirs now, and the row already says it is removed.
+    else if (reply?.result === 'changed') withdrawUndo(url);
+    else noteLink(url, UNDO_FAILED_COPY);
+  }, [undoable, forgetRemoval, withdrawUndo]);
 
   const linkRows = brokenLinks.map((link): BrokenLinkRow => {
     const gone = removed.includes(link.url);
-    const outOfReach = !gone && (link.sitewide || link.inBody === false || missing.includes(link.url));
+    const fromListing = link.sitewide || link.inBody === false;
+    const outOfReach = !gone && (fromListing || missing.includes(link.url));
     let action: BrokenLinkRow['action'] = 'remove';
     if (outOfReach) action = 'none';
     else if (undoable[link.url]) action = 'undo';
@@ -890,7 +900,8 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
       since: sinceText(link.since),
       suggestion: link.suggestion,
       state: link.state,
-      placement: outOfReach ? 'not-in-body' : 'in-body',
+      // Varys saw a link in the body that the editor does not have now: the body changed since.
+      placement: !outOfReach ? 'in-body' : fromListing ? 'not-in-body' : 'not-in-editor',
       action,
       message: linkNotes[link.url] ?? null,
     };

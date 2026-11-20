@@ -293,12 +293,15 @@ async function insertRichEditorHtml(
  * A link matches when its href, resolved against the page's PUBLIC address and keyed the way
  * Varys's crawler keys addresses (lower-case scheme and host, no fragment, no trailing slash on
  * a path longer than "/"), equals `url` keyed the same way. Both sides go through the browser's
- * URL parser, so differences in encoding and default ports cancel out. CKEditor keeps the href
- * as written in `data-cke-saved-href`, which is read first.
+ * URL parser, so differences in encoding and default ports cancel out. A host and its `www.`
+ * twin are one address here, as they are when Varys reads the page: a form edited on the bare
+ * host resolves relative links to it, while Varys reports the www. site it crawled. CKEditor
+ * keeps the href as written in `data-cke-saved-href`, which is read first.
  *
  * Show me focuses the editor, selects the first match, scrolls to it and outlines every match
  * for a few seconds. The outline is a `data-cke-` attribute, which CKEditor drops from the data
- * it saves, so it can never end up in the page. Remove link unwraps every match, keeping its
+ * it saves, so it can never end up in the page. Its stylesheet goes into the editing frame's
+ * document, by id, whenever it is not there: setData (Undo) rewrites the frame, head and all. Remove link unwraps every match, keeping its
  * words, around two undo snapshots (so CKEditor's own Undo can take it back too), and syncs the
  * textarea. Neither saves. A body showing its source has no links to find: 'no-editor'.
  */
@@ -331,9 +334,8 @@ async function richEditorLink(
             instances?: Record<string, {
               mode?: string;
               document?: {
-                $?: Record<string, unknown> | null;
+                $?: Document | null;
                 find(selector: string): { count(): number; getItem(index: number): Link };
-                appendStyleText?(css: string): unknown;
               } | null;
               getSelection(): { selectElement?(element: Link): void } | null;
               focus(): void;
@@ -350,6 +352,7 @@ async function richEditorLink(
             const parsed = new URL(raw.trim(), base);
             if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
             parsed.hash = '';
+            parsed.hostname = parsed.hostname.replace(/^www\./, '');
             if (parsed.pathname.length > 1) parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
             return parsed.href;
           } catch {
@@ -372,10 +375,13 @@ async function richEditorLink(
 
           if (action === 'show') {
             const MARK = 'data-cke-varys-shown';
-            const native = doc.$;
-            if (!native?.__varysShownStyle) {
-              doc.appendStyleText?.(`a[${MARK}]{outline:3px solid #d97706;outline-offset:2px;border-radius:2px}`);
-              if (native) native.__varysShownStyle = true;
+            const STYLE_ID = 'd7-varys-shown-style';
+            const frame = doc.$;
+            if (frame && typeof frame.getElementById === 'function' && !frame.getElementById(STYLE_ID)) {
+              const style = frame.createElement('style');
+              style.id = STYLE_ID;
+              style.textContent = `a[${MARK}]{outline:3px solid #d97706;outline-offset:2px;border-radius:2px}`;
+              (frame.head ?? frame.documentElement)?.appendChild(style);
             }
             for (const link of matches) link.setAttribute(MARK, '1');
             setTimeout(() => {

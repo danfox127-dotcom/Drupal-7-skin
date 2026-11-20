@@ -160,12 +160,12 @@ function editorDocument(inst) {
     };
   }
   return {
+    // The editing frame's own document, which holds the frame's stylesheets.
     $: inst._native,
     find: function (selector) {
       var list = host.querySelectorAll(selector);
       return { count: function () { return list.length; }, getItem: function (i) { return wrap(list[i]); } };
-    },
-    appendStyleText: function () {}
+    }
   };
 }
 window.CKEDITOR = {
@@ -194,10 +194,11 @@ window.CKEDITOR = {
     ta.style.display = 'none';
     ta.parentNode.insertBefore(container, ta);
     var inst = {
-      _data: ta.value, _c: container, _t: ta, _native: {},
+      _data: ta.value, _c: container, _t: ta, _native: document.implementation.createHTMLDocument(''),
       get document() { return editorDocument(this); },
       getData: function () { return this._data; },
-      setData: function (v) { this._data = v; },
+      // As CKEditor 4's wysiwyg setData, which rewrites the whole editing frame: its head goes too.
+      setData: function (v) { this._data = v; this._native.head.innerHTML = ''; },
       updateElement: function () { this._t.value = this._data; },
       fire: function () {},
       // As in node-add-news-ckeditor.html: one range, and insertHtml recorded. selectElement

@@ -62,8 +62,11 @@ export interface BrokenLinkRow {
   /** For a mistyped address, what it probably meant. */
   suggestion: string | null;
   state: 'broken' | 'moved';
-  /** `not-in-body`: it comes from a listing, block or menu, so the panel cannot reach it. */
-  placement: 'in-body' | 'not-in-body';
+  /**
+   * `not-in-body`: it comes from a listing, block or menu, so the panel cannot reach it.
+   * `not-in-editor`: Varys saw it in the body, but the editor does not have it now.
+   */
+  placement: 'in-body' | 'not-in-body' | 'not-in-editor';
   /** `remove` offers Show me and Remove link, `undo` offers Undo, `none` no button. */
   action: 'remove' | 'undo' | 'none';
   /** What the last button did, in words, or null. */
@@ -127,6 +130,7 @@ export const KEEPS_ADDRESS_COPY = 'Using this title keeps the current web addres
 export const LET_ADDRESS_CHANGE_COPY = 'Let the address change instead';
 export const doctorCopy = (fullName: string) => `Named in this article but not in Related Profiles: ${fullName}`;
 export const NOT_IN_TEXT_COPY = "Not in this page's text; it comes from a listing or block. Ask the web team.";
+export const NOT_IN_EDITOR_COPY = 'Not in the body now. The page may have changed since Varys last checked it.';
 export const mistypedCopy = (suggestion: string) => `Mistyped: probably meant ${suggestion}`;
 
 /**
@@ -282,7 +286,8 @@ function BrokenLinkItem({ row, onShowLink, onRemoveLink, onUndoRemove }: { row: 
       <p className="mt-0.5 text-help text-ink-help break-all">{row.url}</p>
       <p className="mt-0.5 text-help text-ink-secondary">{row.since ? `${row.reasonText} · since ${row.since}` : row.reasonText}</p>
       {row.suggestion && <p className="mt-0.5 text-help text-ink-secondary break-all">{mistypedCopy(row.suggestion)}</p>}
-      {!reachable && <p className="mt-1 text-help text-ink">{NOT_IN_TEXT_COPY}</p>}
+      {row.placement === 'not-in-body' && <p className="mt-1 text-help text-ink">{NOT_IN_TEXT_COPY}</p>}
+      {row.placement === 'not-in-editor' && <p className="mt-1 text-help text-ink">{NOT_IN_EDITOR_COPY}</p>}
       {row.message && <p role="status" className="mt-1 text-help text-ink">{row.message}</p>}
     </div>
   );

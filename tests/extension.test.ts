@@ -7105,6 +7105,45 @@ test.describe('Varys suggestions: panel', () => {
       expect(await editorData(page)).toBe(LINKED);
       expect(await page.locator(`#${BODY_ID}`).inputValue()).toBe(LINKED);
     });
+
+    test('show me outlines again after the body is put back', async ({ page, context, extensionId, settings }) => {
+      await settings({ nodeEditor: false });
+      await openSpecialty(page, LINKED);
+      /** The outline's stylesheets in the editing frame's own document. */
+      const styles = () => page.evaluate(id =>
+        (window as any).CKEDITOR.instances[id]._native.head.querySelectorAll('style').length, BODY_ID);
+      const show = () => asContentScript(page, context, extensionId,
+        { type: 'showRichEditorLink', elementId: BODY_ID, url: DEAD, pageUrl: PAGE_URL });
+
+      await show();
+      await show();
+      expect(await styles()).toBe(1);
+      // Undo puts the body back with setData, which rewrites the whole editing frame, head and all.
+      const removed = await asContentScript(page, context, extensionId,
+        { type: 'unlinkRichEditorLink', elementId: BODY_ID, url: DEAD, pageUrl: PAGE_URL }) as { before: string; after: string };
+      await asContentScript(page, context, extensionId,
+        { type: 'restoreRichEditorHtml', elementId: BODY_ID, html: removed.before, expected: removed.after });
+      expect(await styles()).toBe(0);
+
+      expect(await show()).toEqual({ result: 'shown' });
+      expect(await styles()).toBe(1);
+    });
+
+    test('matches a relative href on a form edited on the bare host', async ({ page, context, extensionId, settings }) => {
+      await settings({ nodeEditor: false });
+      await openSpecialty(page, LINKED);
+
+      // Opened on cuimc.columbia.edu, so the page's address has no www., while Varys crawled and
+      // reports the www. site: relative links resolve to the bare host and are still the same address.
+      const reply = await asContentScript(page, context, extensionId, {
+        type: 'showRichEditorLink', elementId: BODY_ID, url: DEAD,
+        pageUrl: 'https://cuimc.columbia.edu/specialties/substance-use-disorders',
+      });
+
+      expect(reply).toEqual({ result: 'shown' });
+      expect((await recorded(page, '__marked') as [string, string][]).map(([href]) => href))
+        .toEqual(['/our-faculty', 'https://WWW.cuimc.columbia.edu/our-faculty/#list']);
+    });
   });
 
   /**
@@ -7114,6 +7153,7 @@ test.describe('Varys suggestions: panel', () => {
   test.describe('broken links in the panel', () => {
     const BODY_ID = 'edit-body-und-0-value';
     const NOT_IN_TEXT = "Not in this page's text; it comes from a listing or block. Ask the web team.";
+    const NOT_IN_BODY_NOW = 'Not in the body now. The page may have changed since Varys last checked it.';
     const REMOVED = 'Removed. Press Save to keep it.';
     const DEAD = 'https://www.cuimc.columbia.edu/our-faculty';
     const deadLink = {
@@ -7267,10 +7307,34 @@ test.describe('Varys suggestions: panel', () => {
         await expect(row.getByText(NOT_IN_TEXT)).toBeVisible();
         await expect(row.getByRole('button')).toHaveCount(0);
       }
+      // Varys saw it in the body, so it is not from a listing: the body has changed since Varys
+      // last checked (removed by hand, a save Varys has not re-read). It says that instead.
       const row = linkRow(page, 3, 'our faculty');
       await row.getByRole('button', { name: 'Show me' }).click();
-      await expect(row.getByText(NOT_IN_TEXT)).toBeVisible();
+      await expect(row.getByText(NOT_IN_BODY_NOW)).toBeVisible();
+      await expect(row.getByText(NOT_IN_TEXT)).toHaveCount(0);
       await expect(row.getByRole('button')).toHaveCount(0);
+    });
+
+    test("the editor's own undo puts the row back, and the save reports no removal", async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      const calls = await stubVarys(context, withLinks({ status: 200, body: linksAnswer([deadLink]) }));
+      await saveLands(context, SPECIALTY);
+      await open(page, SPECIALTY);
+      await expect(page.locator('form[data-d7-varys-capture]')).toHaveCount(1);
+      await setBody(page, LINKED);
+      const row = linkRow(page, 1, 'our faculty');
+      await row.getByRole('button', { name: 'Remove link' }).click();
+      await expect(row.getByRole('button', { name: 'Undo' })).toBeVisible();
+
+      // Ctrl+Z in CKEditor: the body is exactly what it was before the removal.
+      await setBody(page, LINKED);
+
+      await expect(row.getByRole('button', { name: 'Remove link' })).toBeVisible();
+      await expect(row.getByText(REMOVED)).toHaveCount(0);
+      await submit(page);
+      await expect.poll(() => savesIn(calls).length).toBe(1);
+      expect(savesIn(calls)[0].body.varys_filled).toEqual([]);
     });
 
     test('unchecked page shows no section', async ({ page, context, settings }) => {
