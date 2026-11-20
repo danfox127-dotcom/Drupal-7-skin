@@ -1,11 +1,12 @@
 # Privacy Policy — D7 Studio (D7 Admin Proxy UI)
 
-**Last updated:** 22 October 2026
+**Last updated:** 20 November 2026
 **Applies to:** the "D7 Admin Proxy UI" Chrome extension, all versions from 0.2.2. The
 section "If you connect it to Varys" applies only to versions that have a **Connect to
 Varys** button; earlier versions have no such connection and send nothing to Varys. What it
 says about suggestions applies only to versions that show the Varys suggestions panel in the
-edit form; earlier versions never ask Varys for suggestions.
+edit form; earlier versions never ask Varys for suggestions. What it says about broken links
+applies only to versions from 0.8.0; earlier versions never ask Varys for them.
 
 ## The short version
 
@@ -238,8 +239,9 @@ one request to `https://varys.fly.dev` containing exactly this:
 - **Which fields you filled from Varys**, if any: some of the page title, search title,
   description (Summary, for a new page) and headings, as the suggestions panel described below
   filled them, and the body and Related Profiles, as the drafts panel on a new page filled
-  them. Only those six names are sent, and a field you put back with Undo is not listed.
-  Varys shows it beside the change.
+  them, and that you removed a broken link with the panel's **Remove link**. Only those seven
+  names are sent, and a field you put back with Undo is not listed. Varys shows it beside the
+  change.
 - **Which button you pressed**: Publish, Save draft, or a plain Save.
 - **Who saved it, and when.** The request carries your key, and Varys knows which account
   the key belongs to; the extension does not send your name or email with it. Varys records
@@ -271,6 +273,10 @@ noted:
   extension asks again with the same address every few seconds, for up to 3 minutes. Nothing
   from the form is sent for this; Varys writes the suggestions from its own reading of the
   site.
+- **Broken links, when you open a page's edit form.** Alongside the suggestions request, and
+  under the same conditions, the extension sends the same **page's public address**, in the
+  address of the request, to ask for the broken links Varys has found on that page. Nothing
+  from the form goes with it.
 - **Your drafts, when you open a new page's form.** On the form for a new page (an add
   form) on a site Varys tracks, the extension asks Varys for **your** recent drafts for
   that site: the ones you made in Draft Assistant. Only the **site's address** is sent (for
@@ -300,6 +306,13 @@ page, and the names of any doctors the page's article names, as Columbia's physi
 directory has them (the list may be empty). The panel shows the suggestions beside what the form holds now, and shows the headings
 from Varys's copy as the headings on the page now. The extension does not store the answer:
 it is held in the page only while the panel is open.
+
+Varys answers a broken-links request with the page's links it found dead or probably moved,
+and nothing else: for each, its address, its words, whether it is in the page's own text, what
+happened, since when, and for a mistyped address on the same site, what it probably meant. It
+is held in the page only while the panel is open. **Show me** and **Remove link** work only on
+the body's editor in your browser and send nothing to Varys; Remove link never saves, and a
+save you make afterwards says that a broken link was removed (see above).
 
 - **It fills a form field only when you press Use** (or Add, for a doctor: see below), and
   only the page title, search title or search description (or Summary, when the page's

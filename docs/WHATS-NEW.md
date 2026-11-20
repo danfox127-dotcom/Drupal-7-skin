@@ -276,13 +276,23 @@ right now. Click its title bar to fold it away.
   otherwise it adds nobody and says why. **Undo** empties the row it filled, as long as you
   have not changed it. It never saves. Unlike the other fills, an Add is not kept across a
   Preview or a save Drupal sends back with an error: Undo ends there.
+- **Broken links.** The panel now lists the page's broken links: for each, its words, its
+  address, what happened and since when. Links that have probably moved are listed apart, and
+  not counted. **Show me** finds each one in the text; **Remove link** unlinks it and keeps
+  the words. Press Save to keep the change: like every panel button, it never saves.
+  **Undo** puts the link back, as long as you have not changed the body since; only your last
+  removal can be undone this way (the editor's own undo can take back more), and a removal
+  is not kept across a Preview. A link that is not in the page's own text (it comes from a
+  listing, a sidebar block or the menu) says so and offers no buttons: ask the web team.
+  Nothing is shown until Varys has checked the page's links, and it calls a link broken only
+  after two checks at least a day apart.
 - **When you save, Varys is told which fields you filled from its suggestions** (title,
-  search title, description, headings, Related Profiles; not one you put back with Undo), and shows "Filled from
-  Varys: …" beside the change, so you can later see whether a suggestion that went live
-  worked.
+  search title, description, headings, Related Profiles, or a broken link you removed; not one
+  you put back with Undo), and shows "Filled from Varys: …" beside the change, so you can
+  later see whether a suggestion that went live worked.
 
 **What is sent for this.** When you open the form, the page's public address goes to Varys,
-to fetch its suggestions (if the form does not show that address, the extension first reads
+to fetch its suggestions and its broken links (if the form does not show that address, the extension first reads
 the page itself on the same site to learn it); **Ask Varys** sends the same address so that
 Varys can write them. Nothing from the form goes with either, and nothing is sent for a site
 Varys does not track, for a new page, or while you are not connected. (Pressing Add on a
