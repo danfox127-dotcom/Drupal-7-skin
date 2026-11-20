@@ -6646,11 +6646,13 @@ test.describe('Varys suggestions: panel', () => {
     await expect(undoButton(page, STEELE)).toHaveCount(0);
     await expect(panel(page).getByRole('group', { name: NAMED })).toHaveCount(1);
 
-    // Offering is not doing: nothing written, nothing asked of the site, nothing more sent to Varys.
+    // Offering is not doing: nothing written, nothing asked of the site, and nothing sent to
+    // Varys beyond what opening the panel asks (the sites list, suggestions, broken links).
     expect(await page.inputValue(profileRow(0))).toBe(ROE_IN_FORM);
     expect(await page.inputValue(profileRow(1))).toBe('');
     expect(asked).toEqual([]);
-    expect(calls.filter(c => c.path !== '/api/extension/connection' && !c.path.startsWith('/api/extension/suggestions'))).toEqual([]);
+    expect(calls.filter(c => c.path !== '/api/extension/connection' && !c.path.startsWith('/api/extension/suggestions')
+      && c.path !== '/api/extension/broken-links')).toEqual([]);
   });
 
   test('no row when every doctor the article names is already in Related Profiles, or it names none', async ({ page, context, settings }) => {
