@@ -35,6 +35,9 @@ import {
   type DraftFailureReason, type DraftReply, type DraftsReply, type RichEditorAllowsRequest,
   type RichEditorAllowsResponse, type VarysDraftRequest, type VarysDraftsRequest,
 } from '../lib/varys/drafts';
+import {
+  parseBrokenLinksAnswer, type BrokenLinksAnswer, type VarysBrokenLinksRequest,
+} from '../lib/varys/brokenLinks';
 import { showVarysNotice } from '../lib/varys/notice';
 import {
   parseSuggestionsAnswer,
@@ -1149,6 +1152,30 @@ async function draftsFor(request: VarysDraftsRequest): Promise<DraftsReply> {
 }
 
 /**
+ * A page's broken links, for the panel's "Broken links" section. The same steps as the drafts
+ * list, in the same order, so the page's address leaves the browser under the same conditions.
+ * Every way of not having an answer is `error`: the panel shows the section only for `ok`, and
+ * the suggestions request beside it already tells the person when Varys is not connected or
+ * unreachable. A 401 still marks the key expired.
+ */
+async function brokenLinksFor(request: VarysBrokenLinksRequest): Promise<BrokenLinksAnswer> {
+  const { pageUrl } = request;
+  const gate = await draftGate(pageUrl);
+  if ('stop' in gate) return gate.stop.ok ? { kind: 'not_tracked' } : { kind: 'error' };
+
+  const answer = await callVarys(gate.connection, 'GET', `/api/extension/broken-links?page_url=${encodeURIComponent(pageUrl)}`);
+  if (succeeded(answer)) {
+    const parsed = parseBrokenLinksAnswer(answer.json);
+    if (parsed.kind === 'error') {
+      console.warn('[D7 Studio] Varys answered broken links with a shape this version does not know', answer.json);
+    }
+    return parsed;
+  }
+  await draftFailure(gate.connection, answer);
+  return { kind: 'error' };
+}
+
+/**
  * One of those drafts, ready to fill in. The same steps as the list, and a 404 is Varys saying
  * it has no such draft for this person (gone, or never theirs), which the panel tells apart
  * from Varys being down. The words for it are the extension's own: Varys's `detail` for a 404
@@ -1234,7 +1261,7 @@ chrome.runtime.onMessage.addListener((
     | CheckForUpdateRequest | ReadRichEditorRequest | VarysStatusRequest | VarysDisconnectRequest
     | VarysFormOpenedMessage | VarysSubmitMessage | VarysActionRequest | VarysSuggestionsRequest
     | InsertRichEditorHtmlRequest | VarysCarryFillsMessage | VarysCarriedFillsRequest | VarysSiteTrackedRequest
-    | VarysDraftsRequest | VarysDraftRequest | RichEditorAllowsRequest,
+    | VarysDraftsRequest | VarysDraftRequest | RichEditorAllowsRequest | VarysBrokenLinksRequest,
   sender,
   sendResponse
 ) => {
@@ -1312,13 +1339,20 @@ chrome.runtime.onMessage.addListener((
    */
   const pageRequest = message?.type === 'varysSiteTracked' || message?.type === 'varysSuggestions'
     || message?.type === 'varysGenerateSuggestions' || message?.type === 'varysDrafts'
-    || message?.type === 'varysDraft';
+    || message?.type === 'varysDraft' || message?.type === 'varysBrokenLinks';
   if (pageRequest && !pageIsSenders(message.pageUrl, sender)) {
     console.warn('[D7 Studio] Varys: a page request named a page other than its own, so nothing was sent.');
     sendResponse(message.type === 'varysSiteTracked'
       ? { tracked: false } satisfies VarysSiteTrackedResponse
-      : { ok: true, answer: { status: 'not_tracked' } });
+      : message.type === 'varysBrokenLinks'
+        ? { kind: 'not_tracked' } satisfies BrokenLinksAnswer
+        : { ok: true, answer: { status: 'not_tracked' } });
     return false;
+  }
+
+  if (message?.type === 'varysBrokenLinks') {
+    void brokenLinksFor(message).then(sendResponse);
+    return true;
   }
 
   if (message?.type === 'varysSiteTracked') {
