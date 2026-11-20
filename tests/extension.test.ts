@@ -6978,6 +6978,132 @@ test.describe('Varys suggestions: panel', () => {
     await expect.poll(() => savesIn(calls).length).toBe(1);
     expect(savesIn(calls)[0].body.varys_filled).toEqual(['related_profiles']);
   });
+
+  /**
+   * The worker's CKEditor 4 helpers behind Show me and Remove link: they find a dead address's
+   * links in the body by what each href resolves to on the public page, which is how Varys
+   * found them, and never save. The Specialty form's stub records what was selected,
+   * scrolled to, marked and unwrapped.
+   */
+  test.describe('broken links: finding and unlinking in the body', () => {
+    const BODY_ID = 'edit-body-und-0-value';
+    /** The Specialty page's public address, which relative hrefs in its body resolve against. */
+    const PAGE_URL = `${HOST}/specialties/substance-use-disorders`;
+    const DEAD = 'https://www.cuimc.columbia.edu/our-faculty';
+    /** One dead address linked twice (relative, and absolute with a fragment, a trailing slash and
+     *  an upper-case host), and a live link that must be left alone. */
+    const LINKED = '<p>See <a href="/our-faculty"><strong>our</strong> faculty</a> and the '
+      + '<a href="https://WWW.cuimc.columbia.edu/our-faculty/#list">full list</a>.</p>'
+      + '<p>Also <a href="/about">about us</a>.</p>';
+    const UNLINKED = '<p>See <strong>our</strong> faculty and the full list.</p>'
+      + '<p>Also <a href="/about">about us</a>.</p>';
+
+    const openSpecialty = async (page: Page, body: string) => {
+      await page.goto(SPECIALTY);
+      await expect(page.locator(`#${BODY_ID}`)).toHaveCount(1);
+      await page.evaluate(([id, html]) => {
+        const w = window as any;
+        w.CKEDITOR.instances[id]._data = html;
+        w.__shown = []; w.__scrolled = []; w.__marked = []; w.__unlinked = [];
+      }, [BODY_ID, body] as const);
+    };
+    const editorData = (page: Page) => page.evaluate(id => (window as any).CKEDITOR.instances[id].getData(), BODY_ID);
+    const recorded = (page: Page, name: '__shown' | '__scrolled' | '__marked' | '__unlinked') =>
+      page.evaluate(n => (window as any)[n], name);
+
+    test('show me highlights the matching link', async ({ page, context, extensionId, settings }) => {
+      await settings({ nodeEditor: false });
+      const body = '<p>Read <a href="https://www.example.org/gone">the report</a> and '
+        + '<a href="https://www.example.org/kept">this one</a>.</p>';
+      await openSpecialty(page, body);
+
+      const reply = await asContentScript(page, context, extensionId,
+        { type: 'showRichEditorLink', elementId: BODY_ID, url: 'https://www.example.org/gone', pageUrl: PAGE_URL });
+
+      expect(reply).toEqual({ result: 'shown' });
+      expect(await recorded(page, '__shown')).toEqual(['https://www.example.org/gone']);
+      expect(await recorded(page, '__scrolled')).toEqual(['https://www.example.org/gone']);
+      // Marked with an attribute CKEditor drops from what it saves, so the highlight can never be saved.
+      const marked: [string, string][] = await recorded(page, '__marked');
+      expect(marked.map(([href]) => href)).toEqual(['https://www.example.org/gone']);
+      expect(marked.every(([, attr]) => attr.startsWith('data-cke-'))).toBe(true);
+      expect(await editorData(page)).toBe(body);
+    });
+
+    test('matches a relative href against the absolute address', async ({ page, context, extensionId, settings }) => {
+      await settings({ nodeEditor: false });
+      await openSpecialty(page, LINKED);
+
+      const reply = await asContentScript(page, context, extensionId,
+        { type: 'showRichEditorLink', elementId: BODY_ID, url: DEAD, pageUrl: PAGE_URL });
+
+      expect(reply).toEqual({ result: 'shown' });
+      // The first is selected and scrolled to; both are marked; /about is not.
+      expect(await recorded(page, '__shown')).toEqual(['/our-faculty']);
+      expect(await recorded(page, '__scrolled')).toEqual(['/our-faculty']);
+      expect((await recorded(page, '__marked') as [string, string][]).map(([href]) => href))
+        .toEqual(['/our-faculty', 'https://WWW.cuimc.columbia.edu/our-faculty/#list']);
+    });
+
+    test('unlinks every matching link and keeps the words', async ({ page, context, extensionId, settings }) => {
+      await settings({ nodeEditor: false });
+      await openSpecialty(page, LINKED);
+
+      const reply = await asContentScript(page, context, extensionId,
+        { type: 'unlinkRichEditorLink', elementId: BODY_ID, url: DEAD, pageUrl: PAGE_URL });
+
+      expect(reply).toEqual({ result: 'removed', count: 2, before: LINKED, after: UNLINKED });
+      expect(await recorded(page, '__unlinked')).toEqual(['/our-faculty', 'https://WWW.cuimc.columbia.edu/our-faculty/#list']);
+      expect(await editorData(page)).toBe(UNLINKED);
+      // updateElement() ran, so the textarea the form submits has it too; nothing was submitted.
+      expect(await page.locator(`#${BODY_ID}`).inputValue()).toBe(UNLINKED);
+      expect(page.url()).toBe(SPECIALTY);
+    });
+
+    test('link not in the body is not-found', async ({ page, context, extensionId, settings }) => {
+      await settings({ nodeEditor: false });
+      await openSpecialty(page, LINKED);
+      const elsewhere = { url: 'https://www.cuimc.columbia.edu/somewhere-else', pageUrl: PAGE_URL };
+
+      expect(await asContentScript(page, context, extensionId, { type: 'showRichEditorLink', elementId: BODY_ID, ...elsewhere }))
+        .toEqual({ result: 'not-found' });
+      expect(await asContentScript(page, context, extensionId, { type: 'unlinkRichEditorLink', elementId: BODY_ID, ...elsewhere }))
+        .toEqual({ result: 'not-found', count: 0, before: null, after: null });
+      expect(await editorData(page)).toBe(LINKED);
+      expect(await recorded(page, '__shown')).toEqual([]);
+      expect(await recorded(page, '__unlinked')).toEqual([]);
+
+      // And a field with no editor says so, rather than not-found.
+      const missing = { elementId: 'edit-nothing-here', url: DEAD, pageUrl: PAGE_URL };
+      expect(await asContentScript(page, context, extensionId, { type: 'showRichEditorLink', ...missing }))
+        .toEqual({ result: 'no-editor' });
+      expect(await asContentScript(page, context, extensionId, { type: 'unlinkRichEditorLink', ...missing }))
+        .toEqual({ result: 'no-editor', count: 0, before: null, after: null });
+    });
+
+    test('restore refuses after the body changed', async ({ page, context, extensionId, settings }) => {
+      await settings({ nodeEditor: false });
+      await openSpecialty(page, LINKED);
+      const removed = await asContentScript(page, context, extensionId,
+        { type: 'unlinkRichEditorLink', elementId: BODY_ID, url: DEAD, pageUrl: PAGE_URL }) as { before: string; after: string };
+      // The person types after the removal.
+      const typed = UNLINKED + '<p>Typed since.</p>';
+      await page.evaluate(([id, html]) => { (window as any).CKEDITOR.instances[id]._data = html; }, [BODY_ID, typed] as const);
+
+      expect(await asContentScript(page, context, extensionId,
+        { type: 'restoreRichEditorHtml', elementId: BODY_ID, html: removed.before, expected: removed.after }))
+        .toEqual({ result: 'changed' });
+      expect(await editorData(page)).toBe(typed);
+
+      // Unchanged since, it restores, into the textarea too.
+      await page.evaluate(([id, html]) => { (window as any).CKEDITOR.instances[id]._data = html; }, [BODY_ID, removed.after] as const);
+      expect(await asContentScript(page, context, extensionId,
+        { type: 'restoreRichEditorHtml', elementId: BODY_ID, html: removed.before, expected: removed.after }))
+        .toEqual({ result: 'restored' });
+      expect(await editorData(page)).toBe(LINKED);
+      expect(await page.locator(`#${BODY_ID}`).inputValue()).toBe(LINKED);
+    });
+  });
 });
 
 test.describe('Varys drafts: panel', () => {

@@ -36,7 +36,9 @@ import {
   type RichEditorAllowsResponse, type VarysDraftRequest, type VarysDraftsRequest,
 } from '../lib/varys/drafts';
 import {
-  parseBrokenLinksAnswer, type BrokenLinksAnswer, type VarysBrokenLinksRequest,
+  parseBrokenLinksAnswer, type BrokenLinksAnswer, type RestoreRichEditorHtmlRequest, type RestoreRichEditorHtmlResponse,
+  type ShowRichEditorLinkRequest, type ShowRichEditorLinkResponse, type UnlinkRichEditorLinkRequest,
+  type UnlinkRichEditorLinkResponse, type VarysBrokenLinksRequest,
 } from '../lib/varys/brokenLinks';
 import { showVarysNotice } from '../lib/varys/notice';
 import {
@@ -281,6 +283,179 @@ async function insertRichEditorHtml(
   } catch (err) {
     console.warn('[D7 Studio] Could not insert into the rich text editor', err);
     return { ok: false, result: 'error' };
+  }
+}
+
+/**
+ * Show me and Remove link, in a field's CKEditor 4 body (one injection, so one rule for which
+ * links are the dead address's).
+ *
+ * A link matches when its href, resolved against the page's PUBLIC address and keyed the way
+ * Varys's crawler keys addresses (lower-case scheme and host, no fragment, no trailing slash on
+ * a path longer than "/"), equals `url` keyed the same way. Both sides go through the browser's
+ * URL parser, so differences in encoding and default ports cancel out. CKEditor keeps the href
+ * as written in `data-cke-saved-href`, which is read first.
+ *
+ * Show me focuses the editor, selects the first match, scrolls to it and outlines every match
+ * for a few seconds. The outline is a `data-cke-` attribute, which CKEditor drops from the data
+ * it saves, so it can never end up in the page. Remove link unwraps every match, keeping its
+ * words, around two undo snapshots (so CKEditor's own Undo can take it back too), and syncs the
+ * textarea. Neither saves. A body showing its source has no links to find: 'no-editor'.
+ */
+/** What one injection did: Show me answers `shown`, Remove link `removed`. */
+type RichEditorLinkReply = Omit<UnlinkRichEditorLinkResponse, 'result'> & {
+  result: UnlinkRichEditorLinkResponse['result'] | 'shown';
+};
+
+async function richEditorLink(
+  tabId: number, op: 'show' | 'unlink', elementId: unknown, url: unknown, pageUrl: unknown,
+): Promise<RichEditorLinkReply> {
+  const nothing = (result: RichEditorLinkReply['result']): RichEditorLinkReply =>
+    ({ result, count: 0, before: null, after: null });
+  if (typeof elementId !== 'string' || typeof url !== 'string' || typeof pageUrl !== 'string') return nothing('error');
+  try {
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      args: [op, elementId, url, pageUrl],
+      func: (action: string, id: string, address: string, base: string) => {
+        type Link = {
+          getAttribute(name: string): string | null;
+          setAttribute(name: string, value: string): void;
+          removeAttribute(name: string): void;
+          remove(keepChildren?: boolean): void;
+          scrollIntoView(): void;
+        };
+        const w = window as unknown as {
+          CKEDITOR?: {
+            instances?: Record<string, {
+              mode?: string;
+              document?: {
+                $?: Record<string, unknown> | null;
+                find(selector: string): { count(): number; getItem(index: number): Link };
+                appendStyleText?(css: string): unknown;
+              } | null;
+              getSelection(): { selectElement?(element: Link): void } | null;
+              focus(): void;
+              fire?(name: string): unknown;
+              getData(): string;
+              updateElement(): void;
+            }>;
+          };
+        };
+        const nothing = (result: string) => ({ result, count: 0, before: null, after: null });
+        const key = (raw: string | null): string | null => {
+          if (!raw) return null;
+          try {
+            const parsed = new URL(raw.trim(), base);
+            if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null;
+            parsed.hash = '';
+            if (parsed.pathname.length > 1) parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+            return parsed.href;
+          } catch {
+            return null;
+          }
+        };
+        try {
+          const ck = w.CKEDITOR?.instances?.[id];
+          const doc = ck?.document;
+          if (!ck || !doc || (ck.mode !== undefined && ck.mode !== 'wysiwyg')) return nothing('no-editor');
+          const wanted = key(address);
+          const links = doc.find('a');
+          const matches: Link[] = [];
+          for (let i = 0; i < links.count(); i++) {
+            const link = links.getItem(i);
+            const href = key(link.getAttribute('data-cke-saved-href') ?? link.getAttribute('href'));
+            if (wanted !== null && href === wanted) matches.push(link);
+          }
+          if (matches.length === 0) return nothing('not-found');
+
+          if (action === 'show') {
+            const MARK = 'data-cke-varys-shown';
+            const native = doc.$;
+            if (!native?.__varysShownStyle) {
+              doc.appendStyleText?.(`a[${MARK}]{outline:3px solid #d97706;outline-offset:2px;border-radius:2px}`);
+              if (native) native.__varysShownStyle = true;
+            }
+            for (const link of matches) link.setAttribute(MARK, '1');
+            setTimeout(() => {
+              for (const link of matches) {
+                try { link.removeAttribute(MARK); } catch { /* the editor has since been rebuilt */ }
+              }
+            }, 4000);
+            ck.focus();
+            ck.getSelection()?.selectElement?.(matches[0]);
+            matches[0].scrollIntoView();
+            return { result: 'shown', count: matches.length, before: null, after: null };
+          }
+
+          const before = ck.getData();
+          ck.fire?.('saveSnapshot');
+          for (const link of matches) link.remove(true);
+          ck.fire?.('saveSnapshot');
+          // The textarea is what the form submits, and CKEditor only syncs it on submit.
+          ck.updateElement();
+          return { result: 'removed', count: matches.length, before, after: ck.getData() };
+        } catch {
+          return nothing('error');
+        }
+      },
+    });
+    const reply = injection?.result as RichEditorLinkReply | undefined;
+    const known = ['shown', 'removed', 'not-found', 'no-editor', 'error'];
+    return reply && known.includes(reply.result as string) ? reply : nothing('error');
+  } catch (err) {
+    console.warn('[D7 Studio] Could not find the link in the rich text editor', err);
+    return nothing('error');
+  }
+}
+
+/**
+ * Undo for Remove link: puts `html` back in the field's CKEditor 4 body, but only while the
+ * body still holds `expected`, what the removal left. Typed since, the change is the person's
+ * own and nothing is put back: 'changed'. Never saves.
+ */
+async function restoreRichEditorHtml(
+  tabId: number, elementId: unknown, html: unknown, expected: unknown,
+): Promise<RestoreRichEditorHtmlResponse> {
+  if (typeof elementId !== 'string' || typeof html !== 'string' || typeof expected !== 'string') return { result: 'error' };
+  try {
+    const [injection] = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      args: [elementId, html, expected],
+      func: (id: string, markup: string, unchanged: string) => {
+        const w = window as unknown as {
+          CKEDITOR?: {
+            instances?: Record<string, {
+              getData(): string;
+              setData(html: string, options?: { callback?: () => void }): void;
+              fire?(name: string): unknown;
+              updateElement(): void;
+            }>;
+          };
+        };
+        try {
+          const ck = w.CKEDITOR?.instances?.[id];
+          if (!ck) return 'no-editor';
+          if (ck.getData() !== unchanged) return 'changed';
+          ck.fire?.('saveSnapshot');
+          // setData loads asynchronously into the editing frame: sync the textarea once it has.
+          ck.setData(markup, { callback: () => ck.updateElement() });
+          ck.updateElement();
+          return 'restored';
+        } catch {
+          return 'error';
+        }
+      },
+    });
+    const result = injection?.result;
+    return result === 'restored' || result === 'changed' || result === 'no-editor'
+      ? { result }
+      : { result: 'error' };
+  } catch (err) {
+    console.warn('[D7 Studio] Could not restore the rich text editor', err);
+    return { result: 'error' };
   }
 }
 
@@ -1261,7 +1436,8 @@ chrome.runtime.onMessage.addListener((
     | CheckForUpdateRequest | ReadRichEditorRequest | VarysStatusRequest | VarysDisconnectRequest
     | VarysFormOpenedMessage | VarysSubmitMessage | VarysActionRequest | VarysSuggestionsRequest
     | InsertRichEditorHtmlRequest | VarysCarryFillsMessage | VarysCarriedFillsRequest | VarysSiteTrackedRequest
-    | VarysDraftsRequest | VarysDraftRequest | RichEditorAllowsRequest | VarysBrokenLinksRequest,
+    | VarysDraftsRequest | VarysDraftRequest | RichEditorAllowsRequest | VarysBrokenLinksRequest
+    | ShowRichEditorLinkRequest | UnlinkRichEditorLinkRequest | RestoreRichEditorHtmlRequest,
   sender,
   sendResponse
 ) => {
@@ -1399,6 +1575,31 @@ chrome.runtime.onMessage.addListener((
       return false;
     }
     void insertRichEditorHtml(tabId, message.elementId, message.html).then(sendResponse);
+    return true;
+  }
+
+  // Show me / Remove link / Undo: in the sender's own tab, like Insert. Nothing goes to Varys.
+  if (message?.type === 'showRichEditorLink' || message?.type === 'unlinkRichEditorLink') {
+    const tabId = sender.tab?.id;
+    const op = message.type === 'showRichEditorLink' ? 'show' : 'unlink';
+    const reply = (r: RichEditorLinkReply) => (op === 'show'
+      ? sendResponse({ result: r.result === 'removed' ? 'error' : r.result } satisfies ShowRichEditorLinkResponse)
+      : sendResponse({ ...r, result: r.result === 'shown' ? 'error' : r.result } satisfies UnlinkRichEditorLinkResponse));
+    if (tabId === undefined) {
+      reply({ result: 'error', count: 0, before: null, after: null });
+      return false;
+    }
+    void richEditorLink(tabId, op, message.elementId, message.url, message.pageUrl).then(reply);
+    return true;
+  }
+
+  if (message?.type === 'restoreRichEditorHtml') {
+    const tabId = sender.tab?.id;
+    if (tabId === undefined) {
+      sendResponse({ result: 'error' } satisfies RestoreRichEditorHtmlResponse);
+      return false;
+    }
+    void restoreRichEditorHtml(tabId, message.elementId, message.html, message.expected).then(sendResponse);
     return true;
   }
 

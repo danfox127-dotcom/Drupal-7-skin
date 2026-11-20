@@ -47,6 +47,55 @@ export interface VarysBrokenLinksRequest {
   pageUrl: string;
 }
 
+/**
+ * Show me: select the first of the body's links to `url`, scroll to it, and outline every one
+ * for a few seconds. `pageUrl` is the page's public address, which relative hrefs resolve
+ * against, as they did for Varys's crawler.
+ */
+export interface ShowRichEditorLinkRequest {
+  type: 'showRichEditorLink';
+  elementId: string;
+  url: string;
+  pageUrl: string;
+}
+
+/**
+ * 'not-found': no link in the body goes there (it comes from a listing or block). 'no-editor':
+ * no CKEditor 4 instance has that id, or it is showing its source rather than the page.
+ */
+export interface ShowRichEditorLinkResponse {
+  result: 'shown' | 'not-found' | 'no-editor' | 'error';
+}
+
+/** Remove link: unwrap every link in the body to `url`, keeping its words. Never saves. */
+export interface UnlinkRichEditorLinkRequest {
+  type: 'unlinkRichEditorLink';
+  elementId: string;
+  url: string;
+  pageUrl: string;
+}
+
+/** `before` and `after` are the editor's data either side of the removal, which Undo needs; null unless removed. */
+export interface UnlinkRichEditorLinkResponse {
+  result: 'removed' | 'not-found' | 'no-editor' | 'error';
+  count: number;
+  before: string | null;
+  after: string | null;
+}
+
+/** Undo: put `html` back, only while the body still holds `expected` (what the removal left). */
+export interface RestoreRichEditorHtmlRequest {
+  type: 'restoreRichEditorHtml';
+  elementId: string;
+  html: string;
+  expected: string;
+}
+
+/** 'changed': the body is no longer what the removal left (the person has typed), so nothing was put back. */
+export interface RestoreRichEditorHtmlResponse {
+  result: 'restored' | 'changed' | 'no-editor' | 'error';
+}
+
 const isText = (v: unknown): v is string => typeof v === 'string';
 const isTextOrNull = (v: unknown): v is string | null => v === null || typeof v === 'string';
 

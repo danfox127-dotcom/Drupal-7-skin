@@ -133,6 +133,41 @@
 </form>
 <script>
 window.__inserted = [];
+// What the broken-link helpers did: selected, scrolled to, marked ([href, attribute]) and unwrapped.
+window.__shown = []; window.__scrolled = []; window.__marked = []; window.__unlinked = [];
+/*
+ * The editing document, as CKEditor 4's editor.document: built afresh from the instance's
+ * data on every read, so the data stays the one thing a test sets. Its elements carry the
+ * slice of CKEDITOR.dom.element the helpers use, and unwrapping one writes the data back.
+ */
+function editorDocument(inst) {
+  var host = document.createElement('div');
+  host.innerHTML = inst._data;
+  function wrap(node) {
+    var href = function () { return node.getAttribute('href'); };
+    return {
+      $: node,
+      getAttribute: function (name) { return node.getAttribute(name); },
+      setAttribute: function (name, value) { node.setAttribute(name, value); window.__marked.push([href(), name]); },
+      removeAttribute: function (name) { node.removeAttribute(name); },
+      scrollIntoView: function () { window.__scrolled.push(href()); },
+      remove: function (preserveChildren) {
+        window.__unlinked.push(href());
+        if (preserveChildren) while (node.firstChild) node.parentNode.insertBefore(node.firstChild, node);
+        node.parentNode.removeChild(node);
+        inst._data = host.innerHTML;
+      }
+    };
+  }
+  return {
+    $: inst._native,
+    find: function (selector) {
+      var list = host.querySelectorAll(selector);
+      return { count: function () { return list.length; }, getItem: function (i) { return wrap(list[i]); } };
+    },
+    appendStyleText: function () {}
+  };
+}
 window.CKEDITOR = {
   instances: {},
   config: { toolbar: ['Bold', 'Italic', 'Link'] },
@@ -159,12 +194,20 @@ window.CKEDITOR = {
     ta.style.display = 'none';
     ta.parentNode.insertBefore(container, ta);
     var inst = {
-      _data: ta.value, _c: container, _t: ta,
+      _data: ta.value, _c: container, _t: ta, _native: {},
+      get document() { return editorDocument(this); },
       getData: function () { return this._data; },
       setData: function (v) { this._data = v; },
       updateElement: function () { this._t.value = this._data; },
-      // As in node-add-news-ckeditor.html: one range, and insertHtml recorded.
-      getSelection: function () { return { getRanges: function () { return [{}]; } }; },
+      fire: function () {},
+      // As in node-add-news-ckeditor.html: one range, and insertHtml recorded. selectElement
+      // records the href of what Show me selected.
+      getSelection: function () {
+        return {
+          getRanges: function () { return [{}]; },
+          selectElement: function (el) { window.__shown.push(el.getAttribute('href')); }
+        };
+      },
       focus: function () {},
       insertHtml: function (html) { window.__inserted.push(html); this._data += html; },
       destroy: function (noUpdate) {
