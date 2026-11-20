@@ -47,7 +47,7 @@ export interface SaveRequest {
   /** Always present: null for a new node, which Varys diffs against an empty page. */
   before: PageState | null;
   after: PageState;
-  /** What the person filled from Varys's panel: Varys keeps title, meta_title, meta_description, headings, body and related_profiles. */
+  /** What the person filled from Varys's panel: Varys keeps title, meta_title, meta_description, headings, body, related_profiles and broken_link. */
   varys_filled: VarysFilledField[];
 }
 

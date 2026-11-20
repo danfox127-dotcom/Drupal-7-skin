@@ -13,13 +13,14 @@
  * for it (`adoptCarriedFills` in suggestionFill.ts). After a save that goes through, nothing
  * is kept, and the reopened form starts with none.
  *
- * Varys keeps only these six (it drops anything else), so this is their whole vocabulary:
- * `body` and `related_profiles` are the two a draft filled into a new page adds, and
- * `meta_description` is also what a draft's Summary is marked as.
+ * Varys keeps only these seven (it drops anything else), so this is their whole vocabulary:
+ * `body` and `related_profiles` are the two a draft filled into a new page adds,
+ * `meta_description` is also what a draft's Summary is marked as, and `broken_link` is a dead
+ * link the panel's Remove link took out of the body (What's Working labels the save for it).
  */
 
 export type VarysFilledField =
-  | 'title' | 'meta_title' | 'meta_description' | 'headings' | 'body' | 'related_profiles';
+  | 'title' | 'meta_title' | 'meta_description' | 'headings' | 'body' | 'related_profiles' | 'broken_link';
 
 const filled = new Set<VarysFilledField>();
 

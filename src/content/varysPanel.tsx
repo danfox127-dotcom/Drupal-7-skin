@@ -22,9 +22,17 @@ import {
 } from '../lib/varys/suggestions';
 import { ACTION_EXPIRED_COPY, ACTION_NOT_CONNECTED_COPY, ACTION_UNREACHABLE_COPY } from '../lib/varys/submissions';
 import {
-  SuggestionsPanel, type DoctorRow, type PanelBody, type SuggestionRow,
+  SuggestionsPanel, type BrokenLinkRow, type DoctorRow, type PanelBody, type SuggestionRow,
 } from '../components/varys/SuggestionsPanel';
-import type { InsertRichEditorHtmlRequest, InsertRichEditorHtmlResponse } from '../background';
+import type {
+  InsertRichEditorHtmlRequest, InsertRichEditorHtmlResponse, ReadRichEditorRequest, ReadRichEditorResponse,
+} from '../background';
+import {
+  reasonText, sinceText,
+  type BrokenLink, type BrokenLinksAnswer, type RestoreRichEditorHtmlRequest, type RestoreRichEditorHtmlResponse,
+  type ShowRichEditorLinkRequest, type ShowRichEditorLinkResponse, type UnlinkRichEditorLinkRequest,
+  type UnlinkRichEditorLinkResponse, type VarysBrokenLinksRequest,
+} from '../lib/varys/brokenLinks';
 
 /**
  * Varys's Page Health suggestions on a live page's edit form, with Use, Undo, Copy and Insert.
@@ -58,6 +66,13 @@ const INSERTED_COPY = 'Inserted into the body.';
 const COPIED_COPY = 'Copied.';
 const COPY_FAILED_COPY = "Couldn't copy. Select the heading and copy it instead.";
 const FILL_FAILED_COPY = "This field couldn't be filled, so nothing changed.";
+const REMOVED_COPY = 'Removed. Press Save to keep it.';
+const LINK_NO_EDITOR_COPY = "The body's editor isn't available here. Change the link in the body instead.";
+const SHOW_FAILED_COPY = "Couldn't find the link in the body. Try again.";
+const REMOVE_FAILED_COPY = "The link couldn't be removed. Remove it in the body instead.";
+const UNDO_FAILED_COPY = "Couldn't put the link back. Use the editor's own Undo instead.";
+/** How often the body is read while a removal can still be undone, to withdraw Undo once it changes. */
+const BODY_CHECK_MS = 1_000;
 const NO_ADDRESS_COPY = "Varys can't tell this page's current web address, so it won't change the title here. "
   + 'Change it by hand if you need to.';
 const INTO_SUMMARY_FOLLOWED_COPY = 'Goes into Summary, which is also the search description.';
@@ -458,6 +473,15 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
   const addingNow = useRef(false);
   // Bumped by any edit in the page, so "Now" and Undo follow what the person types.
   const [edits, setEdits] = useState(0);
+  // The page's broken and moved links, from Varys; empty unless Varys checked the page.
+  const [brokenLinks, setBrokenLinks] = useState<BrokenLink[]>([]);
+  // Removals that can still be undone: the body before, and what the removal left, by address.
+  const [undoable, setUndoable] = useState<Record<string, { before: string; after: string }>>({});
+  // Addresses removed here and still out of the body (undoable or not): what the save reports.
+  const [removed, setRemoved] = useState<string[]>([]);
+  // Addresses Show me or Remove link found no link to: they come from a listing or block.
+  const [missing, setMissing] = useState<string[]>([]);
+  const [linkNotes, setLinkNotes] = useState<Record<string, string | null>>({});
 
   const failures = useRef(0);
   // What is on screen now, for an answer that arrives after the wait it belongs to has moved on.
@@ -715,6 +739,163 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
     }
   }, []);
 
+  // ------------------------------------------------------------------- the broken links
+
+  // Asked for once the panel is up, beside its suggestions. Only an `ok` answer shows anything:
+  // unchecked, not tracked or no answer at all is no section, never "none broken".
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let answer: BrokenLinksAnswer | undefined;
+      try {
+        answer = await chrome.runtime.sendMessage({ type: 'varysBrokenLinks', pageUrl } satisfies VarysBrokenLinksRequest);
+      } catch {
+        answer = undefined;
+      }
+      if (!cancelled && answer?.kind === 'ok') setBrokenLinks(answer.links);
+    })();
+    return () => { cancelled = true; };
+  }, [pageUrl]);
+
+  const noteLink = (url: string, message: string | null) => setLinkNotes(prev => ({ ...prev, [url]: message }));
+  const bodyEditorId = () => document.querySelector<HTMLTextAreaElement>(BODY_FIELD)?.id ?? null;
+
+  // A removal the body no longer matches is the person's own: its Undo goes, as a fill's does
+  // once its field is edited. CKEditor's typing happens in its frame and tells the page nothing,
+  // so the body is read every second while an Undo is on offer, and after any other edit.
+  const undoableKeys = Object.keys(undoable).join('\n');
+  useEffect(() => {
+    if (undoableKeys === '') return;
+    const elementId = bodyEditorId();
+    if (!elementId) return;
+    let cancelled = false;
+    const check = async () => {
+      let read: ReadRichEditorResponse | undefined;
+      try {
+        read = await chrome.runtime.sendMessage({ type: 'readRichEditor', elementId } satisfies ReadRichEditorRequest);
+      } catch {
+        read = undefined;
+      }
+      const now = read?.ok ? read.value : undefined;
+      if (cancelled || now === undefined) return;
+      setUndoable(prev => {
+        const stale = Object.keys(prev).filter(url => prev[url].after !== now);
+        if (stale.length === 0) return prev;
+        const next = { ...prev };
+        for (const url of stale) delete next[url];
+        return next;
+      });
+    };
+    void check();
+    const timer = setInterval(() => { void check(); }, BODY_CHECK_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [undoableKeys, edits]);
+
+  const showLink = useCallback(async (url: string) => {
+    const elementId = bodyEditorId();
+    if (!elementId) {
+      noteLink(url, LINK_NO_EDITOR_COPY);
+      return;
+    }
+    let reply: ShowRichEditorLinkResponse | undefined;
+    try {
+      reply = await chrome.runtime.sendMessage({
+        type: 'showRichEditorLink', elementId, url, pageUrl,
+      } satisfies ShowRichEditorLinkRequest);
+    } catch {
+      reply = undefined;
+    }
+    switch (reply?.result) {
+      case 'shown': noteLink(url, null); return;
+      case 'not-found': setMissing(prev => [...prev, url]); noteLink(url, null); return;
+      case 'no-editor': noteLink(url, LINK_NO_EDITOR_COPY); return;
+      default: noteLink(url, SHOW_FAILED_COPY);
+    }
+  }, [pageUrl]);
+
+  const removeLink = useCallback(async (url: string) => {
+    const elementId = bodyEditorId();
+    if (!elementId) {
+      noteLink(url, LINK_NO_EDITOR_COPY);
+      return;
+    }
+    let reply: UnlinkRichEditorLinkResponse | undefined;
+    try {
+      reply = await chrome.runtime.sendMessage({
+        type: 'unlinkRichEditorLink', elementId, url, pageUrl,
+      } satisfies UnlinkRichEditorLinkRequest);
+    } catch {
+      reply = undefined;
+    }
+    switch (reply?.result) {
+      case 'removed': {
+        const { before, after } = reply;
+        if (before !== null && after !== null) setUndoable(prev => ({ ...prev, [url]: { before, after } }));
+        setRemoved(prev => (prev.includes(url) ? prev : [...prev, url]));
+        markFilled('broken_link');
+        noteLink(url, REMOVED_COPY);
+        return;
+      }
+      case 'not-found': setMissing(prev => [...prev, url]); noteLink(url, null); return;
+      case 'no-editor': noteLink(url, LINK_NO_EDITOR_COPY); return;
+      default: noteLink(url, REMOVE_FAILED_COPY);
+    }
+  }, [pageUrl]);
+
+  const undoRemove = useCallback(async (url: string) => {
+    const record = undoable[url];
+    const elementId = bodyEditorId();
+    if (!record || !elementId) return;
+    let reply: RestoreRichEditorHtmlResponse | undefined;
+    try {
+      reply = await chrome.runtime.sendMessage({
+        type: 'restoreRichEditorHtml', elementId, html: record.before, expected: record.after,
+      } satisfies RestoreRichEditorHtmlRequest);
+    } catch {
+      reply = undefined;
+    }
+    if (reply?.result === 'restored' || reply?.result === 'changed') {
+      setUndoable(prev => {
+        const next = { ...prev };
+        delete next[url];
+        return next;
+      });
+    }
+    if (reply?.result === 'restored') {
+      const rest = removed.filter(other => other !== url);
+      setRemoved(rest);
+      // Marked while any link removed here is still out of the body.
+      if (rest.length === 0) unmarkFilled('broken_link');
+      noteLink(url, null);
+    } else if (reply?.result !== 'changed') {
+      // Typed since ('changed'): the removal is theirs now and the row already says it is removed.
+      noteLink(url, UNDO_FAILED_COPY);
+    }
+  }, [undoable, removed]);
+
+  const linkRows = brokenLinks.map((link): BrokenLinkRow => {
+    const gone = removed.includes(link.url);
+    const outOfReach = !gone && (link.sitewide || link.inBody === false || missing.includes(link.url));
+    let action: BrokenLinkRow['action'] = 'remove';
+    if (outOfReach) action = 'none';
+    else if (undoable[link.url]) action = 'undo';
+    else if (gone) action = 'none';
+    return {
+      url: link.url,
+      text: link.text.trim() || link.url,
+      reasonText: reasonText(link.reason),
+      since: sinceText(link.since),
+      suggestion: link.suggestion,
+      state: link.state,
+      placement: outOfReach ? 'not-in-body' : 'in-body',
+      action,
+      message: linkNotes[link.url] ?? null,
+    };
+  });
+
   // ------------------------------------------------------------------------- rendering
 
   const body = ((): PanelBody => {
@@ -779,6 +960,10 @@ function VarysPanel({ pageUrl, currentAlias, formPath, adopted, first, onClose }
         onLetAddressChange={letItChange}
         onCopy={copy}
         onInsert={text => { void insert(text); }}
+        brokenLinks={linkRows}
+        onShowLink={url => { void showLink(url); }}
+        onRemoveLink={url => { void removeLink(url); }}
+        onUndoRemove={url => { void undoRemove(url); }}
         maxHeight={place.maxHeight}
       />
     </div>

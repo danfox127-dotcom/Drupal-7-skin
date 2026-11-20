@@ -96,6 +96,46 @@ export interface RestoreRichEditorHtmlResponse {
   result: 'restored' | 'changed' | 'no-editor' | 'error';
 }
 
+/**
+ * What happened, in words: the rows of Varys's own table (lib/broken-links.ts `reasonText` in
+ * the Varys repo), copied rather than imported across repos, so the panel and Page Health say
+ * the same thing. Keep them in step by hand.
+ */
+const REASONS: Record<string, string> = {
+  not_found: 'Not found (404)',
+  gone: 'Gone (410)',
+  no_such_host: 'Site no longer exists',
+  home_redirect: 'Probably moved: lands on their home page',
+  forbidden: 'Site refused the check (403)',
+  rate_limited: 'Site asked us to slow down (429)',
+  server_error: 'Site error (5xx)',
+  timeout: 'No answer in time',
+  connection: "Couldn't connect",
+  tls: 'Certificate problem',
+  robots: 'Site asks bots not to check',
+  redirect_loop: 'Too many redirects',
+  refused_address: 'Not a public address',
+  unknown: "Couldn't check",
+};
+
+/**
+ * Any reason not in the table (including null) reads "Couldn't check", as in Varys. Varys adds
+ * the status to `other_status`; this route sends none, so it reads without one.
+ */
+export function reasonText(reason: string | null): string {
+  if (reason === 'other_status') return 'Unexpected answer';
+  if (reason && Object.prototype.hasOwnProperty.call(REASONS, reason)) return REASONS[reason];
+  return "Couldn't check";
+}
+
+/** "1 Nov 2026" in UTC, as Varys shows it. Null for a missing or unreadable date. */
+export function sinceText(iso: string | null): string | null {
+  if (!iso) return null;
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' });
+}
+
 const isText = (v: unknown): v is string => typeof v === 'string';
 const isTextOrNull = (v: unknown): v is string | null => v === null || typeof v === 'string';
 

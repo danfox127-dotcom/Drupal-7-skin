@@ -46,6 +46,30 @@ export interface DoctorRow {
   message: string | null;
 }
 
+/**
+ * One of the page's broken or moved links, for the "Broken links" section. Offered with Show me
+ * and Remove link while it is in the body, and with Undo once removed (until the body changes).
+ */
+export interface BrokenLinkRow {
+  /** The dead address, absolute, as Varys reports it. */
+  url: string;
+  /** The link's words, or its address when it has none. */
+  text: string;
+  /** What happened, in words ("Not found (404)"). */
+  reasonText: string;
+  /** When Varys first saw it fail, as a date ("1 Nov 2026"), or null. */
+  since: string | null;
+  /** For a mistyped address, what it probably meant. */
+  suggestion: string | null;
+  state: 'broken' | 'moved';
+  /** `not-in-body`: it comes from a listing, block or menu, so the panel cannot reach it. */
+  placement: 'in-body' | 'not-in-body';
+  /** `remove` offers Show me and Remove link, `undo` offers Undo, `none` no button. */
+  action: 'remove' | 'undo' | 'none';
+  /** What the last button did, in words, or null. */
+  message: string | null;
+}
+
 /** What the panel's body shows. */
 export type PanelBody =
   | {
@@ -86,6 +110,11 @@ export interface SuggestionsPanelProps {
   onLetAddressChange: () => void;
   onCopy: (text: string) => void;
   onInsert: (text: string) => void;
+  /** The page's broken and moved links, shown when there are suggestions or none yet. Empty: no section. */
+  brokenLinks: BrokenLinkRow[];
+  onShowLink: (url: string) => void;
+  onRemoveLink: (url: string) => void;
+  onUndoRemove: (url: string) => void;
   /** Caps the panel's height so it stays clear of Drupal's Save buttons (see varysPanel). */
   maxHeight?: number;
 }
@@ -97,6 +126,8 @@ export const NOT_CRAWLED_COPY = "Varys hasn't read this page yet, so it has no s
 export const KEEPS_ADDRESS_COPY = 'Using this title keeps the current web address.';
 export const LET_ADDRESS_CHANGE_COPY = 'Let the address change instead';
 export const doctorCopy = (fullName: string) => `Named in this article but not in Related Profiles: ${fullName}`;
+export const NOT_IN_TEXT_COPY = "Not in this page's text; it comes from a listing or block. Ask the web team.";
+export const mistypedCopy = (suggestion: string) => `Mistyped: probably meant ${suggestion}`;
 
 /**
  * "2 days ago", "yesterday", "just now". Null when the time cannot be read, so nothing is
@@ -224,10 +255,75 @@ function HeadingColumn({ title, headings, actions }: {
   );
 }
 
-function Ready({ body, onUse, onUndo, onAddDoctor, onUndoDoctor, onLetAddressChange, onCopy, onInsert }: {
+type BrokenLinkProps = Pick<SuggestionsPanelProps, 'onShowLink' | 'onRemoveLink' | 'onUndoRemove'>;
+
+function BrokenLinkItem({ row, onShowLink, onRemoveLink, onUndoRemove }: { row: BrokenLinkRow } & BrokenLinkProps) {
+  const labelId = useId();
+  const reachable = row.placement === 'in-body';
+  return (
+    <div role="group" aria-labelledby={labelId} className="py-2.5 border-t border-rule-hair first:border-t-0">
+      <div className="flex items-start gap-3">
+        <p id={labelId} className="flex-1 min-w-0 text-control text-ink break-words pt-1">{row.text}</p>
+        {reachable && row.action === 'remove' && (
+          <div className="flex shrink-0 gap-1.5">
+            {/* Both keep the focus, and with it the cursor, in the body's editor, as Insert does. */}
+            <button type="button" className={QUIET} onMouseDown={event => event.preventDefault()} onClick={() => onShowLink(row.url)}>
+              Show me
+            </button>
+            <button type="button" className={PRIMARY} onMouseDown={event => event.preventDefault()} onClick={() => onRemoveLink(row.url)}>
+              Remove link
+            </button>
+          </div>
+        )}
+        {reachable && row.action === 'undo' && (
+          <button type="button" className={QUIET} onClick={() => onUndoRemove(row.url)}>Undo</button>
+        )}
+      </div>
+      <p className="mt-0.5 text-help text-ink-help break-all">{row.url}</p>
+      <p className="mt-0.5 text-help text-ink-secondary">{row.since ? `${row.reasonText} · since ${row.since}` : row.reasonText}</p>
+      {row.suggestion && <p className="mt-0.5 text-help text-ink-secondary break-all">{mistypedCopy(row.suggestion)}</p>}
+      {!reachable && <p className="mt-1 text-help text-ink">{NOT_IN_TEXT_COPY}</p>}
+      {row.message && <p role="status" className="mt-1 text-help text-ink">{row.message}</p>}
+    </div>
+  );
+}
+
+/**
+ * "Broken links (N)": N counts the broken ones only. Moved links are their own group with the
+ * same buttons, and never counted. Nothing at all when there are no rows.
+ */
+function BrokenLinks({ rows, ...props }: { rows: BrokenLinkRow[] } & BrokenLinkProps) {
+  const headingId = useId();
+  const movedId = useId();
+  if (rows.length === 0) return null;
+  const broken = rows.filter(row => row.state === 'broken');
+  const moved = rows.filter(row => row.state === 'moved');
+  return (
+    <section aria-labelledby={headingId} className="py-3 border-t border-rule">
+      <p id={headingId} className="text-section font-semibold text-ink">{`Broken links (${broken.length})`}</p>
+      {broken.length > 0 && (
+        <div className="mt-1">
+          {broken.map(row => <BrokenLinkItem key={row.url} row={row} {...props} />)}
+        </div>
+      )}
+      {moved.length > 0 && (
+        <div role="group" aria-labelledby={movedId} className="mt-2">
+          <p id={movedId} className="text-eyebrow font-semibold uppercase text-ink-secondary">Probably moved</p>
+          {moved.map(row => <BrokenLinkItem key={row.url} row={row} {...props} />)}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function Ready({
+  body, onUse, onUndo, onAddDoctor, onUndoDoctor, onLetAddressChange, onCopy, onInsert, brokenLinks, onShowLink,
+  onRemoveLink, onUndoRemove,
+}: {
   body: Extract<PanelBody, { state: 'ready' }>;
 } & Pick<SuggestionsPanelProps,
-  'onUse' | 'onUndo' | 'onAddDoctor' | 'onUndoDoctor' | 'onLetAddressChange' | 'onCopy' | 'onInsert'>) {
+  'onUse' | 'onUndo' | 'onAddDoctor' | 'onUndoDoctor' | 'onLetAddressChange' | 'onCopy' | 'onInsert' | 'brokenLinks'
+  | 'onShowLink' | 'onRemoveLink' | 'onUndoRemove'>) {
   return (
     <>
       {body.clinicalNote && (
@@ -251,6 +347,8 @@ function Ready({ body, onUse, onUndo, onAddDoctor, onUndoDoctor, onLetAddressCha
           </button>
         </p>
       )}
+
+      <BrokenLinks rows={brokenLinks} onShowLink={onShowLink} onRemoveLink={onRemoveLink} onUndoRemove={onUndoRemove} />
 
       <div className="pt-3 border-t border-rule">
         <p className="text-section font-semibold text-ink">Headings</p>
@@ -329,6 +427,17 @@ export function SuggestionsPanel(props: SuggestionsPanelProps) {
               {body.doctors.map(doctor => (
                 <Doctor key={doctor.fullName} doctor={doctor} onAdd={props.onAddDoctor} onUndo={props.onUndoDoctor} />
               ))}
+            </div>
+          )}
+
+          {body.state === 'none' && props.brokenLinks.length > 0 && (
+            <div className="mt-3">
+              <BrokenLinks
+                rows={props.brokenLinks}
+                onShowLink={props.onShowLink}
+                onRemoveLink={props.onRemoveLink}
+                onUndoRemove={props.onUndoRemove}
+              />
             </div>
           )}
 

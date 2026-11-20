@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { parseBrokenLinksAnswer } from '../src/lib/varys/brokenLinks';
+import { parseBrokenLinksAnswer, reasonText, sinceText } from '../src/lib/varys/brokenLinks';
 
 /**
  * The answer Varys gives for a page's broken links (GET /api/extension/broken-links), checked
@@ -92,5 +92,31 @@ test.describe('parsing a broken-links answer', () => {
     for (const json of bad) {
       expect(parseBrokenLinksAnswer(json), JSON.stringify(json)).toEqual({ kind: 'error' });
     }
+  });
+});
+
+test.describe('the words for a broken link', () => {
+  test('a reason Varys names reads as Varys words it', () => {
+    expect(reasonText('not_found')).toBe('Not found (404)');
+    expect(reasonText('home_redirect')).toBe('Probably moved: lands on their home page');
+  });
+
+  test('an unexpected status reads without a number, which this route does not send', () => {
+    expect(reasonText('other_status')).toBe('Unexpected answer');
+  });
+
+  test('a reason not in the table, or none, reads "Couldn\'t check"', () => {
+    for (const reason of [null, '', 'other', 'brand_new_reason', 'toString', '__proto__']) {
+      expect(reasonText(reason), String(reason)).toBe("Couldn't check");
+    }
+  });
+
+  test('since is the UTC date, and nothing for a missing or unreadable one', () => {
+    expect(sinceText('2026-11-01T06:12:00+00:00')).toBe('1 Nov 2026');
+    // 23:30 in New York on 1 Nov is 2 Nov in UTC, which is the day Varys shows.
+    expect(sinceText('2026-11-01T23:30:00-05:00')).toBe('2 Nov 2026');
+    expect(sinceText(null)).toBeNull();
+    expect(sinceText('')).toBeNull();
+    expect(sinceText('not a date')).toBeNull();
   });
 });

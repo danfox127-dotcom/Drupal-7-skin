@@ -7104,6 +7104,220 @@ test.describe('Varys suggestions: panel', () => {
       expect(await page.locator(`#${BODY_ID}`).inputValue()).toBe(LINKED);
     });
   });
+
+  /**
+   * The "Broken links (N)" section: the page's confirmed broken and moved links from Varys,
+   * with Show me and Remove link for the ones in the body. Varys fills; the person presses Save.
+   */
+  test.describe('broken links in the panel', () => {
+    const BODY_ID = 'edit-body-und-0-value';
+    const NOT_IN_TEXT = "Not in this page's text; it comes from a listing or block. Ask the web team.";
+    const REMOVED = 'Removed. Press Save to keep it.';
+    const DEAD = 'https://www.cuimc.columbia.edu/our-faculty';
+    const deadLink = {
+      url: DEAD, href: '/our-faculty', text: 'our faculty', in_body: true, sitewide: false,
+      state: 'broken', reason: 'not_found', since: '2026-11-01T06:12:00+00:00', suggestion: null,
+    };
+    const mistyped = {
+      url: 'https://www.cuimc.columbia.edu/abuot', href: '/abuot', text: 'about us', in_body: true, sitewide: false,
+      state: 'broken', reason: 'not_found', since: null, suggestion: 'https://www.cuimc.columbia.edu/about',
+    };
+    const movedLink = {
+      url: 'https://www.iom.edu/reports', href: 'https://www.iom.edu/reports', text: 'the IOM report', in_body: true,
+      sitewide: false, state: 'moved', reason: 'home_redirect', since: '2026-10-20T00:00:00+00:00', suggestion: null,
+    };
+    const footerLink = {
+      url: 'https://www.cuimc.columbia.edu/old-footer', href: '/old-footer', text: 'Old footer link', in_body: false,
+      sitewide: false, state: 'broken', reason: 'gone', since: null, suggestion: null,
+    };
+    const sitewideLink = {
+      url: 'https://directory.columbia.edu/find', href: 'https://directory.columbia.edu/find', text: 'Directory',
+      in_body: true, sitewide: true, state: 'broken', reason: 'no_such_host', since: null, suggestion: null,
+    };
+    const LINKED = '<p>See <a href="/our-faculty">our faculty</a> and <a href="https://www.iom.edu/reports">the IOM report</a>.</p>';
+    const UNLINKED = '<p>See our faculty and <a href="https://www.iom.edu/reports">the IOM report</a>.</p>';
+
+    const linksAnswer = (links: unknown[], checked = true) => ({ status: 'ok', checked, links });
+    /** Varys as in `answering`, with the page's broken links too. */
+    const withLinks = (links: VarysAnswer) => (call: VarysCall): VarysAnswer =>
+      call.path === '/api/extension/broken-links' ? links : answering(ready())(call);
+    const brokenIn = (calls: VarysCall[]) => calls.filter(c => c.path === '/api/extension/broken-links');
+    const section = (page: Page, count: number) => panel(page).getByRole('region', { name: `Broken links (${count})`, exact: true });
+    const linkRow = (page: Page, count: number, text: string) => section(page, count).getByRole('group', { name: text, exact: true });
+    const setBody = (page: Page, html: string) =>
+      page.evaluate(([id, h]) => { (window as any).CKEDITOR.instances[id]._data = h; }, [BODY_ID, html] as const);
+    const editorData = (page: Page) => page.evaluate(id => (window as any).CKEDITOR.instances[id].getData(), BODY_ID);
+    const submit = (page: Page) => Promise.all([
+      page.waitForEvent('load'),
+      page.evaluate(() => (document.querySelector('#edit-submit') as HTMLElement).click()),
+    ]);
+
+    test('lists broken links with words, reason and since', async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      const calls = await stubVarys(context, withLinks({ status: 200, body: linksAnswer([deadLink, mistyped]) }));
+      await open(page, SPECIALTY);
+
+      const row = linkRow(page, 2, 'our faculty');
+      await expect(row.getByText(DEAD, { exact: true })).toBeVisible();
+      await expect(row.getByText('Not found (404) · since 1 Nov 2026', { exact: true })).toBeVisible();
+      await expect(row.getByRole('button', { name: 'Show me' })).toBeVisible();
+      await expect(row.getByRole('button', { name: 'Remove link' })).toBeVisible();
+      await expect(linkRow(page, 2, 'about us').getByText('Mistyped: probably meant https://www.cuimc.columbia.edu/about'))
+        .toBeVisible();
+      // Asked about the same page as the suggestions, alongside them.
+      const pageUrlOf = (call: VarysCall) => new URLSearchParams(call.search).get('page_url');
+      expect(brokenIn(calls).map(pageUrlOf)).toEqual([pageUrlOf(suggestionsIn(calls)[0])]);
+    });
+
+    test('moved links have their own group and are not counted', async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      await stubVarys(context, withLinks({ status: 200, body: linksAnswer([deadLink, movedLink]) }));
+      await open(page, SPECIALTY);
+
+      const moved = section(page, 1).getByRole('group', { name: 'Probably moved', exact: true });
+      const iom = moved.getByRole('group', { name: 'the IOM report', exact: true });
+      await expect(iom.getByText('Probably moved: lands on their home page · since 20 Oct 2026')).toBeVisible();
+      await expect(iom.getByRole('button', { name: 'Show me' })).toBeVisible();
+      await expect(iom.getByRole('button', { name: 'Remove link' })).toBeVisible();
+      await expect(moved.getByRole('group', { name: 'our faculty' })).toHaveCount(0);
+      await expect(linkRow(page, 1, 'our faculty')).toBeVisible();
+    });
+
+    test('remove link unwraps, says press Save, and Undo restores', async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      await stubVarys(context, withLinks({ status: 200, body: linksAnswer([deadLink]) }));
+      await open(page, SPECIALTY);
+      await setBody(page, LINKED);
+      const row = linkRow(page, 1, 'our faculty');
+
+      await row.getByRole('button', { name: 'Remove link' }).click();
+
+      await expect(row.getByRole('status')).toHaveText(REMOVED);
+      expect(await editorData(page)).toBe(UNLINKED);
+      await row.getByRole('button', { name: 'Undo' }).click();
+      await expect(row.getByRole('button', { name: 'Remove link' })).toBeVisible();
+      expect(await editorData(page)).toBe(LINKED);
+      await expect(row.getByText(REMOVED)).toHaveCount(0);
+    });
+
+    test('typing after a removal withdraws Undo', async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      await stubVarys(context, withLinks({ status: 200, body: linksAnswer([deadLink]) }));
+      await open(page, SPECIALTY);
+      await setBody(page, LINKED);
+      const row = linkRow(page, 1, 'our faculty');
+      await row.getByRole('button', { name: 'Remove link' }).click();
+      await expect(row.getByRole('button', { name: 'Undo' })).toBeVisible();
+
+      // The person types in the body; CKEditor's frame tells the page nothing of it.
+      const typed = UNLINKED + '<p>Typed since.</p>';
+      await setBody(page, typed);
+
+      await expect(row.getByRole('button', { name: 'Undo' })).toHaveCount(0);
+      await expect(row.getByText(REMOVED)).toBeVisible();
+      await expect(row.getByRole('button', { name: 'Remove link' })).toHaveCount(0);
+      expect(await editorData(page)).toBe(typed);
+    });
+
+    test('a removal is reported as varys_filled broken_link on save', async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      const calls = await stubVarys(context, withLinks({ status: 200, body: linksAnswer([deadLink]) }));
+      await saveLands(context, SPECIALTY);
+      await open(page, SPECIALTY);
+      await expect(page.locator('form[data-d7-varys-capture]')).toHaveCount(1);
+      await setBody(page, LINKED);
+
+      await linkRow(page, 1, 'our faculty').getByRole('button', { name: 'Remove link' }).click();
+      await expect(linkRow(page, 1, 'our faculty').getByText(REMOVED)).toBeVisible();
+      await submit(page);
+
+      await expect.poll(() => savesIn(calls).length).toBe(1);
+      expect(savesIn(calls)[0].body.varys_filled).toEqual(['broken_link']);
+    });
+
+    test('an undone removal is not reported', async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      const calls = await stubVarys(context, withLinks({ status: 200, body: linksAnswer([deadLink]) }));
+      await saveLands(context, SPECIALTY);
+      await open(page, SPECIALTY);
+      await expect(page.locator('form[data-d7-varys-capture]')).toHaveCount(1);
+      await setBody(page, LINKED);
+      const row = linkRow(page, 1, 'our faculty');
+
+      await row.getByRole('button', { name: 'Remove link' }).click();
+      await row.getByRole('button', { name: 'Undo' }).click();
+      await expect(row.getByRole('button', { name: 'Remove link' })).toBeVisible();
+      await submit(page);
+
+      await expect.poll(() => savesIn(calls).length).toBe(1);
+      expect(savesIn(calls)[0].body.varys_filled).toEqual([]);
+    });
+
+    test('listing or block link has no buttons', async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      await stubVarys(context, withLinks({ status: 200, body: linksAnswer([deadLink, footerLink, sitewideLink]) }));
+      await open(page, SPECIALTY);
+      // Varys saw this one in the body, but it is not there now.
+      await setBody(page, '<p>No links here.</p>');
+
+      for (const text of ['Old footer link', 'Directory']) {
+        const row = linkRow(page, 3, text);
+        await expect(row.getByText(NOT_IN_TEXT)).toBeVisible();
+        await expect(row.getByRole('button')).toHaveCount(0);
+      }
+      const row = linkRow(page, 3, 'our faculty');
+      await row.getByRole('button', { name: 'Show me' }).click();
+      await expect(row.getByText(NOT_IN_TEXT)).toBeVisible();
+      await expect(row.getByRole('button')).toHaveCount(0);
+    });
+
+    test('unchecked page shows no section', async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      let links: VarysAnswer = { status: 200 };
+      const calls = await stubVarys(context, call => (call.path === '/api/extension/broken-links' ? links : answering(ready())(call)));
+      const answers: VarysAnswer[] = [
+        { status: 200, body: linksAnswer([deadLink], false) },
+        { status: 500, body: { detail: 'Internal Server Error' } },
+        { status: 200, body: { status: 'not_tracked' } },
+        // Checked, and nothing broken: nothing to act on, so no section either.
+        { status: 200, body: linksAnswer([]) },
+      ];
+      for (const [i, answer] of answers.entries()) {
+        links = answer;
+        await open(page, SPECIALTY);
+        await expect.poll(() => brokenIn(calls).length).toBe(i + 1);
+        await expect(panel(page).getByRole('list', { name: 'On the page now' })).toBeVisible();
+        await page.waitForTimeout(500);
+        await expect(panel(page).getByText(/Broken links/)).toHaveCount(0);
+      }
+      // The same page, checked, with a broken link: the section is there, so its absence above meant something.
+      links = { status: 200, body: linksAnswer([deadLink]) };
+      await open(page, SPECIALTY);
+      await expect(linkRow(page, 1, 'our faculty')).toBeVisible();
+    });
+
+    test('nothing saves', async ({ page, context, settings }) => {
+      await settings({ varysConnection: connected, nodeEditor: false });
+      const calls = await stubVarys(context, withLinks({ status: 200, body: linksAnswer([deadLink]) }));
+      await open(page, SPECIALTY);
+      const posts: string[] = [];
+      page.on('request', r => { if (r.method() === 'POST' && r.url().startsWith(HOST)) posts.push(r.url()); });
+      await page.evaluate(() => { (window as any).__shown = []; });
+      await setBody(page, LINKED);
+      const row = linkRow(page, 1, 'our faculty');
+
+      await row.getByRole('button', { name: 'Show me' }).click();
+      await expect.poll(() => page.evaluate(() => (window as any).__shown)).toEqual(['/our-faculty']);
+      await row.getByRole('button', { name: 'Remove link' }).click();
+      await row.getByRole('button', { name: 'Undo' }).click();
+      await expect(row.getByRole('button', { name: 'Remove link' })).toBeVisible();
+      await page.waitForTimeout(500);
+
+      expect(posts).toEqual([]);
+      expect(savesIn(calls)).toEqual([]);
+      expect(page.url()).toBe(SPECIALTY);
+    });
+  });
 });
 
 test.describe('Varys drafts: panel', () => {
