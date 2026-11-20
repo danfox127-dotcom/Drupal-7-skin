@@ -1,5 +1,5 @@
 {
-  "version": "0.7.1",
-  "notes": "Security update. Your Varys connection, and any saves waiting to be sent to Varys, now live where web pages cannot reach them; updating moves them across, so you stay connected. The extension now runs only on secure (https) Columbia pages, and answers Varys requests only about the page you are on. Pasting a page from one site into another no longer carries the source page's text format inside content items. Varys draft bodies are filtered again before they reach the editor, and the extension never switches to a different Varys account without you disconnecting first. If you installed it by hand: after replacing the folder, press the reload arrow on the extension's card in chrome://extensions, or the update does not take effect.",
-  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.7.1/d7-studio-extension-0.7.1.zip"
+  "version": "0.8.0",
+  "notes": "The Varys panel now lists the page's broken links: what each one says, where it pointed, what happened and since when. Show me finds a link in the body; Remove link unlinks it and keeps the words, with Undo until you change the body. Nothing saves until you press Save. Links that come from a listing, a sidebar block or the menu say so: ask the web team. If you installed it by hand: after replacing the folder, press the reload arrow on the extension's card in chrome://extensions, or the update does not take effect.",
+  "download": "https://github.com/danfox127-dotcom/Drupal-7-skin/releases/download/v0.8.0/d7-studio-extension-0.8.0.zip"
 }
